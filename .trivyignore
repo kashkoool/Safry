@@ -1,0 +1,9 @@
+# Trivy ignore list for the image scan (.github/workflows/image-scan.yml).
+# Every entry needs a reason and an expiry (exp:YYYY-MM-DD); after it, the finding fails the scan again.
+#
+# The two entries below are the Prisma CLI peer chain (@prisma/config -> deepmerge-ts, prisma -> mysql2) that is only
+# present in the one-off "migrate" image. The application never loads either module (no MySQL, no recursive config merge
+# of untrusted input), the API runtime image does not contain them, and the same advisories are tracked, with a review
+# date, in backend/audit-allowlist.json. Remove them once a Prisma release updates both packages.
+CVE-2026-40345 exp:2027-01-11
+GHSA-3f6p-5ww8-9rcr exp:2027-01-11
