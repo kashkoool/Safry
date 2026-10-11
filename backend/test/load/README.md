@@ -31,3 +31,13 @@ Results (JSON) live in `results/`. Same machine, 15 s per scenario, NODE_ENV=tes
 
 After the hot-booking scenario no (service, date) exceeded capacity (SQL check, 0 rows).
 Caveat: the two runs were taken on different days on a shared dev laptop; treat ratios, not absolute numbers.
+
+## Reduced run and gate (CI)
+
+`seed.mjs` takes its size from environment variables (defaults above): `LOAD_TENANTS`, `LOAD_TRAVELERS_PER_TENANT`,
+`LOAD_ORGS_PER_TENANT`, `LOAD_SERVICES_PER_ORG`, `LOAD_BOOKINGS_PER_TENANT`, `LOAD_HOT_BOOKINGS`, `LOAD_TOKENS_PER_TENANT`.
+The CI workflow (`.github/workflows/load-test.yml`) uses 2 tenants, ~600 users and 4k bookings, 12 s per scenario.
+
+`node check.mjs --label ci` then fails (exit 1) when any scenario has an error-response rate above 0.5 % or a p99 above its limit in
+`thresholds.json`. The limits are about 3x the "after" p99 in the table above (rounded up; at least 250 ms for the health checks), because
+shared CI runners are slower than the machine that produced it. Tighten them when the measured numbers on the runner are stable.

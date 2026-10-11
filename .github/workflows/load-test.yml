@@ -1,0 +1,132 @@
+# Load test (autocannon) against the real API and PostgreSQL 17, reduced dataset. Never runs per pull request:
+# manual trigger and weekly. Fails when a scenario's error-response rate is above 0.5 % or its p99 exceeds the
+# limit in backend/test/load/thresholds.json. See backend/test/load/README.md.
+name: Load test
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Seconds per scenario"
+        required: false
+        default: "12"
+  schedule:
+    - cron: "29 5 * * 1" # weekly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-test-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22
+  PNPM_VERSION: 11
+
+jobs:
+  load:
+    name: Load test (reduced dataset)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Throwaway test-only credentials for an ephemeral container that lives for this job only.
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_PASSWORD: ci-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      OWNER_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public
+      RUNTIME_URL: postgresql://safry_runtime:ci-runtime-only@127.0.0.1:5432/postgres?schema=public
+      DURATION: ${{ github.event.inputs.duration || '12' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - name: Per-run signing secret
+        run: |
+          value="$(openssl rand -hex 32)"
+          echo "::add-mask::$value"
+          echo "LOAD_JWT_SECRET=$value" >> "$GITHUB_ENV"
+      - name: Build the API, migrate, create the runtime login
+        working-directory: backend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm prisma:generate
+          pnpm build
+          DATABASE_URL="$OWNER_URL" pnpm db:deploy
+          docker run --rm --network host -v "$PWD/scripts/db:/sql:ro" postgres:17.11-alpine \
+            psql "postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres" -v runtime_password=ci-runtime-only -f /sql/create-runtime-role.sql
+      - name: Install the load tooling and seed the reduced dataset
+        working-directory: backend/test/load
+        env:
+          LOAD_DATABASE_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres
+          LOAD_TENANTS: "2"
+          LOAD_TRAVELERS_PER_TENANT: "300"
+          LOAD_ORGS_PER_TENANT: "5"
+          LOAD_SERVICES_PER_ORG: "10"
+          LOAD_BOOKINGS_PER_TENANT: "2000"
+          LOAD_HOT_BOOKINGS: "500"
+          LOAD_TOKENS_PER_TENANT: "100"
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node seed.mjs
+      - name: Start the API (restricted runtime login)
+        working-directory: backend
+        env:
+          LOAD_DATABASE_URL: ${{ env.RUNTIME_URL }}
+          PORT: "3100"
+        run: |
+          nohup bash test/load/start-api.sh > "$RUNNER_TEMP/api.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3100/api/v1/health/ready && exit 0
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/api.log"
+          exit 1
+      - name: Run the scenarios
+        working-directory: backend/test/load
+        run: node run.mjs --url http://127.0.0.1:3100 --duration "$DURATION" --label ci
+      - name: Check the thresholds
+        working-directory: backend/test/load
+        run: |
+          set -o pipefail
+          node check.mjs --label ci | tee "$RUNNER_TEMP/summary.md"
+          {
+            echo "### Load test (reduced dataset, ${DURATION} s per scenario)"
+            echo
+            cat "$RUNNER_TEMP/summary.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+      # If the gate fails the table is still wanted in the job summary.
+      - name: Summary on failure
+        if: failure()
+        working-directory: backend/test/load
+        run: |
+          {
+            echo "### Load test failed"
+            echo
+            node check.mjs --label ci 2>&1 || true
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the raw results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: load-test-results
+          path: backend/test/load/.data/result-ci.json
+          retention-days: 30
+          if-no-files-found: ignore

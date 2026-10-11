@@ -1,0 +1,15 @@
+{
+  "maxErrorRatePct": 0.5,
+  "p99Ms": {
+    "health_live": 250,
+    "health_ready": 250,
+    "me": 3000,
+    "activity": 2300,
+    "bookings_traveler": 2100,
+    "bookings_admin": 900,
+    "marketplace": 1500,
+    "services_provider": 650,
+    "booking_create_hot": 1300,
+    "mixed_traveler": 3500
+  }
+}
