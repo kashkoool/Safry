@@ -20,7 +20,9 @@ const rows = run.results.map((r) => {
   const problems = [];
   if (limit === undefined) problems.push("no p99 limit defined");
   else if (r.p99 > limit) problems.push(`p99 ${r.p99} ms > ${limit} ms`);
-  if (r.errorRatePct > limits.maxErrorRatePct) problems.push(`errors ${r.errorRatePct}% > ${limits.maxErrorRatePct}%`);
+  // errorRatePct in the result file is rounded to 2 decimals; compare the exact rate from the raw counts instead.
+  const exactRatePct = Number.isFinite(r.total) ? (((r.non2xx ?? 0) + (r.errors ?? 0) + (r.timeouts ?? 0)) / Math.max(1, r.total + (r.errors ?? 0) + (r.timeouts ?? 0))) * 100 : r.errorRatePct;
+  if (exactRatePct > limits.maxErrorRatePct) problems.push(`errors ${exactRatePct.toFixed(4)}% > ${limits.maxErrorRatePct}%`);
   if (problems.length) failures.push(`${r.scenario}: ${problems.join(", ")}`);
   return `| ${r.scenario} | ${r.connections} | ${r.rps} | ${r.p50} | ${r.p95} | ${r.p99} | ${limit ?? "-"} | ${r.errorRatePct} | ${problems.length ? "FAIL" : "ok"} |`;
 });

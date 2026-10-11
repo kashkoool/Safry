@@ -1,5 +1,5 @@
 # Builds the three production images and scans them with Trivy: the build fails on any fixable HIGH or CRITICAL
-# vulnerability. Findings go to the repository's code scanning alerts as SARIF, and a CycloneDX SBOM is kept as an artifact.
+# vulnerability. Findings go to the repository's code scanning alerts as SARIF (skipped for pull requests from forks, which cannot write alerts), and a CycloneDX SBOM is kept as an artifact.
 # Known, reviewed exceptions live in .trivyignore (each with an expiry date).
 name: Image scan and SBOM
 
