@@ -27,7 +27,8 @@ RUN pnpm install --prod --frozen-lockfile
 FROM build AS migrate
 ENV NODE_ENV=production
 # Prisma's schema engine needs OpenSSL (otherwise it warns and guesses openssl-1.1.x).
-RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+# perl-base is upgraded explicitly: the pinned base image still ships a version with fixed HIGH/CRITICAL advisories.
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && apt-get install -y --only-upgrade perl-base && rm -rf /var/lib/apt/lists/*
 # Fetch the schema engine for this OpenSSL at BUILD time (as root). At run time the job runs as `node` on a read-only filesystem and
 # cannot download it, which fails with "Can't write to .../@prisma/engines".
 RUN node node_modules/prisma/build/index.js --version
