@@ -37,7 +37,7 @@ x-owner-db: &owner-db
 services:
   postgres:
     <<: *hardening
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     # The entrypoint fixes data-directory ownership, then drops to the postgres user.
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     tmpfs: ["/tmp:size=64m,mode=1777", "/var/run/postgresql:size=1m,mode=2777"]
@@ -75,7 +75,7 @@ services:
   db-roles:
     <<: *job
     profiles: [ops]
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     user: postgres
     depends_on: { postgres: { condition: service_healthy } }
     volumes:
@@ -186,7 +186,7 @@ services:
   backup:
     <<: *hardening
     profiles: [backup]
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     user: postgres
     depends_on: { postgres: { condition: service_healthy } }
     networks: [data]
@@ -215,7 +215,7 @@ services:
   maintenance:
     <<: *hardening
     profiles: [maintenance]
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     user: postgres
     depends_on: { postgres: { condition: service_healthy } }
     networks: [data]
