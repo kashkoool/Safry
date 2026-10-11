@@ -182,7 +182,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
-      OWNER_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public
+      MIGRATE_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public
       RUNTIME_PASSWORD: ci-runtime-only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -211,9 +211,9 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm prisma:generate
           pnpm build
-          DATABASE_URL="$OWNER_URL" pnpm db:deploy
+          DATABASE_URL="$MIGRATE_URL" pnpm db:deploy
           docker run --rm --network host -v "$PWD/scripts/db:/sql:ro" postgres:17.11-alpine             psql "postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres" -v runtime_password="$RUNTIME_PASSWORD" -f /sql/create-runtime-role.sql
-          DATABASE_URL="$OWNER_URL" NODE_ENV=development pnpm db:seed
+          DATABASE_URL="$MIGRATE_URL" NODE_ENV=development pnpm db:seed
       - name: Start the API (restricted runtime login, port 3000)
         working-directory: backend
         env:

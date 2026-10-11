@@ -43,7 +43,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
-      OWNER_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public
+      MIGRATE_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public
       RUNTIME_URL: postgresql://safry_runtime:ci-runtime-only@127.0.0.1:5432/postgres?schema=public
       DURATION: ${{ github.event.inputs.duration || '12' }}
     steps:
@@ -69,7 +69,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm prisma:generate
           pnpm build
-          DATABASE_URL="$OWNER_URL" pnpm db:deploy
+          DATABASE_URL="$MIGRATE_URL" pnpm db:deploy
           docker run --rm --network host -v "$PWD/scripts/db:/sql:ro" postgres:17.11-alpine \
             psql "postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres" -v runtime_password=ci-runtime-only -f /sql/create-runtime-role.sql
       - name: Install the load tooling and seed the reduced dataset
