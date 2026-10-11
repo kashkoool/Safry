@@ -1,0 +1,12 @@
+# TLS terminator for the "tls" compose profile. Caddy obtains and renews certificates
+# automatically for SITE_ADDRESS (the public DNS name must point at this host, ports 80/443 open).
+# HTTP is redirected to HTTPS by Caddy; HSTS and the other security headers come from nginx.
+{
+	admin off
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	reverse_proxy web:8080
+	header -Server
+}

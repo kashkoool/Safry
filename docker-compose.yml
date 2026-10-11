@@ -1,0 +1,243 @@
+# Safry Platform, production-like stack: PostgreSQL + API + web (+ optional TLS proxy and backups).
+# Full runbook: docs/DEPLOYMENT.md. Short version (copy docker.env.example to .env and fill it first):
+#   scripts/check-env.sh .env                                   # rejects missing/placeholder/weak values
+#   docker compose build
+#   docker compose up -d postgres
+#   docker compose run --rm migrate                             # one-off: prisma migrate deploy (owner role)
+#   docker compose run --rm db-roles                            # one-off: create/rotate the restricted runtime login
+#   docker compose up -d                                        # api + web
+#   docker compose --profile tls up -d                          # optional: Caddy terminates TLS on 80/443
+#   docker compose --profile backup up -d                       # optional: scheduled pg_dump
+# Nothing migrates or seeds at boot. The demo seed is a separate, opt-in job (profile "seed").
+# PostgreSQL is never published on a host port here; for local debugging use backend/compose.yml.
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+x-job: &job
+  restart: "no"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  networks: [data]
+
+x-owner-db: &owner-db
+  # Owner role (POSTGRES_USER): schema DDL. Used only by one-off jobs, never by the running API.
+  DATABASE_MIGRATE_URL: postgresql://safry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/safry?schema=public
+  DATABASE_URL: postgresql://safry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/safry?schema=public
+
+services:
+  postgres:
+    <<: *hardening
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    # The entrypoint fixes data-directory ownership, then drops to the postgres user.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    tmpfs: ["/tmp:size=64m,mode=1777", "/var/run/postgresql:size=1m,mode=2777"]
+    shm_size: 256m
+    environment:
+      POSTGRES_DB: safry
+      POSTGRES_USER: safry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - safry_postgres_data:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U safry -d safry"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    mem_limit: ${POSTGRES_MEM_LIMIT:-1g}
+    cpus: ${POSTGRES_CPUS:-1.0}
+    pids_limit: 200
+
+  # One-off: apply migrations with the owner role. Run before every rollout that ships migrations.
+  migrate:
+    <<: *job
+    profiles: [ops]
+    build: { context: ./backend, target: migrate }
+    image: ${IMAGE_PREFIX:-safry}-migrate:${IMAGE_TAG:-local}
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      <<: *owner-db
+      NODE_ENV: production
+
+  # One-off: create (or rotate the password of) the restricted runtime login used by the API.
+  # Grants safry_app to safry_runtime ONLY (never the owner login; the API refuses to boot as owner in production).
+  # Needs migration 0010 (role safry_app) applied first. Script: backend/scripts/db/create-runtime-role.sql.
+  db-roles:
+    <<: *job
+    profiles: [ops]
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    user: postgres
+    depends_on: { postgres: { condition: service_healthy } }
+    volumes:
+      - ./backend/scripts/db:/sql:ro
+    environment:
+      PGHOST: postgres
+      PGDATABASE: safry
+      PGUSER: safry
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      RUNTIME_PASSWORD: ${DATABASE_RUNTIME_PASSWORD:?Set DATABASE_RUNTIME_PASSWORD in .env}
+    entrypoint: ["sh", "-c", "psql -v runtime_password=\"$$RUNTIME_PASSWORD\" -f /sql/create-runtime-role.sql"]
+
+  # Opt-in demo seed (creates known demo accounts). Refuses to run unless ALLOW_DEMO_SEED_IN_PRODUCTION=true.
+  # Never part of a real deployment: docker compose run --rm seed
+  seed:
+    <<: *job
+    profiles: [seed]
+    image: ${IMAGE_PREFIX:-safry}-migrate:${IMAGE_TAG:-local}
+    depends_on: { postgres: { condition: service_healthy } }
+    command: ["node", "node_modules/tsx/dist/cli.mjs", "prisma/seed.ts"]
+    environment:
+      <<: *owner-db
+      NODE_ENV: production
+      ALLOW_DEMO_SEED_IN_PRODUCTION: ${ALLOW_DEMO_SEED_IN_PRODUCTION:-false}
+      DEMO_SEED_PASSWORD: ${DEMO_SEED_PASSWORD:-}
+      BOOTSTRAP_TENANT_CODE: ${BOOTSTRAP_TENANT_CODE:-safry}
+      BOOTSTRAP_TENANT_NAME: ${BOOTSTRAP_TENANT_NAME:-Safry Platform}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@safry.local}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+
+  api:
+    <<: *hardening
+    build: { context: ./backend, target: runtime }
+    # IMAGE_PREFIX: set a distinct value per checkout on a shared host.
+    image: ${IMAGE_PREFIX:-safry}-api:${IMAGE_TAG:-local}
+    depends_on: { postgres: { condition: service_healthy } }
+    # Drain (SHUTDOWN_DRAIN_MS 5 s) + close must finish before SIGKILL; the app force-exits at SHUTDOWN_DEADLINE_MS (25 s).
+    stop_grace_period: 30s
+    networks: [data, app]
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      API_PREFIX: api/v1
+      # Restricted login (NOSUPERUSER NOBYPASSRLS), created by the db-roles job.
+      DATABASE_URL: postgresql://safry_runtime:${DATABASE_RUNTIME_PASSWORD:?Set DATABASE_RUNTIME_PASSWORD in .env}@postgres:5432/safry?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET (32+ characters) in .env}
+      MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?Set MFA_ENCRYPTION_KEY (32+ random characters, not the JWT secret) in .env}
+      # Empty = same-origin only (the SPA is served by the web container). Exact https origins otherwise.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # 1 = nginx only; 2 = TLS proxy (profile "tls" or a load balancer) -> nginx -> api. See docs/DEPLOYMENT.md.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+      SESSION_IDLE_TIMEOUT_MINUTES: ${SESSION_IDLE_TIMEOUT_MINUTES:-15}
+      SESSION_ABSOLUTE_TIMEOUT_HOURS: ${SESSION_ABSOLUTE_TIMEOUT_HOURS:-24}
+    healthcheck:
+      # Readiness (database reachable) gates the web container; the image's own check is liveness only. Intentional split: docs/DEPLOYMENT.md.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    mem_limit: ${API_MEM_LIMIT:-768m}
+    cpus: ${API_CPUS:-1.0}
+    pids_limit: 200
+
+  web:
+    <<: *hardening
+    build: ./frontend
+    image: ${IMAGE_PREFIX:-safry}-web:${IMAGE_TAG:-local}
+    depends_on: { api: { condition: service_healthy } }
+    networks: [app]
+    ports:
+      # Loopback by default: put a TLS terminator in front (profile "tls" or a managed load balancer).
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-3001}:8080"
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 100
+
+  # Optional TLS terminator (automatic certificates). Provider-neutral; a managed load balancer
+  # can replace it. Set SITE_ADDRESS to the public host name and TRUST_PROXY=2 when enabled.
+  proxy:
+    <<: *hardening
+    profiles: [tls]
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    cap_add: [NET_BIND_SERVICE]
+    depends_on: { web: { condition: service_healthy } }
+    networks: [app]
+    environment:
+      # "localhost" = Caddy internal CA (testing only). Production: the public DNS name.
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    volumes:
+      # CADDYFILE=./deploy/caddy/Caddyfile.cloudflare for Cloudflare Full (strict); certificate files in CADDY_CERT_DIR.
+      - ${CADDYFILE:-./deploy/caddy/Caddyfile}:/etc/caddy/Caddyfile:ro
+      - ${CADDY_CERT_DIR:-./deploy/caddy/certs}:/certs:ro
+      - safry_caddy_data:/data
+      - safry_caddy_config:/config
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443/udp"
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 100
+
+  # Optional scheduled logical backup (pg_dump every BACKUP_INTERVAL_SECONDS). Dumps land in the
+  # safry_backups volume: copy them off the host (object storage in the same jurisdiction).
+  # Script: backend/scripts/backup/backup.sh. Managed PITR is preferred in production.
+  backup:
+    <<: *hardening
+    profiles: [backup]
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    user: postgres
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [data]
+    volumes:
+      - ./backend/scripts/backup:/scripts:ro
+      # Mounted on a path the image already owns as "postgres", so the new volume inherits that
+      # ownership and the job never needs root.
+      - safry_backups:/var/lib/postgresql/data
+    environment:
+      DATABASE_MIGRATE_URL: postgresql://safry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/safry
+      BACKUP_DIR: /var/lib/postgresql/data
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    entrypoint: ["sh", "-c", "while true; do sh /scripts/backup.sh || echo 'backup FAILED' >&2; sleep \"$$BACKUP_INTERVAL_SECONDS\"; done"]
+    healthcheck:
+      # Unhealthy when no dump newer than two intervals exists (alert on this).
+      test: ["CMD-SHELL", "find /var/lib/postgresql/data -name 'safry-*.dump' -mmin -$$(( BACKUP_INTERVAL_SECONDS * 2 / 60 )) | grep -q ."]
+      interval: 5m
+      start_period: 2m
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 50
+
+  # Scheduled maintenance: audit_events partitions created ahead, expired refresh sessions purged (30 days), audit partitions older
+  # than 24 months dropped (AUDIT_RETENTION_DAYS overrides). Script: backend/scripts/db/purge.sh (owner-only procedures).
+  maintenance:
+    <<: *hardening
+    profiles: [maintenance]
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    user: postgres
+    depends_on: { postgres: { condition: service_healthy } }
+    networks: [data]
+    volumes:
+      - ./backend/scripts/db:/scripts:ro
+    environment:
+      DATABASE_MIGRATE_URL: postgresql://safry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/safry
+      SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-30}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-}
+    entrypoint: ["sh", "-c", "while true; do sh /scripts/purge.sh || echo 'purge FAILED' >&2; sleep 86400; done"]
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 50
+
+networks:
+  # No route to the Internet and not reachable from the web/proxy tier.
+  data:
+    internal: true
+  app: {}
+
+volumes:
+  safry_postgres_data:
+  safry_backups:
+  safry_caddy_data:
+  safry_caddy_config:

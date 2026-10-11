@@ -1,0 +1,4 @@
+ALTER TABLE "users" ADD COLUMN "isPlatformAdmin" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "users" ADD COLUMN "authVersion" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "users" ADD COLUMN "deletedAt" TIMESTAMPTZ(3);
+ALTER TABLE "tenant_memberships" ADD COLUMN "permissionOverrides" JSONB NOT NULL DEFAULT '{}';

@@ -1,0 +1,23 @@
+.register-page { min-height: 100vh; padding: 42px clamp(18px, 5vw, 80px); display: grid; grid-template-columns: minmax(270px, 0.8fr) minmax(320px, 1fr); gap: clamp(24px, 5vw, 80px); align-items: start; background: linear-gradient(130deg, #edf7f5, #f8fafb 55%, #fff); }
+.register-page__intro { position: sticky; top: 42px; padding-top: 16px; }
+.register-page__intro .brand { margin-bottom: 80px; }
+.register-page__intro h1 { margin: 12px 0; color: var(--navy); font-size: clamp(32px, 4vw, 52px); line-height: 1.25; }
+.register-page__intro p { color: var(--muted); line-height: 1.9; }
+.register-page__types { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 8px; }
+.register-page__types a { padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--navy); background: #fff; text-decoration: none; font-size: 13px; }
+.register-page__types a.active { color: #fff; background: var(--teal); border-color: var(--teal); }
+.register-page__card { max-width: 650px; width: 100%; padding: clamp(22px, 4vw, 42px); border: 1px solid var(--line); border-radius: 22px; background: #fff; box-shadow: 0 24px 70px #183c5812; }
+.register-page__icon { width: 45px; height: 45px; display: grid; place-items: center; border-radius: 13px; color: var(--teal-dark); background: #e7f5f1; }
+.register-page__card h2 { color: var(--navy); font-size: 23px; }
+.register-page__card form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.register-page__card label { display: grid; gap: 7px; color: var(--navy); font-size: 13px; font-weight: 700; }
+.register-page__card input, .register-page__card select { width: 100%; min-width: 0; height: 46px; padding: 0 12px; border: 1px solid #d4dfe3; border-radius: 9px; color: var(--navy); background: #fbfcfc; outline-color: var(--teal); }
+.register-page__card .primary-button, .register-page__card .form-error, .register-page__hint { grid-column: 1 / -1; }
+.register-page__card .primary-button { text-decoration: none; }
+.register-page__hint { margin: -7px 0 0; color: var(--muted); font-size: 12px; }
+.register-page__login { margin: 22px 0 0; font-size: 13px; }
+.register-page__login a { color: var(--teal-dark); font-weight: 700; }
+.register-page__success p { line-height: 1.9; color: var(--muted); }
+.register-page__success .primary-button { width: max-content; }
+@media (max-width: 760px) { .register-page { grid-template-columns: 1fr; } .register-page__intro { position: static; } .register-page__intro .brand { margin-bottom: 34px; } }
+@media (max-width: 520px) { .register-page__card form { grid-template-columns: 1fr; } }

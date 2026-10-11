@@ -1,0 +1,16 @@
+{
+  "name": "safry-platform",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names API,WEB --prefix-colors blue,green \"pnpm --dir backend start:dev\" \"pnpm --dir frontend dev\"",
+    "build": "pnpm --dir backend build && pnpm --dir frontend build",
+    "db:start": "pnpm --dir backend db:local",
+    "db:list": "pnpm --dir backend db:local:list",
+    "db:stop": "pnpm --dir backend db:local:stop"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}

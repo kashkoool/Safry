@@ -1,0 +1,169 @@
+# Database operations runbook
+
+Scope: PostgreSQL 17 behind the Safry API (Prisma 7, row-level security). Everything here was exercised
+against a throwaway Docker PostgreSQL; commands are copy-pasteable from `backend/`.
+
+## 1. Two connections, two roles
+
+| Variable | Used by | Role | Needs |
+|---|---|---|---|
+| `DATABASE_MIGRATE_URL` | `prisma migrate deploy`, `db:seed`, `bootstrap-platform-admin`, `backup.sh`, retention jobs | owner of the schema | DDL, `BYPASSRLS` not required: the purge procedures and the operator scripts (`db:bootstrap`, `db:seed`, `admin:bootstrap`) set the transaction-local bypass flag themselves; proven against a CREATEROLE, non-superuser owner in `test/bootstrap.int.spec.ts` |
+| `DATABASE_URL` | the running API | `safry_runtime` (LOGIN, non-owner, non-superuser, NOBYPASSRLS), member of `safry_app` | DML only |
+
+If `DATABASE_MIGRATE_URL` is unset, everything falls back to `DATABASE_URL` (the old single-URL setup keeps
+working; the API then logs a warning at boot when that login is a superuser or has BYPASSRLS).
+
+One-time setup per database, as the owner or a superuser:
+
+```sh
+psql "$DATABASE_MIGRATE_URL" -v runtime_password="$(openssl rand -base64 24)" -f scripts/db/create-runtime-role.sql
+```
+
+Store the generated password in the secret manager and put it in `DATABASE_URL`. Behaviour is unchanged: each
+request still switches to `safry_app` inside its transaction and sets the tenant. Because `safry_runtime` is not
+the table owner and not BYPASSRLS, forced RLS applies to it even if that switch were skipped (fail closed).
+The role also carries `statement_timeout=60s`, `idle_in_transaction_session_timeout=60s`, `lock_timeout=10s`.
+
+At boot the API runs a probe transaction that proves `SET ROLE safry_app` works for the connecting login and
+refuses to start if it does not (a swallowed `GRANT` would otherwise surface only on the first request).
+`safry_app` is granted to the `safry_runtime` login only, never to the owner login. With `NODE_ENV=production` the API
+also refuses to start when its login is a superuser, has BYPASSRLS, or owns (or is a member of the owner of) tables in
+`public`: such a login can `RESET ROLE` out of `safry_app` and skip row-level security.
+
+## 1a. Rate limiting and Redis outages
+
+With `RATE_LIMIT_REDIS_URL` set, limits are shared across replicas. If Redis errors, the API fails degraded, not closed:
+the in-process store answers (limits still apply per instance, so they multiply by replica count), one error is logged
+per outage, `/metrics` exposes `safry_rate_limit_degraded` (0/1) and `safry_rate_limit_fallback_total`, and
+`/health/ready` returns 200 with `status: "degraded"` / `rateLimit: "degraded-in-process"` (not 503: the API still serves).
+The per-account bucket is keyed on e-mail plus client address; many addresses against one account are bounded by the
+database login lockout (progressive, never blocks the owner's own address).
+
+## 2. Migration rules
+
+- New migrations are named `YYYYMMDD_<area>_<what>` so parallel branches never collide on a sequence number.
+  There is no migration `0007` in the history (numbering jumps from `0006` to `0008`; the original reason is unknown); do not create
+  one, and do not renumber: Prisma orders by directory name and records names in `_prisma_migrations`.
+- DDL and data backfills live in separate migrations. Backfills must be idempotent and batched.
+- Constraints on populated tables: `ADD CONSTRAINT ... NOT VALID`, then `VALIDATE CONSTRAINT` (see
+  `20261007_db_constraints`). A failing `VALIDATE` aborts the deploy; fix the data, never weaken the check.
+- Indexes on large tables: `prisma migrate deploy` runs a file as one transaction, where
+  `CREATE INDEX CONCURRENTLY` is not allowed. For a table over roughly 1M rows, create the index by hand
+  first with the same name, then deploy (the migration uses `IF NOT EXISTS` and becomes a no-op):
+
+  ```sql
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS "bookings_example_idx" ON "bookings"("tenantId", "createdAt");
+  ```
+
+  If a concurrent build is cancelled it leaves an INVALID index: `DROP INDEX CONCURRENTLY` it and retry
+  (`SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;`).
+- Migration `0011_dev_server_wal_access` only does something on a database created by `prisma dev`
+  (schema `_prisma_dev_wal`). It must never reach production: the API refuses to start with
+  `NODE_ENV=production` when that schema exists. Never restore a developer database into an environment.
+- Drift is checked automatically: `test/migrations.int.spec.ts` builds a fresh database from the migrations,
+  asserts `prisma migrate diff` is empty and asserts what must still exist (tables, forced RLS, the
+  non-privileged `safry_app` role, validated CHECKs, an index led by every foreign-key column). Run by hand:
+
+  ```sh
+  pnpm prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+  ```
+
+  Expression indexes (for example the case-insensitive organization name) are not representable in
+  `schema.prisma` and are not compared by that command.
+
+## 3. Backup, restore and point-in-time recovery
+
+Proposed targets (owner to confirm, see decisions): RPO 5 minutes, RTO 1 hour.
+
+| Layer | Mechanism | RPO | Tooling |
+|---|---|---|---|
+| Daily logical dump | `scripts/backup/backup.sh` (pg_dump custom format, sha256, roles-only dump, 14-day pruning) | schedule (24 h) | cron / scheduled job, copy the output off the host |
+| Continuous archiving + base backup | `archive_mode=on`, `archive_command` to object storage, weekly `pg_basebackup` | minutes | managed PITR (preferred) or pgBackRest / WAL-G |
+
+Production Postgres settings for the second layer (self-managed): `wal_level=replica`, `archive_mode=on`,
+`archive_command` that refuses to overwrite (`test ! -f ... && cp %p ...`), `archive_timeout=60`. Alert when
+`pg_stat_archiver.failed_count` grows or `last_archived_time` is older than 5 minutes. Backups must be stored
+outside the database host and the volume that holds the data; encrypt them at rest.
+
+Restore a dump into a new, empty database (the script refuses a database that already has tables):
+
+```sh
+scripts/backup/restore.sh backups/safry-<stamp>.dump "$NEW_DATABASE_URL" backups/roles-<stamp>.sql
+```
+
+Drills (Docker required; both exit non-zero on failure, both remove what they create):
+
+```sh
+SRC_CONTAINER=<running-postgres-container> SRC_DB=safry sh scripts/backup/restore-test.sh
+sh scripts/backup/pitr-drill.sh
+```
+
+`restore-test.sh` dumps the source, restores into a throwaway container and compares row counts of every
+table, index count, validated CHECK count, forced-RLS tables, policies, the `safry_app` role flags and applied
+migrations. `pitr-drill.sh` archives WAL, takes a base backup, writes more rows, deletes everything, then
+rebuilds a server to a chosen timestamp and requires exactly the rows that existed at that moment. Run both
+after every Postgres major upgrade and at least quarterly; record date and result.
+
+## 4. Retention and audit partitions
+
+**Defaults:** refresh sessions are purged 30 days after they expire or are revoked; audit events are kept
+24 months. Both are the defaults of `backend/scripts/db/purge.sh`; `SESSION_RETENTION_DAYS` and `AUDIT_RETENTION_DAYS` override them
+(the audit procedure refuses less than 30 days).
+
+`audit_events` is partitioned by month on `occurredAt` (migration `20261012_db_audit_partitioning`, UTC month boundaries):
+
+| Partition | Holds |
+|---|---|
+| `audit_events_YYYY_MM` | one month; created from 24 months back to 12 months ahead by the migration, later by `ensure_audit_event_partitions` |
+| `audit_events_legacy` | everything older than the retention window at migration time (dropped by the first purge) |
+| `audit_events_default` | safety net for a row outside every range (job stopped, clock skew, far future). Never rejected, never purged; moved into its month when that partition is created. Alert if it holds rows: `SELECT count(*) FROM audit_events_default` |
+
+The primary key is `(id, "occurredAt")` (a partitioned table's key must contain the partition column). Prisma does not model
+partitions: `schema.prisma` declares the parent with `@@id([id, occurredAt])`; child partitions are ignored by
+`prisma migrate diff` (checked in `test/db-data-migrations.int.spec.ts`), and the client reads and writes through the parent.
+Partitions are closed to `safry_app` (default privileges would otherwise grant DML on them, bypassing row-level security and the
+append-only grants on the parent); only the parent carries the grants, FORCE RLS and the tenant policy.
+
+Owner-only procedures (execute revoked from `PUBLIC` and `safry_app`):
+
+```sql
+CALL ensure_audit_event_partitions(0, 6);          -- create missing months, now .. +6 (idempotent; 1..60 months ahead)
+CALL purge_audit_events(interval '24 months');     -- DROP partitions wholly older than the retention; minimum 30 days
+CALL purge_refresh_sessions(interval '30 days');   -- batched row delete, each batch commits separately
+```
+
+`backend/scripts/db/purge.sh` runs all three daily (compose profile `maintenance`). Retention has month granularity: audit rows
+live up to one month longer than the retention. Each drop is recorded as an `audit.retention.partitions_dropped` event.
+`ensure_audit_event_partitions` sets `lock_timeout = 10s`. `purge_audit_events` waits at most 500 ms per DROP attempt and retries
+5 times (PostgreSQL refuses `DETACH PARTITION ... CONCURRENTLY` inside a procedure), so audit writers never queue behind it for
+more than about 500 ms; a long application transaction makes the job fail and retry the next day. Both migrations of 2026-10-12
+run as one transaction each and lock their tables until commit: use a maintenance window on a large table. The first purge
+after the migration drops `audit_events_legacy` (history older than the retention): export it first if it must be kept. To keep audit rows longer than the retention, export or detach the partition before purging.
+
+Rewriting the table in the migration (copy into partitions, drop the old table) suits today's volume. For a large production
+table, create the partitioned table beside the old one, copy in batches, then swap names in one short transaction.
+Rollback of that migration means restoring from backup.
+
+## 5. Connection budget
+
+Each API instance holds up to `DATABASE_POOL_MAX` connections (default 10, 1 in development). Capacity rule:
+
+`instances x DATABASE_POOL_MAX + migration/admin/backup sessions (about 5) + monitoring <= max_connections - 10`
+
+With the PostgreSQL default of 100 that is at most 8 instances at 10 connections. Beyond that, put PgBouncer in
+transaction mode in front: all session state the API uses (`set_config(..., true)`) is transaction-local, so
+transaction pooling is compatible. Keep `DATABASE_MIGRATE_URL` pointing at PostgreSQL directly, not the pooler.
+
+## Bootstrap rules
+
+`pnpm db:bootstrap` is create-only: re-running never re-grants a role, a role permission or a membership an operator removed, never
+renames a role and never touches an existing administrator. An existing account with `BOOTSTRAP_ADMIN_EMAIL` is refused unless it
+is already an ACTIVE platform administrator; to make an existing ordinary account the first tenant administrator you must set
+`BOOTSTRAP_ADOPT_EXISTING_ACCOUNT=true` after verifying who owns that address. A disabled, suspended or deleted account is always refused.
+New permission codes added in a later release are added to the catalogue, but NOT to roles that already exist (grant them in the product or by migration).
+
+## Migrations that remove things
+
+Removing a column or table ships one release after the code stops using it (expand/contract); see `prisma/deferred-migrations/README.md`.
+Constraint migrations add `NOT VALID` first, validate in their own later migration, and begin with a pre-flight that lists offending rows.
+If a deploy stops at a pre-flight: fix the listed data, run `prisma migrate resolve --rolled-back <migration_name>`, redeploy.

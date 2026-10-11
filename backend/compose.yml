@@ -1,0 +1,21 @@
+# Local development database only (never used in production; see ../docker-compose.yml).
+# Same PostgreSQL major as production. Published on loopback only.
+services:
+  postgres:
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_DB: safry
+      POSTGRES_USER: safry
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD (see backend/.env.example)}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - safry_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U safry -d safry"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  safry_postgres_data:

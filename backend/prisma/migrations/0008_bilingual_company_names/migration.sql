@@ -1,0 +1,3 @@
+ALTER TABLE "provider_organizations" ADD COLUMN "nameAr" VARCHAR(200) NOT NULL DEFAULT '', ADD COLUMN "nameEn" VARCHAR(200) NOT NULL DEFAULT '';
+UPDATE "provider_organizations" SET "nameAr" = "name";
+ALTER TABLE "travel_services" ADD COLUMN "titleEn" VARCHAR(200) NOT NULL DEFAULT '', ADD COLUMN "descriptionEn" VARCHAR(1000) NOT NULL DEFAULT '', ADD COLUMN "cityEn" VARCHAR(120) NOT NULL DEFAULT '', ADD COLUMN "detailsEn" JSONB NOT NULL DEFAULT '{}';

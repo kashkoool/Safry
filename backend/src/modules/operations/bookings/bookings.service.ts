@@ -1,0 +1,197 @@
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import type { Response } from "express";
+import { finishPage, keysetPage, type PageQueryDto } from "../../../common/pagination.js";
+import type { AuthUser } from "../../../common/security/auth-user.js";
+import { isOperator, isTenantAdmin } from "../../../common/security/principal.js";
+import { PrismaService } from "../../../database/prisma.service.js";
+import type { Prisma } from "../../../generated/prisma/client.js";
+import { serviceInclude } from "../../travel-services/service-select.js";
+import { assertCapacity, bookingTerms, inventorySelect, overlapWhere } from "./booking-rules.js";
+import type { CreateBookingDto } from "./dto/create-booking.dto.js";
+import type { UpdateBookingDto } from "./dto/update-booking.dto.js";
+
+const bookingInclude = {
+  service: { include: serviceInclude },
+  traveler: { select: { user: { select: { displayName: true, email: true } } } }
+} as const;
+const operator = isOperator;
+const admin = isTenantAdmin;
+
+/** Booking Management. */
+@Injectable()
+export class BookingsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  private async audit(tx: Prisma.TransactionClient, user: AuthUser, action: string, entityId: string): Promise<void> {
+    await tx.auditEvent.create({
+      data: { tenantId: user.tenantId, actorUserId: user.userId, action, entityType: "booking", entityId }
+    });
+  }
+
+  private bookingScope(user: AuthUser): Prisma.BookingWhereInput {
+    if (admin(user)) return { tenantId: user.tenantId };
+    if (operator(user))
+      return {
+        tenantId: user.tenantId,
+        service: { organization: { members: { some: { id: user.membershipId } } } }
+      };
+    if (user.roles.includes("traveler"))
+      return { tenantId: user.tenantId, travelerMembershipId: user.membershipId };
+    throw new ForbiddenException();
+  }
+  /** Newest first, keyset-paged (see common/pagination.ts): `?limit=` and `?cursor=`, next cursor in `X-Next-Cursor`. */
+  async listBookings(user: AuthUser, page: PageQueryDto, response: Response): Promise<unknown> {
+    const rows = await this.prisma.booking.findMany({ ...keysetPage(page, this.bookingScope(user)), include: bookingInclude });
+    return finishPage(rows, page, response);
+  }
+
+  private async lockService(
+    tx: Prisma.TransactionClient,
+    user: AuthUser,
+    id: string,
+    active = true
+  ): Promise<Prisma.TravelServiceGetPayload<{ include: { organization: true } }>> {
+    const initial = await tx.travelService.findFirst({ where: { id, tenantId: user.tenantId } });
+    if (!initial) throw new NotFoundException("الخدمة غير موجودة");
+    // Shared lock on the organization: bookings of different services no longer queue behind each other, while
+    // anything that changes the organization (suspension, service edits take FOR UPDATE) still excludes them.
+    // Capacity is serialized per service by the service row lock below (same lock order everywhere: org, then service).
+    await tx.$queryRaw`SELECT "id" FROM "provider_organizations" WHERE "id"=${initial.providerOrganizationId}::uuid FOR SHARE`;
+    await tx.$queryRaw`SELECT "id" FROM "travel_services" WHERE "id"=${id}::uuid FOR UPDATE`;
+    const service = await tx.travelService.findUniqueOrThrow({
+      where: { id, tenantId: user.tenantId },
+      include: { organization: true }
+    });
+    if (active && (service.status !== "ACTIVE" || service.organization.status !== "ACTIVE"))
+      throw new ConflictException("الخدمة أو المنشأة غير متاحة للحجز حالياً");
+    return service;
+  }
+
+  async createBooking(user: AuthUser, input: CreateBookingDto, idempotencyKey?: string): Promise<unknown> {
+    if (!user.roles.includes("traveler")) throw new ForbiddenException("إنشاء الحجز متاح للمسافر");
+    if (idempotencyKey !== undefined && !/^[A-Za-z0-9_-]{8,64}$/.test(idempotencyKey))
+      throw new BadRequestException("Idempotency-Key must be 8-64 letters, digits, - or _");
+    return this.prisma.$transaction(async (tx) => {
+      // Lock first (a concurrent retry of the same request waits here and then finds the first booking), but do NOT require
+      // the service to be bookable yet: a retry must get the stored booking even after midnight or after the service was
+      // suspended, so the availability and date rules apply only to a request that is really new.
+      const service = await this.lockService(tx, user, input.serviceId, false);
+      if (idempotencyKey) {
+        const first = await tx.booking.findFirst({
+          where: { travelerMembershipId: user.membershipId, idempotencyKey },
+          include: bookingInclude
+        });
+        if (first) {
+          // Compare the raw request with what was stored; nothing is re-validated or re-priced.
+          const perUnit = service.category === "HOTEL" || service.category === "TRANSPORT";
+          const day = (value: Date | null): string | null => value?.toISOString().slice(0, 10) ?? null;
+          const same = first.serviceId === service.id && first.travelersCount === input.travelersCount
+            && first.units === (perUnit ? (input.units ?? 1) : input.travelersCount)
+            && day(first.serviceDate) === input.serviceDate && day(first.endDate) === (input.endDate ?? null);
+          if (!same) throw new ConflictException("Idempotency-Key was already used for a different booking request");
+          return first;
+        }
+      }
+      if (service.status !== "ACTIVE" || service.organization.status !== "ACTIVE")
+        throw new ConflictException("الخدمة أو المنشأة غير متاحة للحجز حالياً");
+      const terms = bookingTerms(
+        service.category,
+        service.details as Record<string, string>,
+        service.priceCents,
+        input
+      );
+      const existing = await tx.booking.findMany({
+        where: { serviceId: service.id, status: { not: "CANCELLED" }, ...overlapWhere(terms) },
+        select: inventorySelect
+      });
+      assertCapacity(service.capacity, existing, terms);
+      const stored = {
+        units: terms.units,
+        serviceDate: terms.serviceDate,
+        endDate: terms.endDate,
+        totalCents: terms.totalCents
+      };
+      const booking = await tx.booking.create({
+        data: {
+          ...stored,
+          tenantId: user.tenantId,
+          serviceId: service.id,
+          travelerMembershipId: user.membershipId,
+          travelersCount: input.travelersCount,
+          unitPriceCents: service.priceCents,
+          currency: service.currency,
+          notes: input.notes?.trim(),
+          ...(idempotencyKey ? { idempotencyKey } : {})
+        },
+        include: bookingInclude
+      });
+      await this.audit(tx, user, "booking.create", booking.id);
+      return booking;
+    });
+  }
+
+  async updateBooking(user: AuthUser, id: string, input: UpdateBookingDto): Promise<unknown> {
+    if (!admin(user) && !user.roles.includes("traveler"))
+      throw new ForbiddenException("تعديل تفاصيل الحجز متاح للمسافر والمدير");
+    return this.prisma.$transaction(async (tx) => {
+      const first = await tx.booking.findFirst({ where: { id, ...this.bookingScope(user) } });
+      if (!first) throw new NotFoundException("الحجز غير موجود");
+      const service = await this.lockService(tx, user, first.serviceId);
+      const booking = await tx.booking.findUniqueOrThrow({ where: { id, tenantId: user.tenantId } });
+      if (booking.status !== "PENDING") throw new ConflictException("يمكن تعديل الحجوزات المعلقة فقط");
+      const terms = bookingTerms(
+        service.category,
+        service.details as Record<string, string>,
+        booking.unitPriceCents,
+        {
+          travelersCount: input.travelersCount ?? booking.travelersCount,
+          units: input.units ?? booking.units,
+          serviceDate: input.serviceDate ?? booking.serviceDate.toISOString().slice(0, 10),
+          endDate: input.endDate ?? booking.endDate?.toISOString().slice(0, 10)
+        }
+      );
+      const existing = await tx.booking.findMany({
+        where: { serviceId: service.id, id: { not: id }, status: { not: "CANCELLED" }, ...overlapWhere(terms) },
+        select: inventorySelect
+      });
+      assertCapacity(service.capacity, existing, terms);
+      const stored = {
+        units: terms.units,
+        serviceDate: terms.serviceDate,
+        endDate: terms.endDate,
+        totalCents: terms.totalCents
+      };
+      const updated = await tx.booking.update({
+        where: { id, tenantId: user.tenantId },
+        data: { ...stored, travelersCount: input.travelersCount, notes: input.notes?.trim() },
+        include: bookingInclude
+      });
+      await this.audit(tx, user, "booking.update", id);
+      return updated;
+    });
+  }
+
+  async updateBookingStatus(user: AuthUser, id: string, status: "CONFIRMED" | "CANCELLED"): Promise<unknown> {
+    const permission = admin(user) || operator(user) ? "booking.manage" : "booking.create";
+    if (!user.permissions.includes(permission))
+      throw new ForbiddenException("صلاحية تغيير حالة الحجز غير متاحة لهذا الحساب");
+    if (status === "CONFIRMED" && !admin(user) && !operator(user))
+      throw new ForbiddenException("تأكيد الحجز متاح للمنشأة والمدير فقط");
+    return this.prisma.$transaction(async (tx) => {
+      const first = await tx.booking.findFirst({ where: { id, ...this.bookingScope(user) } });
+      if (!first) throw new NotFoundException("الحجز غير موجود");
+      await this.lockService(tx, user, first.serviceId, status === "CONFIRMED");
+      const booking = await tx.booking.findUniqueOrThrow({ where: { id, tenantId: user.tenantId }, include: bookingInclude });
+      if (booking.status === status) return booking;
+      if (booking.status === "CANCELLED")
+        throw new ConflictException("لا يمكن إعادة تأكيد حجز ملغي؛ أنشئ حجزاً جديداً");
+      const updated = await tx.booking.update({
+        where: { id, tenantId: user.tenantId },
+        data: { status },
+        include: bookingInclude
+      });
+      await this.audit(tx, user, `booking.${status.toLowerCase()}`, id);
+      return updated;
+    });
+  }
+}

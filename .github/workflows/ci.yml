@@ -1,0 +1,178 @@
+# Do NOT add set -x, env, printenv or echo of secrets to any step: Actions logs are readable by anyone with repo read access.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+  PNPM_VERSION: 11
+  # Throwaway value only used to generate the Prisma client; nothing connects to it.
+  DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+
+jobs:
+  backend:
+    name: Backend (lint, typecheck, unit, integration, route gate, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Real Linux PostgreSQL for the integration suite (the embedded Windows-style server is not used in CI).
+    # Throwaway test-only credentials for an ephemeral container that lives for this job only.
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_PASSWORD: ci-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate Prisma client
+        run: pnpm prisma:generate
+      - name: Validate Prisma schema
+        run: pnpm exec prisma validate --schema prisma/schema.prisma
+      - name: Lint
+        run: pnpm lint
+      - name: Build
+        run: pnpm build
+      # Needs dist/ (the integration test support imports the compiled app), so it runs after the build.
+      - name: Typecheck
+        run: pnpm typecheck
+      # Unit tests, the integration suite (every migration applied, row-level security on) and the route
+      # coverage gate (fails when an HTTP route is not exercised by the API tests). Builds first: the tests import dist/.
+      - name: Unit, integration and route-coverage gate
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:ci-test-only@localhost:5432/postgres
+        run: pnpm test:int:all
+      # The same integration suite again with the application connected as the restricted production login
+      # (NOBYPASSRLS, member of safry_app), as a superuser login hides every defect that needs row-level security.
+      - name: Integration suite as the restricted runtime login
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:ci-test-only@localhost:5432/postgres
+          TEST_APP_AS_RUNTIME: "1"
+        run: pnpm exec vitest run -c vitest.int.config.ts
+      # Blocking: production dependencies must stay clean except the advisories listed, with a reason and a
+      # review date, in backend/audit-allowlist.json (the unreachable Prisma-peer chain). A new advisory, an expired entry
+      # or unreadable audit output fails the job. Dev-tool advisories are tracked separately.
+      - name: Dependency audit (production, allowlist)
+        run: pnpm audit:prod
+      # check-env.sh must keep refusing TRUST_PROXY>=2 with a publicly published web port.
+      - name: check-env.sh self-test
+        working-directory: .
+        run: sh scripts/check-env.test.sh
+
+  frontend:
+    name: Frontend (lint, typecheck, build, i18n)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      # "build" runs "tsc -b" first, so this step is also the typecheck.
+      - name: Typecheck and build
+        run: pnpm build
+      - name: i18n inventory
+        run: pnpm check:i18n
+      - name: Dependency audit (production)
+        continue-on-error: true
+        run: pnpm audit --prod
+
+  migrate-image:
+    name: Migrate image (hardened run against PostgreSQL 17)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Guards against the Prisma engine download failing at run time on a read-only filesystem.
+    # Throwaway test-only credentials for an ephemeral container that lives for this job only.
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_PASSWORD: ci-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the migrate target
+        run: docker build --target migrate -t safry-migrate:ci backend
+      - name: Image runs as a non-root user
+        run: |
+          user="$(docker image inspect --format '{{.Config.User}}' safry-migrate:ci)"
+          echo "image user: $user"
+          test -n "$user" && test "$user" != "root" && test "$user" != "0"
+      # Same restrictions as the compose "job" anchor: read-only root, no capabilities, no new privileges, tmpfs /tmp.
+      - name: Run migrate deploy (hardened)
+        run: |
+          docker run --rm --network host --read-only --cap-drop ALL             --security-opt no-new-privileges:true --tmpfs /tmp:size=64m,mode=1777             -e NODE_ENV=production             -e DATABASE_URL='postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public'             -e DATABASE_MIGRATE_URL='postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public'             safry-migrate:ci
+      # Positive check: every migration in the repository is recorded as finished, and a second run is a no-op.
+      - name: Every migration applied
+        run: |
+          expected="$(ls -d backend/prisma/migrations/*/ | wc -l)"
+          applied="$(docker run --rm --network host postgres:17.11-alpine psql 'postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres' -Atc 'select count(*) from _prisma_migrations where finished_at is not null and rolled_back_at is null')"
+          echo "expected=$expected applied=$applied"
+          test "$expected" = "$applied"
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

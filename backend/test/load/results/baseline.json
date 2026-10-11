@@ -1,0 +1,180 @@
+{
+  "label": "baseline",
+  "url": "http://127.0.0.1:3150",
+  "duration": 15,
+  "at": "2026-10-07T12:10:55.940Z",
+  "results": [
+    {
+      "scenario": "health_live",
+      "connections": 64,
+      "rps": 3141,
+      "p50": 18.1341,
+      "p95": 36.0329,
+      "p99": 56.9933,
+      "max": 128,
+      "total": 47108,
+      "non2xx": 0,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 0,
+      "statusCounts": {
+        "2xx": 47108
+      }
+    },
+    {
+      "scenario": "health_ready",
+      "connections": 32,
+      "rps": 1206,
+      "p50": 24.2809,
+      "p95": 47.9001,
+      "p99": 71.7471,
+      "max": 108,
+      "total": 18091,
+      "non2xx": 0,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 0,
+      "statusCounts": {
+        "2xx": 18091
+      }
+    },
+    {
+      "scenario": "me",
+      "connections": 64,
+      "rps": 68,
+      "p50": 905.877,
+      "p95": 1225.3152,
+      "p99": 1647.8667,
+      "max": 1775,
+      "total": 1016,
+      "non2xx": 0,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 0,
+      "statusCounts": {
+        "2xx": 1016
+      }
+    },
+    {
+      "scenario": "activity",
+      "connections": 64,
+      "rps": 65,
+      "p50": 934.517,
+      "p95": 1273.7703000000001,
+      "p99": 1525.0857,
+      "max": 1587,
+      "total": 977,
+      "non2xx": 0,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 0,
+      "statusCounts": {
+        "2xx": 977
+      }
+    },
+    {
+      "scenario": "bookings_traveler",
+      "connections": 32,
+      "rps": 35,
+      "p50": 816.531,
+      "p95": 1324.4095,
+      "p99": 1477.5875,
+      "max": 1679,
+      "total": 531,
+      "non2xx": 0,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 0,
+      "statusCounts": {
+        "2xx": 531
+      }
+    },
+    {
+      "scenario": "bookings_admin",
+      "connections": 8,
+      "rps": 1,
+      "p50": 6739.4063,
+      "p95": 9469.1906,
+      "p99": 9469.1906,
+      "max": 9469,
+      "total": 11,
+      "non2xx": 2,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 18.18,
+      "statusCounts": {
+        "2xx": 9,
+        "5xx": 2
+      }
+    },
+    {
+      "scenario": "marketplace",
+      "connections": 16,
+      "rps": 12,
+      "p50": 891.3066,
+      "p95": 5147.5259,
+      "p99": 5962.7112,
+      "max": 6045,
+      "total": 179,
+      "non2xx": 7,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 3.91,
+      "statusCounts": {
+        "2xx": 172,
+        "5xx": 7
+      }
+    },
+    {
+      "scenario": "services_provider",
+      "connections": 16,
+      "rps": 19,
+      "p50": 703.7865,
+      "p95": 2442.0829,
+      "p99": 2705.504,
+      "max": 2771,
+      "total": 289,
+      "non2xx": 0,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 0,
+      "statusCounts": {
+        "2xx": 289
+      }
+    },
+    {
+      "scenario": "booking_create_hot",
+      "connections": 16,
+      "rps": 7,
+      "p50": 2179.1043,
+      "p95": 3083.8671,
+      "p99": 3604.2237,
+      "max": 3865,
+      "total": 103,
+      "non2xx": 0,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 0,
+      "statusCounts": {
+        "2xx": 103
+      }
+    },
+    {
+      "scenario": "mixed_traveler",
+      "connections": 48,
+      "rps": 29,
+      "p50": 1558.9969,
+      "p95": 2720.8399,
+      "p99": 3059.2492,
+      "max": 3232,
+      "total": 432,
+      "non2xx": 0,
+      "errors": 0,
+      "timeouts": 0,
+      "errorRatePct": 0,
+      "statusCounts": {
+        "2xx": 432
+      }
+    }
+  ]
+}

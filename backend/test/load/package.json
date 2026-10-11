@@ -1,0 +1,14 @@
+{
+  "name": "safry-load-test",
+  "private": true,
+  "type": "module",
+  "description": "Load-test tooling for the Safry backend (kept out of the backend dependency tree)",
+  "scripts": {
+    "seed": "node seed.mjs",
+    "run": "node run.mjs"
+  },
+  "dependencies": {
+    "autocannon": "^8.0.0",
+    "pg": "^8.23.0"
+  }
+}

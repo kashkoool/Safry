@@ -1,0 +1,76 @@
+# Block AI attribution from reaching main.
+#
+# Project policy: commits carry the human author only. No AI co-author trailers,
+# no "generated with" footers, no AI vendor noreply addresses.
+#
+# Scope: every commit in the PR, plus the PR title and body (the PR body becomes
+# the squash-merge commit message, so it must be clean too).
+name: no-ai-attribution
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: No AI attribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Need the full PR commit range, not just the tip commit.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan commits, title and body
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Passed via env, never inlined into the script, so a crafted title
+          # cannot break out of the shell.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          # Case-insensitive. Matches the co-author trailer, the "generated
+          # with" footer, and AI vendor noreply addresses.
+          PATTERN='co-authored-by:[[:space:]]*(claude|anthropic|copilot|chatgpt|openai|gemini|cursor|devin)|noreply@anthropic\.com|generated[[:space:]]+with[[:space:]]+\[?(claude|anthropic|copilot|chatgpt|openai|cursor|devin)'
+
+          fail=0
+
+          echo "Scanning commits ${BASE_SHA}..${HEAD_SHA}"
+          while read -r sha; do
+            [ -z "$sha" ] && continue
+            body="$(git log -1 --format='%B' "$sha")"
+            if printf '%s' "$body" | grep -qiE "$PATTERN"; then
+              echo "::error::Commit $sha contains AI attribution."
+              printf '%s' "$body" | grep -inE "$PATTERN" | sed 's/^/    /'
+              fail=1
+            fi
+          done < <(git rev-list "${BASE_SHA}..${HEAD_SHA}")
+
+          # The title/body become the squash-merge commit message, so they must
+          # be clean too — this is the path a stray trailer would take.
+          if printf '%s' "${PR_TITLE:-}" | grep -qiE "$PATTERN"; then
+            echo "::error::PR title contains AI attribution (it becomes the squash commit message)."
+            fail=1
+          fi
+          if printf '%s' "${PR_BODY:-}" | grep -qiE "$PATTERN"; then
+            echo "::error::PR body contains AI attribution (it becomes the squash commit message)."
+            printf '%s' "${PR_BODY:-}" | grep -inE "$PATTERN" | sed 's/^/    /'
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "Commits must name the human author only."
+            echo "Fix: git rebase -i <base> and delete the offending trailer"
+            echo "lines, or edit the PR title/body, then push again."
+            exit 1
+          fi
+
+          echo "OK — no AI attribution found in commits, title, or body."

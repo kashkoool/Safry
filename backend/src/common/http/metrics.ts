@@ -1,0 +1,84 @@
+import { Controller, Get, Headers, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { SkipThrottle } from "@nestjs/throttler";
+import { timingSafeEqual } from "node:crypto";
+import { AuthPrincipalCache } from "../cache/auth-principal-cache.js";
+import { rateLimitState } from "./rate-limit.js";
+import { Public } from "../security/public.decorator.js";
+
+const BUCKETS_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10_000];
+
+/** Minimal Prometheus-text metrics (no dependency): request counts and latency histogram per route template. */
+@Injectable()
+export class MetricsService {
+  private readonly counts = new Map<string, number>();
+  private readonly buckets = new Map<string, number[]>();
+  private readonly sums = new Map<string, number>();
+
+  /** Route templates only (never raw URLs): the label set stays bounded and carries no ids or query strings. */
+  observe(method: string, route: string, status: number, durationMs: number): void {
+    const statusClass = `${Math.floor(status / 100)}xx`;
+    const key = `${method}|${route}|${statusClass}`;
+    this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
+    this.sums.set(key, (this.sums.get(key) ?? 0) + durationMs);
+    const hist = this.buckets.get(key) ?? new Array<number>(BUCKETS_MS.length + 1).fill(0);
+    const found = BUCKETS_MS.findIndex((bound) => durationMs <= bound);
+    hist[found === -1 ? BUCKETS_MS.length : found]! += 1;
+    this.buckets.set(key, hist);
+  }
+
+  render(extra: Record<string, number>): string {
+    const lines = ["# TYPE safry_http_requests_total counter", "# TYPE safry_http_request_duration_ms histogram"];
+    for (const [key, count] of this.counts) {
+      const [method, route, status] = key.split("|");
+      const labels = `method="${method}",route="${route}",status="${status}"`;
+      lines.push(`safry_http_requests_total{${labels}} ${count}`);
+      let cumulative = 0;
+      const hist = this.buckets.get(key)!;
+      BUCKETS_MS.forEach((bound, index) => {
+        cumulative += hist[index]!;
+        lines.push(`safry_http_request_duration_ms_bucket{${labels},le="${bound}"} ${cumulative}`);
+      });
+      lines.push(`safry_http_request_duration_ms_bucket{${labels},le="+Inf"} ${count}`);
+      lines.push(`safry_http_request_duration_ms_sum{${labels}} ${this.sums.get(key)!.toFixed(1)}`);
+      lines.push(`safry_http_request_duration_ms_count{${labels}} ${count}`);
+    }
+    for (const [name, value] of Object.entries(extra)) lines.push(`${name} ${value}`);
+    const memory = process.memoryUsage();
+    lines.push(`safry_process_resident_memory_bytes ${memory.rss}`, `safry_process_heap_used_bytes ${memory.heapUsed}`);
+    return `${lines.join("\n")}\n`;
+  }
+}
+
+/**
+ * Not part of the public API: disabled (404) unless METRICS_TOKEN is configured, and then only
+ * served to a caller presenting it as a bearer token (the scraper), compared in constant time.
+ */
+@Public()
+@SkipThrottle({ default: true, account: true })
+@Controller("metrics")
+export class MetricsController {
+  constructor(
+    private readonly metrics: MetricsService,
+    private readonly config: ConfigService,
+    private readonly principals: AuthPrincipalCache
+  ) {}
+
+  @Get()
+  scrape(@Headers("authorization") authorization?: string): string {
+    const token = this.config.get<string>("METRICS_TOKEN");
+    if (!token) throw new NotFoundException();
+    const given = Buffer.from(authorization?.replace(/^Bearer /i, "") ?? "");
+    const expected = Buffer.from(token);
+    if (given.length !== expected.length || !timingSafeEqual(given, expected)) throw new UnauthorizedException();
+    const cache = this.principals.stats();
+    return this.metrics.render({
+      safry_auth_cache_hits_total: cache.hits,
+      safry_auth_cache_misses_total: cache.misses,
+      safry_auth_cache_entries: cache.size,
+      safry_auth_cache_invalidations_total: cache.invalidations,
+      safry_rate_limit_degraded: rateLimitState.degraded ? 1 : 0,
+      safry_rate_limit_fallback_total: rateLimitState.fallbackTotal
+    });
+  }
+}

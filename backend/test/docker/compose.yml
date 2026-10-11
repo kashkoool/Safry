@@ -1,0 +1,38 @@
+# Throw-away stack for the backend integration + route-coverage suites (see ../README.md).
+# Run from backend/:  pnpm test:docker      (builds nothing, removes everything afterwards)
+name: safry-test
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: ${TEST_PG_PASSWORD:?set by test/docker/run.sh}
+    ports:
+      - "${TEST_PG_PORT:-55501}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  runner:
+    image: node:22-bookworm-slim
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TEST_DATABASE_URL: postgresql://postgres:${TEST_PG_PASSWORD}@postgres:5432/postgres
+      CI: "true"
+    volumes:
+      - ../..:/src:ro
+    working_dir: /work
+    command:
+      - bash
+      - -ec
+      - |
+        mkdir -p /work
+        tar -C /src --exclude=./node_modules --exclude=./dist -cf - . | tar -C /work -xf -
+        npm install -g pnpm@11 >/dev/null
+        pnpm install --frozen-lockfile
+        pnpm prisma:generate
+        pnpm test:int:all
+        # same suite again, application connected as the restricted production login
+        TEST_APP_AS_RUNTIME=1 pnpm exec vitest run -c vitest.int.config.ts

@@ -1,0 +1,402 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  REVOKED
+}
+
+enum ServiceCategory {
+  FLIGHT
+  HOTEL
+  TRANSPORT
+  TOUR
+  OTHER
+  UMRAH
+  PACKAGE
+  RESTAURANT
+  VISA
+  VISIT
+}
+
+enum ProviderType {
+  UMRAH_COMPANY
+  TRAVEL_COMPANY
+  HOTEL
+  AIRLINE
+  TRANSPORT
+  RESTAURANT
+  VISA
+  VISIT
+  OTHER
+}
+
+enum ServiceStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+model Tenant {
+  id             String                 @id @default(uuid()) @db.Uuid
+  code           String                 @unique @db.VarChar(64)
+  name           String                 @db.VarChar(200)
+  status         TenantStatus           @default(ACTIVE)
+  settings       Json                   @default("{}")
+  memberships    TenantMembership[]
+  roles          Role[]
+  sessions       RefreshSession[]
+  auditEvents    AuditEvent[]
+  travelServices TravelService[]
+  bookings       Booking[]
+  providers      ProviderOrganization[]
+  createdAt      DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime               @updatedAt @db.Timestamptz(3)
+  archivedAt     DateTime?              @db.Timestamptz(3)
+
+  @@map("tenants")
+}
+
+model User {
+  isPlatformAdmin                 Boolean            @default(false)
+  authVersion                     Int                @default(0)
+  deletedAt                       DateTime?          @db.Timestamptz(3)
+  id                              String             @id @default(uuid()) @db.Uuid
+  email                           String             @db.VarChar(320)
+  emailNormalized                 String             @unique @db.VarChar(320)
+  passwordHash                    String             @db.VarChar(255)
+  displayName                     String             @db.VarChar(200)
+  phone                           String?            @db.VarChar(32)
+  locale                          String             @default("ar-SA") @db.VarChar(16)
+  status                          UserStatus         @default(ACTIVE)
+  emailVerifiedAt                 DateTime?          @db.Timestamptz(3)
+  memberships                     TenantMembership[]
+  sessions                        RefreshSession[]
+  auditEvents                     AuditEvent[]       @relation("AuditActor")
+  createdAt                       DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt                       DateTime           @updatedAt @db.Timestamptz(3)
+  disabledAt                      DateTime?          @db.Timestamptz(3)
+  // DEPRECATED: login counters live in login_throttles. Unused by the code; kept in the schema until
+  // the contract migration in prisma/deferred-migrations/ ships, one release after no running image selects these columns.
+  failedLoginCount                Int                @default(0)
+  lastFailedLoginAt               DateTime?          @db.Timestamptz(3)
+  lockedUntil                     DateTime?          @db.Timestamptz(3)
+  // TOTP multi-factor authentication.
+  mfaSecretEnc                    String?            @db.VarChar(512)
+  mfaEnabledAt                    DateTime?          @db.Timestamptz(3)
+  mfaLastStep                     Int?
+  mfaRecoveryHashes               Json               @default("[]")
+  // Set by migration 20261012_auth_invalidate_legacy_recovery_codes when legacy recovery codes were removed; cleared on regeneration.
+  mfaRecoveryRegenerationRequired Boolean            @default(false)
+  // SHA-256 of the one pending MFA login challenge id; cleared when the challenge is answered (single use).
+  mfaChallengeHash                String?            @db.Char(64)
+
+  @@index([status])
+  @@index([email(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_email_trgm_idx")
+  @@index([displayName(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_displayName_trgm_idx")
+  @@map("users")
+}
+
+model TenantMembership {
+  permissionOverrides    Json                    @default("{}")
+  id                     String                  @id @default(uuid()) @db.Uuid
+  tenantId               String                  @db.Uuid
+  userId                 String                  @db.Uuid
+  status                 MembershipStatus        @default(INVITED)
+  jobTitle               String?                 @db.VarChar(160)
+  providerOrganizationId String?                 @db.Uuid
+  departmentId           String?                 @db.Uuid
+  organization           ProviderOrganization?   @relation(fields: [providerOrganizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  department             OrganizationDepartment? @relation(fields: [departmentId, providerOrganizationId, tenantId], references: [id, organizationId, tenantId], onDelete: Restrict)
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  roles                  MembershipRole[]
+  sessions               RefreshSession[]
+  providedServices       TravelService[]         @relation("ProviderServices")
+  bookings               Booking[]               @relation("TravelerBookings")
+  createdAt              DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime                @updatedAt @db.Timestamptz(3)
+  revokedAt              DateTime?               @db.Timestamptz(3)
+  /// Created by a tenant-side actor for a pre-existing identity: only the identity owner can accept it.
+  awaitingOwnerConsent   Boolean                 @default(false)
+  /// Suspended or revoked by a tenant-level actor: organization managers can not lift it.
+  statusLockedByTenant   Boolean                 @default(false)
+
+  @@unique([tenantId, userId])
+  @@unique([id, tenantId])
+  @@index([userId, status])
+  @@index([tenantId, providerOrganizationId])
+  @@index([tenantId, departmentId])
+  @@map("tenant_memberships")
+}
+
+model ProviderOrganization {
+  id            String                   @id @default(uuid()) @db.Uuid
+  tenantId      String                   @db.Uuid
+  name          String                   @db.VarChar(200)
+  nameAr        String                   @default("") @db.VarChar(200)
+  nameEn        String                   @default("") @db.VarChar(200)
+  type          ProviderType
+  city          String                   @db.VarChar(120)
+  contactEmail  String                   @db.VarChar(320)
+  phone         String                   @default("") @db.VarChar(32)
+  licenseNumber String                   @default("") @db.VarChar(120)
+  specialties   Json                     @default("[]")
+  status        TenantStatus             @default(ACTIVE)
+  tenant        Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  members       TenantMembership[]
+  departments   OrganizationDepartment[]
+  staffRoles    Role[]
+  services      TravelService[]
+  createdAt     DateTime                 @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime                 @updatedAt @db.Timestamptz(3)
+
+  @@unique([id, tenantId])
+  @@index([tenantId, type, status])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "provider_organizations_name_trgm_idx")
+  @@map("provider_organizations")
+}
+
+model OrganizationDepartment {
+  id             String               @id @default(uuid()) @db.Uuid
+  tenantId       String               @db.Uuid
+  organizationId String               @db.Uuid
+  code           String               @db.VarChar(64)
+  name           String               @db.VarChar(160)
+  active         Boolean              @default(true)
+  organization   ProviderOrganization @relation(fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  members        TenantMembership[]
+  createdAt      DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime             @updatedAt @db.Timestamptz(3)
+
+  @@unique([organizationId, code])
+  @@unique([id, organizationId, tenantId])
+  @@index([tenantId, organizationId])
+  @@map("organization_departments")
+}
+
+model TravelService {
+  id                     String               @id @default(uuid()) @db.Uuid
+  tenantId               String               @db.Uuid
+  providerMembershipId   String               @db.Uuid
+  providerOrganizationId String               @db.Uuid
+  organization           ProviderOrganization @relation(fields: [providerOrganizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  title                  String               @db.VarChar(200)
+  titleEn                String               @default("") @db.VarChar(200)
+  description            String               @db.VarChar(1000)
+  descriptionEn          String               @default("") @db.VarChar(1000)
+  category               ServiceCategory
+  city                   String               @db.VarChar(120)
+  cityEn                 String               @default("") @db.VarChar(120)
+  priceCents             Int
+  currency               String               @default("SAR") @db.Char(3)
+  status                 ServiceStatus        @default(DRAFT)
+  details                Json                 @default("{}")
+  detailsEn              Json                 @default("{}")
+  capacity               Int                  @default(50)
+  components             ServiceComponent[]   @relation("PackageComponents")
+  usedInPackages         ServiceComponent[]   @relation("ComponentService")
+  tenant                 Tenant               @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  provider               TenantMembership     @relation("ProviderServices", fields: [providerMembershipId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  bookings               Booking[]
+  createdAt              DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime             @updatedAt @db.Timestamptz(3)
+
+  @@unique([id, tenantId])
+  @@index([tenantId, status, category])
+  @@index([providerMembershipId, status])
+  @@index([tenantId, providerOrganizationId])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "travel_services_title_trgm_idx")
+  @@map("travel_services")
+}
+
+model ServiceComponent {
+  packageId String        @db.Uuid
+  serviceId String        @db.Uuid
+  tenantId  String        @db.Uuid
+  package   TravelService @relation("PackageComponents", fields: [packageId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  service   TravelService @relation("ComponentService", fields: [serviceId, tenantId], references: [id, tenantId], onDelete: Restrict)
+
+  @@id([packageId, serviceId])
+  @@index([tenantId, serviceId])
+  @@map("service_components")
+}
+
+model Booking {
+  id                   String           @id @default(uuid()) @db.Uuid
+  tenantId             String           @db.Uuid
+  serviceId            String           @db.Uuid
+  travelerMembershipId String           @db.Uuid
+  travelersCount       Int              @default(1)
+  totalCents           Int
+  unitPriceCents       Int
+  units                Int              @default(1)
+  serviceDate          DateTime         @db.Date
+  endDate              DateTime?        @db.Date
+  currency             String           @default("SAR") @db.Char(3)
+  notes                String?          @db.VarChar(1000)
+  status               BookingStatus    @default(PENDING)
+  // Client-chosen retry key (Idempotency-Key header); unique per traveler membership.
+  idempotencyKey       String?          @db.VarChar(64)
+  tenant               Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  service              TravelService    @relation(fields: [serviceId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  traveler             TenantMembership @relation("TravelerBookings", fields: [travelerMembershipId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  createdAt            DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime         @updatedAt @db.Timestamptz(3)
+
+  @@unique([travelerMembershipId, idempotencyKey], map: "bookings_traveler_idempotency_key")
+  @@index([tenantId, status, createdAt])
+  @@index([travelerMembershipId, createdAt])
+  @@index([serviceId, status])
+  @@index([serviceId, serviceDate, endDate])
+  @@map("bookings")
+}
+
+model Role {
+  id             String                @id @default(uuid()) @db.Uuid
+  tenantId       String                @db.Uuid
+  organizationId String?               @db.Uuid
+  code           String                @db.VarChar(100)
+  name           String                @db.VarChar(160)
+  description    String?               @db.VarChar(500)
+  isSystem       Boolean               @default(false)
+  tenant         Tenant                @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  organization   ProviderOrganization? @relation(fields: [organizationId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  permissions    RolePermission[]
+  memberships    MembershipRole[]
+  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime              @updatedAt @db.Timestamptz(3)
+
+  @@unique([tenantId, code])
+  @@unique([id, tenantId])
+  @@index([tenantId])
+  @@index([organizationId])
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique @db.VarChar(140)
+  description String?          @db.VarChar(500)
+  roles       RolePermission[]
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model MembershipRole {
+  membershipId String           @db.Uuid
+  roleId       String           @db.Uuid
+  tenantId     String           @db.Uuid
+  membership   TenantMembership @relation(fields: [membershipId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  role         Role             @relation(fields: [roleId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@id([membershipId, roleId])
+  @@index([tenantId, roleId])
+  @@map("membership_roles")
+}
+
+model RefreshSession {
+  id              String           @id @default(uuid()) @db.Uuid
+  tokenHash       String           @unique @db.Char(64)
+  userId          String           @db.Uuid
+  tenantId        String           @db.Uuid
+  membershipId    String           @db.Uuid
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  membership      TenantMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  userAgent       String?          @db.VarChar(500)
+  ipAddress       String?          @db.Inet
+  expiresAt       DateTime         @db.Timestamptz(3)
+  lastUsedAt      DateTime?        @db.Timestamptz(3)
+  revokedAt       DateTime?        @db.Timestamptz(3)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(3)
+  // Every session rotated from one login shares the family id (refresh-token reuse detection).
+  familyId        String           @db.Uuid
+  // Time of the login that started the family; caps the absolute session lifetime.
+  authenticatedAt DateTime         @db.Timestamptz(3)
+
+  @@index([familyId])
+  @@index([userId, expiresAt])
+  @@index([tenantId, expiresAt])
+  @@index([membershipId])
+  @@index([expiresAt])
+  @@map("refresh_sessions")
+}
+
+/// Partitioned by month on occurredAt (migration 20261012_db_audit_partitioning). Prisma does not model partitions: this is the
+/// parent table; the primary key contains the partition column. Rows are only ever created, never read by id.
+model AuditEvent {
+  id          String   @default(uuid()) @db.Uuid
+  tenantId    String?  @db.Uuid
+  actorUserId String?  @db.Uuid
+  requestId   String?  @db.Uuid
+  action      String   @db.VarChar(160)
+  entityType  String?  @db.VarChar(120)
+  entityId    String?  @db.VarChar(120)
+  ipAddress   String?  @db.Inet
+  metadata    Json     @default("{}")
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  occurredAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([id, occurredAt])
+  @@index([tenantId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([tenantId, action, occurredAt])
+  @@index([tenantId, entityType, entityId, occurredAt])
+  @@index([occurredAt])
+  @@map("audit_events")
+}
+
+/// Authentication attempt counters keyed by a hash of (scope, e-mail) or (scope, e-mail, client address).
+/// Unknown e-mails are counted exactly like real ones, so the throttle reveals nothing.
+model LoginThrottle {
+  key             String    @id @db.Char(64)
+  failures        Int       @default(0)
+  windowStartedAt DateTime  @default(now()) @db.Timestamptz(3)
+  blockedUntil    DateTime? @db.Timestamptz(3)
+  /// Set on the (e-mail, address) row after a successful sign-in: that address is exempt from the account-wide block.
+  trustedUntil    DateTime? @db.Timestamptz(3)
+  updatedAt       DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([updatedAt])
+  @@map("login_throttles")
+}

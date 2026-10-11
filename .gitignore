@@ -1,0 +1,33 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+!.env.example
+backups/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.pem
+*.key
+.DS_Store
+Thumbs.db
+backend/src/generated/prisma/
+
+# --- Misc ---
+# Office documents
+*.docx
+*.xlsx
+backend/src/generated/
+playwright-report/
+test-results/
+
+# frontend e2e / lighthouse output
+playwright-report/
+.lighthouseci/
+
+# Cloudflare Origin Certificate and key for the tls profile
+deploy/caddy/certs/

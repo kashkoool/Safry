@@ -1,0 +1,96 @@
+# CodeRabbit configuration (GitHub App, reviews pull requests automatically).
+# Reference: https://docs.coderabbit.ai/guides/configure-coderabbit
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: en
+early_access: false
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+
+  path_filters:
+    - "!**/pnpm-lock.yaml"
+    - "!**/dist/**"
+    - "!**/node_modules/**"
+    - "!**/coverage/**"
+    - "!**/test-results/**"
+    - "!**/playwright-report/**"
+    - "!**/generated/**"
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.webp"
+    - "!**/*.gif"
+
+  path_instructions:
+    - path: "backend/src/modules/identity/auth/**"
+      instructions: >-
+        Authentication and session code. Check password hashing parameters, JWT
+        algorithm/issuer/audience/expiry, refresh-token rotation and reuse
+        detection, tokens stored hashed, logout revoking the server session,
+        absolute and idle session timeouts, lockout that cannot be abused by
+        anonymous callers, no user enumeration (messages and timing), MFA
+        replay protection, and no default or demo credentials in code paths.
+    - path: "backend/src/modules/identity/**"
+      instructions: >-
+        Authorization and multi-tenancy. Every query must be tenant-scoped; no
+        endpoint may link or expose an identity from another tenant; a caller
+        may only grant or modify roles it holds itself; check for IDOR, mass
+        assignment, and missing permission guards.
+    - path: "backend/src/modules/operations/bookings/**"
+      instructions: >-
+        Bookings. Capacity checks must be atomic (narrow row lock or serialisable
+        transaction); never trust client-supplied price, currency or totals;
+        validate status transitions; amounts are integer minor units with a
+        currency code.
+    - path: "backend/prisma/**"
+      instructions: >-
+        Schema and migrations. Flag destructive changes, NOT NULL without
+        default or backfill, index creation that locks big tables, missing
+        indexes on foreign keys and filter columns, money stored as floats,
+        cascades that can delete tenant or audit data, and any change that
+        weakens row-level security.
+    - path: "backend/src/config/**"
+      instructions: >-
+        Startup configuration. It must fail fast on missing, weak or
+        placeholder secrets.
+    - path: "frontend/src/**"
+      instructions: >-
+        React frontend. Check for token storage in script-readable storage,
+        dangerouslySetInnerHTML or unsanitised URLs, authorization decided only
+        in the UI, logout not clearing client state, request waterfalls, missing
+        code splitting, memory leaks from timers and listeners, and i18n/RTL
+        regressions.
+    - path: "**/Dockerfile"
+      instructions: >-
+        Containers must run as a non-root user, use pinned base images, contain
+        only production dependencies (and still start), and bake in no secrets.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Workflows must use least-privilege permissions, pin third-party actions
+        to commit SHAs, and never print secrets.
+    - path: "**/*.md"
+      instructions: >-
+        Documentation must match the code. Flag claims about features, test
+        counts, or security properties that the code does not support.
+
+  tools:
+    gitleaks:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 90000
+
+chat:
+  auto_reply: true

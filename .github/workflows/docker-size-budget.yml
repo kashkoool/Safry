@@ -1,0 +1,67 @@
+# Builds both production images and fails if either grows past its size budget.
+# Budgets = measured size on 2026-10-07 + 25%:
+#   api:    442,143,882 B measured ->   553,000,000 B cap (runtime image: production dependencies only; see backend/Dockerfile)
+#   web:    74,327,328 B measured ->    93,000,000 B cap
+name: Docker image-size budget
+
+on:
+  pull_request:
+    paths:
+      - "backend/Dockerfile"
+      - "backend/package.json"
+      - "backend/pnpm-lock.yaml"
+      - "frontend/Dockerfile"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+      - "frontend/nginx.conf"
+      - ".github/workflows/docker-size-budget.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/Dockerfile"
+      - "backend/package.json"
+      - "backend/pnpm-lock.yaml"
+      - "frontend/Dockerfile"
+      - "frontend/package.json"
+      - "frontend/pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-size-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image-size:
+    name: ${{ matrix.name }} image size
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            context: backend
+            max_bytes: "553000000"
+          - name: web
+            context: frontend
+            max_bytes: "93000000"
+    env:
+      DOCKER_BUILDKIT: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build image
+        run: docker build -t "safry-${{ matrix.name }}:ci" "${{ matrix.context }}"
+      - name: Check size against budget
+        env:
+          MAX_BYTES: ${{ matrix.max_bytes }}
+        run: |
+          size=$(docker image inspect "safry-${{ matrix.name }}:ci" --format='{{.Size}}')
+          echo "${{ matrix.name }} image: $((size / 1048576)) MB (${size} bytes), budget $((MAX_BYTES / 1048576)) MB"
+          if [ "${size}" -gt "${MAX_BYTES}" ]; then
+            echo "::error::${{ matrix.name }} image exceeds its size budget."
+            exit 1
+          fi

@@ -1,0 +1,94 @@
+import { describe, expect, it } from "vitest";
+import { validateEnvironment } from "./environment.js";
+
+const valid = {
+  DATABASE_URL: "postgresql://safry:password@localhost:5432/safry",
+  JWT_ACCESS_SECRET: "a-secure-test-secret-with-32-characters"
+};
+
+describe("validateEnvironment", () => {
+  it("applies safe defaults", () => {
+    expect(validateEnvironment(valid)).toMatchObject({
+      PORT: 3000,
+      JWT_ACCESS_TTL_SECONDS: 900,
+      REFRESH_TOKEN_TTL_DAYS: 30,
+      SESSION_IDLE_TIMEOUT_MINUTES: 15
+    });
+  });
+
+  it("rejects a short JWT secret", () => {
+    expect(() => validateEnvironment({ ...valid, JWT_ACCESS_SECRET: "short" })).toThrow("JWT_ACCESS_SECRET");
+  });
+
+  it("rejects placeholder JWT secrets, including the exact value shipped in the example files", () => {
+    for (const secret of [
+      "CHANGE_ME_GENERATE_WITH_openssl_rand_base64_48",
+      "replace-with-at-least-32-random-characters",
+      "please-change-me-this-is-long-enough-1234"
+    ])
+      expect(() => validateEnvironment({ ...valid, JWT_ACCESS_SECRET: secret })).toThrow("placeholder");
+  });
+
+  it("rejects a placeholder MFA encryption key", () => {
+    expect(() => validateEnvironment({ ...valid, MFA_ENCRYPTION_KEY: "CHANGE_ME_GENERATE_WITH_openssl_rand_base64_48" })).toThrow("MFA_ENCRYPTION_KEY");
+  });
+
+  it("rejects an invalid port", () => {
+    expect(() => validateEnvironment({ ...valid, PORT: "70000" })).toThrow("PORT is invalid");
+  });
+
+  it("rejects an invalid session idle timeout", () => {
+    expect(() => validateEnvironment({ ...valid, SESSION_IDLE_TIMEOUT_MINUTES: "0" })).toThrow("SESSION_IDLE_TIMEOUT_MINUTES");
+  });
+
+  it("applies lockout defaults and validates the lockout policy", () => {
+    expect(validateEnvironment(valid)).toMatchObject({ LOGIN_MAX_ATTEMPTS: 5, LOGIN_LOCKOUT_MINUTES: 15 });
+    expect(validateEnvironment({ ...valid, LOGIN_MAX_ATTEMPTS: "3", LOGIN_LOCKOUT_MINUTES: "60" })).toMatchObject({
+      LOGIN_MAX_ATTEMPTS: 3,
+      LOGIN_LOCKOUT_MINUTES: 60
+    });
+    for (const value of ["2", "21", "abc", "5.5"]) expect(() => validateEnvironment({ ...valid, LOGIN_MAX_ATTEMPTS: value })).toThrow("LOGIN_MAX_ATTEMPTS");
+    for (const value of ["yes", "1", "TRUE"]) expect(() => validateEnvironment({ ...valid, LOGIN_PORTAL_REQUIRED: value })).toThrow("LOGIN_PORTAL_REQUIRED");
+    expect(() => validateEnvironment({ ...valid, LOGIN_PORTAL_REQUIRED: "true" })).not.toThrow();
+    for (const value of ["0", "1441", "x"]) expect(() => validateEnvironment({ ...valid, LOGIN_LOCKOUT_MINUTES: value })).toThrow("LOGIN_LOCKOUT_MINUTES");
+  });
+
+  it("never lets row-level security be switched off outside development and tests", () => {
+    for (const env of ["production", "staging", undefined])
+      expect(() => validateEnvironment({ ...valid, MFA_ENCRYPTION_KEY: "unit-test-mfa-key-not-the-jwt-secret-0123456789", NODE_ENV: env, DATABASE_RLS: "off" })).toThrow("DATABASE_RLS=off");
+    expect(() => validateEnvironment({ ...valid, MFA_ENCRYPTION_KEY: "unit-test-mfa-key-not-the-jwt-secret-0123456789", NODE_ENV: "production", DATABASE_RLS: "on" })).not.toThrow();
+  });
+
+  it("validates the row-level-security mode, pool size and MFA key", () => {
+    for (const mode of ["on", "auto"]) expect(() => validateEnvironment({ ...valid, DATABASE_RLS: mode })).not.toThrow();
+    for (const env of ["development", "test"])
+      expect(() => validateEnvironment({ ...valid, NODE_ENV: env, DATABASE_RLS: "off" })).not.toThrow();
+    expect(() => validateEnvironment({ ...valid, DATABASE_RLS: "maybe" })).toThrow("DATABASE_RLS");
+    expect(validateEnvironment({ ...valid, DATABASE_POOL_MAX: "7" })).toMatchObject({ DATABASE_POOL_MAX: 7 });
+    expect(validateEnvironment(valid)).not.toHaveProperty("DATABASE_POOL_MAX");
+    expect(() => validateEnvironment({ ...valid, DATABASE_POOL_MAX: "0" })).toThrow("DATABASE_POOL_MAX");
+    expect(() => validateEnvironment({ ...valid, MFA_ENCRYPTION_KEY: "short" })).toThrow("MFA_ENCRYPTION_KEY");
+    expect(() => validateEnvironment({ ...valid, MFA_ENCRYPTION_KEY: "k".repeat(32) })).toThrow("entropy");
+    expect(() => validateEnvironment({ ...valid, MFA_ENCRYPTION_KEY: "unit-test-only-mfa-key-not-a-secret-0123456789" })).not.toThrow();
+  });
+
+  it("rejects a typo in NODE_ENV instead of silently changing behaviour", () => {
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "prod" })).toThrow("NODE_ENV");
+    for (const env of ["development", "test"]) expect(() => validateEnvironment({ ...valid, NODE_ENV: env })).not.toThrow();
+  });
+
+  describe("database TLS in production", () => {
+    const production = { ...valid, NODE_ENV: "production", MFA_ENCRYPTION_KEY: "another-secure-test-key-0123456789abcdef!" };
+    it("requires sslmode for a routable database host", () => {
+      const remote = "postgresql://u:p@db.example.internal:5432/safry";
+      expect(() => validateEnvironment({ ...production, DATABASE_URL: remote })).toThrow("sslmode");
+      expect(() => validateEnvironment({ ...production, DATABASE_URL: `${remote}?sslmode=disable` })).toThrow("sslmode");
+      expect(() => validateEnvironment({ ...production, DATABASE_URL: `${remote}?sslmode=require` })).not.toThrow();
+      expect(() => validateEnvironment({ ...production, DATABASE_URL: remote, DATABASE_ALLOW_PLAINTEXT: "true" })).not.toThrow();
+    });
+    it("accepts the internal compose host without TLS", () => {
+      expect(() => validateEnvironment({ ...production, DATABASE_URL: "postgresql://u:p@postgres:5432/safry" })).not.toThrow();
+      expect(() => validateEnvironment({ ...production, DATABASE_URL: "postgresql://u:p@localhost:5432/safry" })).not.toThrow();
+    });
+  });
+});

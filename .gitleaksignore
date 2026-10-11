@@ -1,0 +1,2 @@
+# Dummy MFA key used only as a unit-test fixture (not a secret); introduced in an early commit, history is not rewritten.
+754573be1892bc111191bef7f0993d8dbc8f794e:backend/src/config/environment.spec.ts:generic-api-key:62

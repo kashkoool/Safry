@@ -1,0 +1,19 @@
+# TLS terminator for the "tls" compose profile when Cloudflare proxies the site (SSL mode "Full (strict)").
+# Select it with CADDYFILE=./deploy/caddy/Caddyfile.cloudflare in .env and put the Cloudflare Origin Certificate
+# and key in CADDY_CERT_DIR as origin.pem and origin.key (never commit them). See docs/DEPLOYMENT.md section 4.
+#
+# SAFE ONLY IF ports 80/443 accept traffic from Cloudflare address ranges alone: CF-Connecting-IP is a plain
+# request header that any other caller could forge. TRUST_PROXY=2 (Caddy, nginx).
+{
+	admin off
+}
+
+{$SITE_ADDRESS} {
+	tls /certs/origin.pem /certs/origin.key
+	encode zstd gzip
+	reverse_proxy web:8080 {
+		# Replace (not append to) X-Forwarded-For with the visitor address Cloudflare saw.
+		header_up X-Forwarded-For {header.CF-Connecting-IP}
+	}
+	header -Server
+}
