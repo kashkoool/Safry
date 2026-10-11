@@ -50,6 +50,7 @@ Nothing migrates or seeds at API start: migrations are the one-off `migrate` job
 
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): Docker Compose deployment runbook
 - [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md): target production architecture, costs and security baseline (not yet provisioned)
+- [docs/CI.md](docs/CI.md): every CI workflow, when it runs, whether it is required, and how to run it locally
 
 ### Tests
 

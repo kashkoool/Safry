@@ -1,4 +1,6 @@
 version: 2
+# Major version updates are never proposed automatically: they are planned upgrades (changelog read, migration done,
+# tests adjusted). Minor and patch updates, and GitHub Actions, keep flowing as before.
 updates:
   - package-ecosystem: "npm"
     directory: "/backend"
@@ -8,6 +10,9 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       backend-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -19,6 +24,9 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       frontend-minor-and-patch:
         update-types: ["minor", "patch"]
@@ -37,6 +45,9 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       docker:
         patterns: ["*"]
@@ -45,6 +56,9 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       docker:
         patterns: ["*"]
@@ -56,6 +70,9 @@ updates:
       day: "monday"
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       compose-images:
         patterns: ["*"]

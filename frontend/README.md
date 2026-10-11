@@ -41,8 +41,8 @@ The MFA tests enable MFA on `visa@safry.local` and switch it off again at the en
 ## Lighthouse CI
 
 ```bash
-pnpm lighthouse     # builds, serves `vite preview` on 55526, 3 runs on /login/customer
+pnpm lighthouse     # builds, serves `vite preview` on 55563, 3 runs on /login/customer
 ```
 
-Budget in `lighthouserc.json`: performance >= 0.8, accessibility >= 0.9 (errors); TBT < 300 ms, CLS < 0.1 (warnings).
+Budget in `lighthouserc.json`: performance >= 0.9, accessibility >= 0.95, best-practices >= 0.9 (errors, median of 3 runs); TBT < 300 ms, CLS < 0.1 (warnings).
 Set `CHROME_PATH` if Chrome is not found. Reports go to `.lighthouseci/` (git-ignored).

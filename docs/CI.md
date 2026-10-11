@@ -1,0 +1,37 @@
+# Continuous integration
+
+Every workflow lives in `.github/workflows/`. Actions are pinned by full commit SHA, the default token is read-only
+(`contents: read`), and no workflow uses `pull_request_target`.
+
+| Workflow | Check name | Runs | Required for merge | What it does |
+|---|---|---|---|---|
+| `ci.yml` | Backend (lint, typecheck, unit, integration, route gate, build) | PR, push to main | yes | Lint, build, typecheck, unit and integration suites on PostgreSQL 17 (also as the restricted runtime login), route-coverage gate, production dependency audit |
+| `ci.yml` | Frontend (lint, typecheck, build, i18n) | PR, push to main | yes | Lint, `tsc -b` + Vite build, i18n inventory |
+| `ci.yml` | Migrate image (hardened run against PostgreSQL 17) | PR, push to main | yes | Builds the `migrate` image and runs it read-only, without capabilities; checks every migration is applied |
+| `ci.yml` | Secret scan (gitleaks) | PR, push to main | yes | Scans the full git history |
+| `ci.yml` | E2E (Playwright against the real stack) | PR, push to main | not yet | Real API + PostgreSQL + the production nginx image (strict CSP), full Playwright suite in Chromium; report and traces are uploaded only on failure |
+| `image-scan.yml` | Image scan (api / migrate / web) | PR touching Dockerfiles, lockfiles or compose; push to main; weekly | not yet | Builds the three images, Trivy scan (HIGH/CRITICAL, fixable only), SARIF to code scanning, CycloneDX SBOM artifact. Reviewed exceptions in `.trivyignore`, each with an expiry date |
+| `lighthouse.yml` | Lighthouse (performance, accessibility, best practices) | PR touching `frontend/**`; weekly | not yet | Median of 3 runs; budgets in `frontend/lighthouserc.json` (performance 0.9, accessibility 0.95, best practices 0.9) |
+| `load-test.yml` | Load test (reduced dataset) | manual and weekly only | no | autocannon scenarios against the real API; fails on error rate above 0.5 % or p99 above the limit in `backend/test/load/thresholds.json`; results table in the job summary |
+| `codeql.yml` | Analyze (javascript-typescript) | PR, push, weekly | no | CodeQL static analysis |
+| `dependency-review.yml` | dependency-review | PR | no | Fails on newly introduced high-severity dependency advisories |
+| `docker-size-budget.yml` | Docker image-size budget | PR touching image inputs, push | no | Fails when an image grows past its size cap |
+| `prisma-migrate-status.yml` | prisma-migrate-status | PR touching Prisma files, push, manual | no | Applies all migrations to a fresh database and fails on schema drift |
+| `no-ai-attribution.yml` | No AI attribution | PR | no | Blocks AI co-author trailers and footers in commits and PR text |
+| `scorecard.yml` | Scorecard analysis | push, weekly | no | OpenSSF Scorecard results to code scanning |
+
+Dependabot (`.github/dependabot.yml`) opens weekly minor and patch updates. Major versions are never proposed automatically: they
+are planned upgrades.
+
+## Running the checks locally
+
+| Check | Command |
+|---|---|
+| Backend | `cd backend && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm lint && pnpm build && pnpm typecheck`; tests: `TEST_DATABASE_URL=<postgres url> pnpm test:int:all` (a throwaway PostgreSQL 17, never a real database) |
+| Frontend | `cd frontend && pnpm install --frozen-lockfile && pnpm lint && pnpm build && pnpm check:i18n` |
+| Migrate image | `docker build --target migrate -t safry-migrate:ci backend`, then run it as in `ci.yml` |
+| Secret scan | `gitleaks git --no-banner .` |
+| E2E | Follow "Browser end-to-end tests" in [frontend/README.md](../frontend/README.md) and the compose variant in [DEPLOYMENT.md](DEPLOYMENT.md); the CI job builds the API, migrates, creates the runtime login (`backend/scripts/db/create-runtime-role.sql`), seeds with generated passwords, starts the API on port 3000, runs the `frontend` image with `--add-host api:host-gateway`, then `E2E_NO_SERVER=1 pnpm e2e` |
+| Image scan | `docker build --target runtime -t safry-api:scan backend` (also `--target migrate`, and `docker build -t safry-web:scan frontend`), then `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.75.0 image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /ignore/.trivyignore safry-api:scan` (mount `.trivyignore` at `/ignore`) |
+| Lighthouse | `cd frontend && pnpm lighthouse` (set `CHROME_PATH` if Chrome is not found) |
+| Load test | `backend/test/load/README.md`: seed a throwaway database (reduced size through the `LOAD_*` variables), start the API with `start-api.sh`, `node run.mjs --duration 12 --label ci`, then `node check.mjs --label ci` |

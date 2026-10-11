@@ -163,6 +163,111 @@ jobs:
           echo "expected=$expected applied=$applied"
           test "$expected" = "$applied"
 
+  e2e:
+    name: E2E (Playwright against the real stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Throwaway CI database: the demo seed is acceptable here only because nothing outlives this job.
+    # PostgreSQL superuser is used for migrations and the seed; the API connects as the restricted runtime login.
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_PASSWORD: ci-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      MIGRATE_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public
+      RUNTIME_PASSWORD: ci-runtime-only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: |
+            backend/pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
+      - name: Per-run passwords for the throwaway database
+        run: |
+          for name in DEMO_SEED_PASSWORD BOOTSTRAP_ADMIN_PASSWORD JWT_ACCESS_SECRET; do
+            value="$(openssl rand -hex 24)"
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+      - name: Build the API, migrate, create the runtime login, seed
+        working-directory: backend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm prisma:generate
+          pnpm build
+          DATABASE_URL="$MIGRATE_URL" pnpm db:deploy
+          docker run --rm --network host -v "$PWD/scripts/db:/sql:ro" postgres:17.11-alpine             psql "postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres" -v runtime_password="$RUNTIME_PASSWORD" -f /sql/create-runtime-role.sql
+          DATABASE_URL="$MIGRATE_URL" NODE_ENV=development pnpm db:seed
+      - name: Start the API (restricted runtime login, port 3000)
+        working-directory: backend
+        env:
+          NODE_ENV: development
+          PORT: "3000"
+          DATABASE_URL: postgresql://safry_runtime:ci-runtime-only@127.0.0.1:5432/postgres?schema=public
+          DATABASE_MIGRATE_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public
+          CORS_ORIGINS: http://127.0.0.1:8080
+        run: |
+          nohup node dist/main.js > "$RUNNER_TEMP/api.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3000/api/v1/health/ready && exit 0
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/api.log"
+          exit 1
+      # The production web image (nginx with the real CSP and security headers) proxies /api to host port 3000 as "api".
+      - name: Build and start the web image
+        run: |
+          docker build -t safry-web:e2e frontend
+          docker run -d --name safry-web-e2e -p 127.0.0.1:8080:8080 --add-host api:host-gateway safry-web:e2e
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/healthz && exit 0
+            sleep 2
+          done
+          docker logs safry-web-e2e
+          exit 1
+      - name: Install frontend dependencies and the Chromium browser
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Playwright suite
+        working-directory: frontend
+        env:
+          E2E_NO_SERVER: "1"
+          E2E_BASE_URL: http://127.0.0.1:8080
+          E2E_API_URL: http://127.0.0.1:8080
+          E2E_DEMO_PASSWORD: ${{ env.DEMO_SEED_PASSWORD }}
+          E2E_ADMIN_PASSWORD: ${{ env.BOOTSTRAP_ADMIN_PASSWORD }}
+        run: pnpm e2e
+      # Only on failure. Traces record request bodies, so they hold this run's throwaway passwords; those are random,
+      # valid only for the database that is destroyed with this job, and the logs mask them.
+      - name: Upload the Playwright report and traces
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
