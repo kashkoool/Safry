@@ -50,4 +50,9 @@ describe("Node version consistency", () => {
       expect(read(rel)).not.toMatch(/npm install -g/);
     }
   });
+  it("copies pnpm-workspace.yaml next to the lockfile (overrides live there; --frozen-lockfile fails without it)", () => {
+    for (const rel of ["../Dockerfile", "../../frontend/Dockerfile"]) {
+      expect(read(rel)).toMatch(/^COPY package\.json pnpm-lock\.yaml pnpm-workspace\.yaml \.\/$/m);
+    }
+  });
 });
