@@ -30,6 +30,17 @@ updates:
     groups:
       frontend-minor-and-patch:
         update-types: ["minor", "patch"]
+  # Exact pnpm version used by the Dockerfiles (installed with npm ci from these lockfiles).
+  - package-ecosystem: "npm"
+    directories: ["/backend/tools/pnpm", "/frontend/tools/pnpm"]
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

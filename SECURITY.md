@@ -8,7 +8,7 @@ Safry is an early development version (0.x). Only the latest commit on the defau
 
 Please do not open a public issue or pull request for a security problem.
 
-Use GitHub private vulnerability reporting: on the repository page open **Security > Report a vulnerability**. Include the affected component, steps to reproduce, the impact you observed and, if you have one, a suggested fix. Do not include real personal data; use test accounts.
+Use GitHub private vulnerability reporting: open <https://github.com/kashkoool/Safry/security/advisories/new> (or, on the repository page, **Security > Report a vulnerability**). Include the affected component, steps to reproduce, the impact you observed and, if you have one, a suggested fix. Do not include real personal data; use test accounts.
 
 ## What to expect
 
