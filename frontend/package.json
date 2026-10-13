@@ -18,7 +18,7 @@
     "lighthouse": "npm run build && lhci autorun"
   },
   "dependencies": {
-    "lucide-react": "^1.53.0",
+    "lucide-react": "^1.55.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-router-dom": "^7.18.4"
@@ -34,9 +34,9 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^17.13.0",
-    "prettier": "^3.9.9",
-    "typescript": "6.0.2",
+    "prettier": "^3.9.10",
+    "typescript": "6.0.3",
     "typescript-eslint": "^8.71.1",
-    "vite": "^8.3.3"
+    "vite": "^8.3.4"
   }
 }
