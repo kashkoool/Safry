@@ -10,5 +10,8 @@
   "dependencies": {
     "autocannon": "^8.0.0",
     "pg": "^8.23.0"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   }
 }
