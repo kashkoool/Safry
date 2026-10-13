@@ -27,3 +27,27 @@ describe("Dockerfile runtime stage", () => {
     expect(fetchAt).toBeLessThan(migrate.search(/^USER node/m));
   });
 });
+
+describe("Node version consistency", () => {
+  const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), "utf8");
+  const ciMajor = /^\s*NODE_VERSION:\s*"?(\d+)/m.exec(read("../../.github/workflows/ci.yml"))?.[1];
+  const nodeMajors = (text: string): string[] => [...text.matchAll(/^FROM node:(\d+)\./gm)].map((m) => m[1] as string);
+
+  it("reads NODE_VERSION from the CI workflow", () => {
+    expect(ciMajor).toMatch(/^\d+$/);
+  });
+  it.each([
+    ["backend/Dockerfile", "../Dockerfile"],
+    ["frontend/Dockerfile", "../../frontend/Dockerfile"]
+  ])("%s only uses the Node major CI tests with", (_name, rel) => {
+    const majors = nodeMajors(read(rel));
+    expect(majors.length).toBeGreaterThan(0);
+    expect(new Set(majors)).toEqual(new Set([ciMajor]));
+  });
+  it("pins the exact pnpm version with npm ci in both Dockerfiles", () => {
+    for (const rel of ["../Dockerfile", "../../frontend/Dockerfile"]) {
+      expect(read(rel)).toMatch(/npm ci --ignore-scripts --prefix \/opt\/pnpm/);
+      expect(read(rel)).not.toMatch(/npm install -g/);
+    }
+  });
+});

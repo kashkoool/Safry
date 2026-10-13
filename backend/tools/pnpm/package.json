@@ -1,0 +1,8 @@
+{
+  "name": "pnpm-bootstrap",
+  "private": true,
+  "description": "Pins the exact pnpm used by the Dockerfile, with registry integrity hashes (npm ci).",
+  "dependencies": {
+    "pnpm": "11.28.5"
+  }
+}
