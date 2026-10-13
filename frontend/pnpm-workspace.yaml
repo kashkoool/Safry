@@ -1,2 +1,9 @@
 # Refuse versions published in the last 3 days (minutes) when resolving.
 minimumReleaseAge: 4320
+# Security overrides for the Lighthouse CI tooling chain (@lhci/cli, dev only, never part of the web image).
+# Remove each one when @lhci/cli resolves a patched version on its own (check with `pnpm why <name>`).
+overrides:
+  # @lhci/cli > tmp 0.1.0 and inquirer > external-editor > tmp 0.0.33; patched in 0.2.6.
+  tmp: 0.2.7
+  # @lhci/cli > uuid 8.3.2; patched in 11.1.1 (CommonJS build is still provided).
+  uuid: 11.1.1

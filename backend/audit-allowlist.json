@@ -1,23 +1,4 @@
 {
   "comment": "Advisories accepted for `pnpm audit --prod` (scripts/audit-prod.ts, CI). Anything NOT listed fails the build. Each entry needs a reason and a reviewBy date; after that date it fails again so it is re-reviewed.",
-  "allow": [
-    {
-      "ghsa": "GHSA-ggr8-5vv4-36mx",
-      "package": "deepmerge-ts",
-      "reason": "Reached only through prisma > @prisma/config (the CLI that reads prisma7.config.ts at deploy time with trusted, repository-owned config). Not loaded by the API at runtime and no attacker-controlled input is merged.",
-      "reviewBy": "2027-01-10"
-    },
-    {
-      "ghsa": "GHSA-3f6p-5ww8-9rcr",
-      "package": "mysql2",
-      "reason": "Prisma peer chain (prisma > mysql2) for its MySQL tooling. The project uses PostgreSQL with @prisma/adapter-pg only; mysql2 is never imported or connected to.",
-      "reviewBy": "2027-01-10"
-    },
-    {
-      "ghsa": "GHSA-rgwj-5xj2-c3m3",
-      "package": "mysql2",
-      "reason": "Same unreachable prisma > mysql2 chain as above (PostgreSQL only).",
-      "reviewBy": "2027-01-10"
-    }
-  ]
+  "allow": []
 }
