@@ -63,3 +63,43 @@ export function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
   return (words.length > 1 ? words[0]!.charAt(0) + words[1]!.charAt(0) : (words[0] ?? "").slice(0, 2)).toUpperCase();
 }
+
+export interface SettingsForm {
+  locale: string;
+  timezone: string;
+  currency: string;
+  useColor: boolean;
+  primaryColor: string;
+  logoUrl: string;
+}
+
+export function formFromSettings(settings: TenantSettings | undefined): SettingsForm {
+  const color = settings?.branding?.primaryColor;
+  return {
+    locale: settings?.locale ?? "",
+    timezone: settings?.timezone ?? "",
+    currency: settings?.currency ?? "",
+    useColor: isHexColor(color),
+    primaryColor: isHexColor(color) ? fullHex(color) : "#d8b36a",
+    logoUrl: settings?.branding?.logoUrl ?? ""
+  };
+}
+
+/**
+ * The `settings` object to send: only keys that differ from `initial` (the API merges top-level keys, so `branding`
+ * is always sent whole when either of its fields changed). Undefined when nothing changed.
+ */
+export function settingsPatch(initial: SettingsForm, next: SettingsForm): NonNullable<import("./tenant-admin").TenantPatch["settings"]> | undefined {
+  const patch: NonNullable<import("./tenant-admin").TenantPatch["settings"]> = {};
+  if (next.locale && next.locale !== initial.locale) patch.locale = next.locale;
+  if (next.timezone && next.timezone !== initial.timezone) patch.timezone = next.timezone;
+  if (next.currency && next.currency !== initial.currency) patch.currency = next.currency;
+  const brandingChanged = next.useColor !== initial.useColor || (next.useColor && next.primaryColor !== initial.primaryColor) || next.logoUrl.trim() !== initial.logoUrl;
+  if (brandingChanged) {
+    patch.branding = {
+      ...(next.useColor ? { primaryColor: next.primaryColor } : {}),
+      ...(next.logoUrl.trim() ? { logoUrl: next.logoUrl.trim() } : {})
+    };
+  }
+  return Object.keys(patch).length ? patch : undefined;
+}
