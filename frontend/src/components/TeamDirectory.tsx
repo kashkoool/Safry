@@ -204,7 +204,7 @@ function StatusDialog({ member, onClose, onDone }: { member: Member; onClose: ()
     <Dialog title={pick("تغيير حالة العضو", "Change member status")} onClose={onClose}>
       <form className="ta-dialog" onSubmit={submit}>
         <p><strong>{tr(member.user.displayName)}</strong> · <bdi dir="ltr">{member.user.email}</bdi></p>
-        {awaiting && <p className="ta-note">{pick("هذه الدعوة بانتظار قبول صاحب الحساب، لذا لا يمكن إلا سحبها (إلغاء العضوية).", "This invitation is awaiting the account owner, so it can only be withdrawn (revoke membership).")}</p>}
+        {awaiting && <p className="ta-note">{pick("هذه الدعوة بانتظار قبول صاحب الحساب، لذا لا يمكن إلا سحبها (إلغاء العضوية).", "This invitation is awaiting the account holder, so it can only be withdrawn (revoke membership).")}</p>}
         <label>{pick("الحالة الجديدة", "New status")}
           <select value={status} onChange={(e) => setStatus(e.target.value as Target)}>
             {options.map((s) => <option key={s} value={s}>{labels[s]}</option>)}

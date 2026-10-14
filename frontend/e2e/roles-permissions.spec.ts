@@ -9,7 +9,7 @@ const catalog = [
 ];
 const baseRoles = () => [
   { id: "r-sys", code: "traveler", name: "Traveler", description: null, isSystem: true, permissions: ["tenant.read"], members: 3 },
-  { id: "r-1", code: "support", name: "Support agent", description: "Front desk", isSystem: false, permissions: ["booking.read"], members: 0 },
+  { id: "r-1", code: "support", name: "Support staff", description: "Front desk", isSystem: false, permissions: ["booking.read"], members: 0 },
   { id: "r-2", code: "ops", name: "Operations", description: null, isSystem: false, permissions: ["booking.read"], members: 2 }
 ];
 
@@ -63,7 +63,7 @@ test("editing detects a concurrent change and deleting handles a conflict", asyn
     return false;
   });
   await page.goto("/workspace/access/roles");
-  const row = page.getByRole("row", { name: /Support agent/ });
+  const row = page.getByRole("row", { name: /Support staff/ });
   await row.getByRole("button", { name: "Edit" }).click();
   let dialog = page.getByRole("dialog");
   await dialog.getByLabel("Role name").fill("Support lead");
@@ -73,14 +73,14 @@ test("editing detects a concurrent change and deleting handles a conflict", asyn
   await expect(dialog.getByRole("alert").filter({ hasText: "Someone else changed this role" })).toBeVisible();
   expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(0);
   await dialog.getByRole("button", { name: "Load the latest version" }).click();
-  await expect(dialog.getByLabel("Role name")).toHaveValue("Support agent");
+  await expect(dialog.getByLabel("Role name")).toHaveValue("Support staff");
   await expect(dialog.getByRole("checkbox", { name: /View workspace/ })).toBeChecked();
   await dialog.getByLabel("Role name").fill("Support lead");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Role saved" })).toBeVisible();
   expect(calls.find((c) => c.method === "PATCH")!.body).toEqual({ name: "Support lead", description: "Front desk", permissions: ["booking.read", "tenant.read"] });
 
-  await page.getByRole("row", { name: /Support agent/ }).getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("row", { name: /Support staff/ }).getByRole("button", { name: "Delete" }).click();
   dialog = page.getByRole("dialog");
   await expect(dialog.getByText("permanently deleted")).toBeVisible();
   await dialog.getByRole("button", { name: "Delete role" }).click();

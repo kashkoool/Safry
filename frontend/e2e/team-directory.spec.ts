@@ -77,7 +77,7 @@ test("protects the own account; an invitation awaiting its owner can only be wit
 test("assigns roles and shows a member's history", async ({ page }) => {
   const roles = [
     { id: "r-trav", code: "traveler", name: "Traveler", description: null, isSystem: true, permissions: [], members: 1 },
-    { id: "r-custom", code: "support", name: "Support agent", description: null, isSystem: false, permissions: [], members: 0 }
+    { id: "r-custom", code: "support", name: "Support staff", description: null, isSystem: false, permissions: [], members: 0 }
   ];
   const { calls } = await mockApi(page, tenantAdmin, async (call, route) => {
     if (call.path === "/tenants/members") { await json(route, 200, rows); return true; }
@@ -101,7 +101,7 @@ test("assigns roles and shows a member's history", async ({ page }) => {
   await row.getByRole("button", { name: "Roles" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("checkbox", { name: /Traveler/ })).toBeChecked();
-  await dialog.getByRole("checkbox", { name: /Support agent/ }).check();
+  await dialog.getByRole("checkbox", { name: /Support staff/ }).check();
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Member roles updated" })).toBeVisible();
   expect(calls.find((c) => c.method === "PUT")!.body).toEqual({ roleIds: ["r-trav", "r-custom"] });
