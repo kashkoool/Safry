@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Logger } from "@nestjs/common";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { World, type Json, type Reply, type TestTenant } from "./support/world.js";
 
 /**
@@ -56,6 +57,32 @@ describe("credential links: pool-wide bursts and post-commit failures", () => {
       const ratio = Math.max(unknownRun.ms, knownRun.ms) / Math.min(unknownRun.ms, knownRun.ms);
       expect(ratio, `unknown ${unknownRun.ms} ms, known ${knownRun.ms} ms`).toBeLessThan(3);
     }, 60_000);
+  }
+
+  for (const path of ["/auth/password/forgot", "/auth/email/resend"]) {
+    it(`${path}: a known address answers like an unknown one when the link cannot be issued, and nothing logs the address`, async () => {
+      const user = await world.createUser(tenant, { roles: ["traveler"] });
+      if (path === "/auth/email/resend") await world.prisma.user.update({ where: { id: user.userId }, data: { emailVerifiedAt: null } });
+      const logged = vi.spyOn(Logger.prototype, "error");
+      await world.sql.query(`ALTER TABLE credential_tokens RENAME TO credential_tokens_off`);
+      try {
+        const started = Date.now();
+        const unknown = await api("POST", path, { email: `${world.unique("ghost")}@example.test` });
+        const unknownMs = Date.now() - started;
+        const knownStarted = Date.now();
+        const known = await api("POST", path, { email: user.email });
+        const knownMs = Date.now() - knownStarted;
+        expect(known.status).toBe(202);
+        expect(known.body).toEqual(unknown.body);
+        expect(Math.abs(knownMs - unknownMs), `unknown ${unknownMs} ms, known ${knownMs} ms`).toBeLessThan(500);
+        expect(logged).toHaveBeenCalled();
+        expect(JSON.stringify(logged.mock.calls)).not.toContain(user.email);
+        expect(JSON.stringify(logged.mock.calls)).not.toContain("@");
+      } finally {
+        await world.sql.query(`ALTER TABLE IF EXISTS credential_tokens_off RENAME TO credential_tokens`);
+        logged.mockRestore();
+      }
+    }, 30_000);
   }
 
   describe("a failure after the change committed", () => {
