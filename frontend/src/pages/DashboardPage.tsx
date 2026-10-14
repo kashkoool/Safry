@@ -1,10 +1,12 @@
 import { useText } from "../i18n/useText";
 import { currentLocale } from "../i18n/locale";
 import { useLocalizedData } from "../i18n/useLocalizedData";
+import { TenantMark } from "../components/TenantMark";
+import type { TenantSettings } from "../lib/tenant-admin";
 import { Skeleton } from "../components/LoadingScreen";
 import { InvitationsBanner } from "../components/InvitationsBanner";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { SessionsPanel } from "../components/SessionsPanel";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import {
@@ -46,7 +48,6 @@ import {
   type ExchangeRates,
   type Organization,
   type Tenant,
-  type TenantMember,
   type TravelService,
   type ServiceCategory,
   supportedCurrencies,
@@ -77,23 +78,18 @@ function ServiceArtwork({ category }: { category: ServiceCategory }) {
 
 type View = "overview" | "services" | "marketplace" | "bookings" | "providers" | "people" | "profile";
 const statusLabels = { PENDING: "بانتظار التأكيد", CONFIRMED: "مؤكد", CANCELLED: "ملغي" };
-const roleNames: Record<string, string> = {
-  "tenant-admin": "مدير الجهة",
-  "service-provider": "مقدم خدمة",
-  "travel-company": "شركة سياحة",
-  traveler: "مسافر"
-};
+const TeamDirectory = lazy(() => import("../components/TeamDirectory").then((m) => ({ default: m.TeamDirectory })));
 const dateText = (date: string | null): string =>
   date
     ? new Date(date).toLocaleDateString(currentLocale(), { calendar: "gregory", timeZone: "UTC" })
     : "حجز سابق دون موعد";
 const currencyStorageKey = "safry.displayCurrency";
-function preferredCurrency(): SupportedCurrency {
+function storedCurrency(): SupportedCurrency | null {
   try {
     const stored = window.localStorage.getItem(currencyStorageKey);
-    return supportedCurrencies.find((currency) => currency === stored) ?? "SAR";
+    return supportedCurrencies.find((currency) => currency === stored) ?? null;
   } catch {
-    return "SAR";
+    return null;
   }
 }
 
@@ -126,7 +122,6 @@ export function DashboardPage() {
   const bookings = useLocalizedData(rawBookings);
   const [rawProviders, setProviders] = useState<Organization[]>([]);
   const providers = useLocalizedData(rawProviders);
-  const [members, setMembers] = useState<TenantMember[]>([]);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 250);
   // Keyset cursor of the next page per list; null = that list is complete (the server sends no cursor on the last page).
@@ -144,7 +139,9 @@ export function DashboardPage() {
   );
   const [providerEditor, setProviderEditor] = useState<Organization | "new" | null>(null);
   const [detail, setDetail] = useState<TravelService | null>(null);
-  const [displayCurrency, setDisplayCurrency] = useState<SupportedCurrency>(preferredCurrency);
+  const [chosenCurrency, setDisplayCurrency] = useState<SupportedCurrency | null>(storedCurrency);
+  // A personal choice wins; otherwise the workspace's configured currency; otherwise SAR.
+  const displayCurrency: SupportedCurrency = chosenCurrency ?? supportedCurrencies.find((currency) => currency === tenant?.settings.currency) ?? "SAR";
   const [exchangeRates, setExchangeRates] = useState<ExchangeRates | null>(null);
   const [exchangeError, setExchangeError] = useState(false);
   const [confirmation, setConfirmation] = useState<{ text: string; run: () => Promise<unknown> } | null>(
@@ -175,16 +172,14 @@ export function DashboardPage() {
       nextServices,
       nextMarketplace,
       nextBookings,
-      nextProviders,
-      nextMembers
+      nextProviders
     ] = await Promise.all([
       user?.permissions.includes("tenant.read") ? api.currentTenant() : Promise.resolve(null),
       user?.permissions.includes("tenant.read") ? api.workspace() : Promise.resolve(null),
       user?.permissions.includes("catalog.service.read") ? api.services() : Promise.resolve(emptyPage<TravelService>()),
       user?.permissions.includes("catalog.service.read") ? api.marketplace() : Promise.resolve(emptyPage<TravelService>()),
       user?.permissions.includes("booking.read") ? api.bookings() : Promise.resolve(emptyPage<Booking>()),
-      user?.permissions.includes("catalog.service.read") ? api.providers() : Promise.resolve(emptyPage<Organization>()),
-      isAdmin && user?.permissions.includes("identity.user.read") ? api.members() : Promise.resolve([])
+      user?.permissions.includes("catalog.service.read") ? api.providers() : Promise.resolve(emptyPage<Organization>())
     ]);
     setTenant(nextTenant);
     setMetadata(nextMetadata);
@@ -192,14 +187,13 @@ export function DashboardPage() {
     setMarketplace(nextMarketplace.items);
     setBookings(nextBookings.items);
     setProviders(nextProviders.items);
-    setMembers(nextMembers);
     setCursors({
       services: nextServices.nextCursor,
       marketplace: nextMarketplace.nextCursor,
       bookings: nextBookings.nextCursor,
       providers: nextProviders.nextCursor
     });
-  }, [isAdmin, user?.permissions]);
+  }, [user?.permissions]);
   // "Load more" follows the cursor the API returned with the previous page and stops when it no longer sends one.
   async function loadMore(kind: "services" | "marketplace" | "bookings" | "providers"): Promise<void> {
     const cursor = cursors[kind];
@@ -350,7 +344,7 @@ export function DashboardPage() {
         </div>
         <div className="portal-identity">
           <span>{tr(scopeLabel)}</span>
-          <strong>{tr(org?.name ?? tenant?.name ?? "سفري")}</strong>
+          <span className="ta-identity"><TenantMark name={org?.name ?? tenant?.name ?? "Safry"} settings={tenant?.settings as TenantSettings | undefined} /><strong>{tr(org?.name ?? tenant?.name ?? "سفري")}</strong></span>
         </div>
         <nav className="sidebar__nav" aria-label={pick("القائمة الرئيسية", "Main navigation")}>
           <span className="workspace-nav-label">{pick("مساحة عملك", "YOUR WORKSPACE")}</span>
@@ -372,6 +366,15 @@ export function DashboardPage() {
             <Link className="secondary-button" to={`/workspace/organizations/${org.id}/specialties`}>
               {pick("أقسام المنشأة والموظفون", "Company departments and staff")}
             </Link>
+          )}
+          {user?.permissions.includes("identity.role.manage") && (
+            <Link className="secondary-button" to="/workspace/access/roles">{pick("الأدوار والصلاحيات", "Roles and permissions")}</Link>
+          )}
+          {!user?.permissions.includes("identity.role.manage") && user?.permissions.includes("audit.read") && isAdmin && (
+            <Link className="secondary-button" to="/workspace/access/audit">{pick("تدقيق الصلاحيات", "Permission audit")}</Link>
+          )}
+          {user?.permissions.includes("tenant.update") && (
+            <Link className="secondary-button" to="/workspace/settings">{pick("إعدادات مساحة العمل", "Workspace settings")}</Link>
           )}
           <Link className="workspace-account-card" to="/account/profile">
             <span className="avatar"><CircleUserRound size={21} /></span>
@@ -851,31 +854,7 @@ export function DashboardPage() {
             </section>
           )}
 
-          {view === "people" && isAdmin && (
-            <section className="work-panel">
-              <h2>{pick("مستخدمو مساحة العمل", "Workspace users")}</h2>
-              <div className="members-list">
-                {members
-                  .filter((item) => matches(`${item.user.displayName} ${item.user.email}`))
-                  .map((item) => (
-                    <article className="member-row" key={item.id}>
-                      <span className="avatar">
-                        <CircleUserRound />
-                      </span>
-                      <div>
-                        <strong>{tr(item.user.displayName)}</strong>
-                        <small>{tr(item.user.email)}</small>
-                      </div>
-                      <span>{tr(item.jobTitle)}</span>
-                      <span className="role-pill">
-                        {tr(item.roles.map(({ role }) => roleNames[role.code] ?? role.name).join("، "))}
-                      </span>
-                      <span>{tr(item.status === "ACTIVE" ? pick("نشط", "Active") : item.status)}</span>
-                    </article>
-                  ))}
-              </div>
-            </section>
-          )}
+          {view === "people" && isAdmin && <Suspense fallback={<Skeleton rows={4} />}><TeamDirectory /></Suspense>}
           {view === "profile" && (
             <section className="settings-grid">
               <article className="work-panel">
