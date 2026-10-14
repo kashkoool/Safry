@@ -18,7 +18,7 @@ describe("platform accounts list: sign-in block and verification state", () => {
   };
 
   beforeAll(async () => {
-    world = await World.start({ LOGIN_MAX_ATTEMPTS: "5", LOGIN_LOCKOUT_MINUTES: "15" });
+    world = await World.start({ TRUST_PROXY: "true", LOGIN_MAX_ATTEMPTS: "5", LOGIN_LOCKOUT_MINUTES: "15" });
     tenant = await world.createTenant("acctstatus");
     platform = await world.session(await world.createUser(tenant, { roles: ["tenant-admin"], isPlatformAdmin: true }));
     tenantAdmin = await world.session(await world.createUser(tenant, { roles: ["tenant-admin"] }));
@@ -41,7 +41,7 @@ describe("platform accounts list: sign-in block and verification state", () => {
 
   it("shows lockedUntil and emailVerifiedAt to a platform admin, and clears lockedUntil after unlock", async () => {
     for (let i = 0; i < 25; i++)
-      await world.api("POST", "/auth/login", { body: { email: locked.email, password: "Wrong-Password-1", tenantCode: tenant.code } });
+      await world.api("POST", "/auth/login", { headers: { "x-forwarded-for": `198.51.100.${i + 1}` }, body: { email: locked.email, password: "Wrong-Password-1", tenantCode: tenant.code } });
     const lockedRow = await row(locked);
     expect(new Date(lockedRow!.lockedUntil as string).getTime()).toBeGreaterThan(Date.now());
     expect(lockedRow!.emailVerifiedAt).not.toBeNull();
