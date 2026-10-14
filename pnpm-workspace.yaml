@@ -1,0 +1,7 @@
+# Settings only (no workspace packages: backend/ and frontend/ keep their own lockfiles).
+# Refuse versions published in the last 3 days (minutes), so a freshly pushed malicious release is not picked up by an update.
+minimumReleaseAge: 4320
+# Security override (dev tooling only: concurrently > shell-quote); patched in 1.11.0.
+# Remove when concurrently resolves shell-quote >= 1.11.0 on its own.
+overrides:
+  shell-quote: 1.12.0

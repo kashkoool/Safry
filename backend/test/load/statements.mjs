@@ -6,6 +6,8 @@ import pg from "pg";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((p, v, i, all) => (v.startsWith("--") ? [...p, [v.slice(2), all[i + 1]]] : p), []));
 const base = (args.url ?? "http://127.0.0.1:3100").replace(/\/$/, "");
+// The bearer token read below must never leave this machine: refuse any target that is not loopback.
+if (!["127.0.0.1", "localhost", "[::1]"].includes(new URL(base).hostname)) throw new Error(`refusing non-loopback target: ${base}`);
 const data = JSON.parse(readFileSync(new URL("./.data/tokens.json", import.meta.url), "utf8"));
 const traveler = data.tokens.find((t) => t.role === "traveler");
 const client = new pg.Client({ connectionString: process.env.LOAD_DATABASE_URL });

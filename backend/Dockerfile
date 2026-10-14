@@ -6,8 +6,9 @@
 # Base images are pinned by tag AND digest. Dependabot (.github/dependabot.yml, "docker" ecosystem) bumps both together.
 
 FROM node:22.23.3-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS base
-# Exact pnpm version (the lockfile is written by pnpm 11): the package manager is part of the supply chain.
-RUN npm install -g --ignore-scripts pnpm@11.28.5 && npm cache clean --force
+# Exact pnpm version with registry integrity hashes (tools/pnpm/package-lock.json, installed by npm ci; the project lockfile is written by pnpm 11): the package manager is part of the supply chain.
+COPY tools/pnpm/package.json tools/pnpm/package-lock.json /opt/pnpm/
+RUN npm ci --ignore-scripts --prefix /opt/pnpm && ln -s /opt/pnpm/node_modules/.bin/pnpm /usr/local/bin/pnpm && npm cache clean --force
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
@@ -19,7 +20,8 @@ RUN pnpm exec prisma generate && pnpm exec nest build
 # Production dependencies only, resolved from the same lockfile, on the same OS (musl) as the runtime
 # so native modules (argon2) get the matching prebuilt binary.
 FROM node:22.23.3-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS prod-deps
-RUN npm install -g --ignore-scripts pnpm@11.28.5 && npm cache clean --force
+COPY tools/pnpm/package.json tools/pnpm/package-lock.json /opt/pnpm/
+RUN npm ci --ignore-scripts --prefix /opt/pnpm && ln -s /opt/pnpm/node_modules/.bin/pnpm /usr/local/bin/pnpm && npm cache clean --force
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --prod --frozen-lockfile
@@ -36,7 +38,7 @@ RUN node node_modules/prisma/build/index.js --version
 ENV UV_THREADPOOL_SIZE=8
 # The global npm/pnpm are not needed to run migrations or the seed.
 RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
-      /usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/pnx /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
+      /usr/local/bin/pn /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/pnx /opt/pnpm /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 USER node
 CMD ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
 
