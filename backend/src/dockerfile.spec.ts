@@ -55,4 +55,16 @@ describe("Node version consistency", () => {
       expect(read(rel)).toMatch(/^COPY package\.json pnpm-lock\.yaml pnpm-workspace\.yaml \.\/$/m);
     }
   });
+  it.each([
+    ["package.json", "../../package.json", "../../pnpm-lock.yaml"],
+    ["backend/package.json", "../package.json", "../pnpm-lock.yaml"],
+    ["frontend/package.json", "../../frontend/package.json", "../../frontend/pnpm-lock.yaml"]
+  ])("%s: @types/node (if declared) and its locked version share the runtime Node major", (_name, pkgRel, lockRel) => {
+    const pkg = JSON.parse(read(pkgRel)) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    const range = pkg.devDependencies?.["@types/node"] ?? pkg.dependencies?.["@types/node"];
+    if (range === undefined) return; // not declared here: nothing can drift
+    expect(/(\d+)\./.exec(range)?.[1]).toBe(ciMajor);
+    const locked = /^ {6}'@types\/node':\n {8}specifier: .*\n {8}version: (\d+)\./m.exec(read(lockRel))?.[1];
+    expect(locked).toBe(ciMajor);
+  });
 });
