@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, type AuthSessionInfo } from "../lib/api";
 import { useLanguage } from "../i18n/useLanguage";
+import { useText } from "../i18n/useText";
+import { errorText } from "../lib/errors";
 import { currentLocale } from "../i18n/locale";
 
 const when = (iso: string | null): string =>
@@ -9,6 +11,7 @@ const when = (iso: string | null): string =>
 /** The caller's own active logins (GET /auth/sessions) with a per-row revoke (DELETE /auth/sessions/:id). */
 export function SessionsPanel() {
   const { pick } = useLanguage();
+  const tr = useText();
   const [rows, setRows] = useState<AuthSessionInfo[] | null>(null);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
@@ -19,11 +22,11 @@ export function SessionsPanel() {
     api.sessions().then(
       (list) => { if (live) { setRows(list); setError(""); } },
       (reason: unknown) => {
-        if (live) setError(reason instanceof Error ? reason.message : pick("تعذر تحميل الجلسات", "Could not load sessions"));
+        if (live) setError(errorText(reason, pick, tr, { fallback: pick("تعذر تحميل الجلسات", "Could not load sessions") }));
       }
     );
     return () => { live = false; };
-  }, [tick, pick]);
+  }, [tick, pick, tr]);
 
   async function revoke(id: string) {
     setBusyId(id);
@@ -31,7 +34,7 @@ export function SessionsPanel() {
       await api.endSession(id);
       setTick((n) => n + 1);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : pick("تعذر إنهاء الجلسة", "Could not end the session"));
+      setError(errorText(reason, pick, tr, { fallback: pick("تعذر إنهاء الجلسة", "Could not end the session") }));
     } finally {
       setBusyId("");
     }

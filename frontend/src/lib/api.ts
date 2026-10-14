@@ -231,10 +231,13 @@ interface ApiErrorBody {
 /** Error whose message is always safe to show to a user (never server internals). */
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** Seconds the server asked the client to wait (`Retry-After` on a 429); undefined otherwise. */
+  readonly retryAfter?: number;
+  constructor(status: number, message: string, retryAfter?: number) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -350,6 +353,13 @@ function safeMessage(status: number, body: ApiErrorBody): string {
   return text;
 }
 
+/** `Retry-After` is delta-seconds or an HTTP date; anything else (or a silly value) is ignored. Capped at one hour. */
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = /^\d+$/.test(value.trim()) ? Number(value) : (Date.parse(value) - Date.now()) / 1000;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(Math.ceil(seconds), 3600) : undefined;
+}
+
 let signingOut = false;
 let pendingRefresh: Promise<TokenPair | null> | null = null;
 /**
@@ -447,7 +457,8 @@ async function send(path: string, init: RequestInit, allowRefresh: boolean): Pro
   }
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
-    throw new ApiError(response.status, safeMessage(response.status, body));
+    const wait = response.status === 429 ? parseRetryAfter(response.headers.get("retry-after")) : undefined;
+    throw new ApiError(response.status, safeMessage(response.status, body), wait);
   }
   return response;
 }
@@ -471,9 +482,9 @@ export async function requestPage<T>(path: string, init: RequestInit = {}): Prom
 }
 
 const seg = encodeURIComponent;
-/** The API caps list endpoints at this many rows per request; further rows are fetched by offset. */
+/** The API caps list endpoints at this many rows per request; the next rows are fetched with the cursor it hands back. */
 export const PAGE_SIZE = 100;
-const pageQuery = (offset: number) => `?limit=${PAGE_SIZE}&offset=${offset}`;
+const pageQuery = (cursor?: string | null) => `?limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
 const TTL = 30_000;
 // Cache keys are scoped to the signed-in user and tenant so data can never be served across identities.
 export const cacheScope = () => {
@@ -514,11 +525,11 @@ export const api = {
   activity: () => request<void>("/auth/activity", { method: "POST" }),
   me: () => request<AuthUser>("/auth/me"),
   currentTenant: () => read("tenant", () => request<Tenant>("/tenants/current")),
-  services: (offset = 0) => read(`services:${offset}`, () => request<TravelService[]>(`/services${pageQuery(offset)}`)),
+  services: (cursor?: string | null) => read(`services:${cursor ?? ""}`, () => requestPage<TravelService>(`/services${pageQuery(cursor)}`)),
   exchangeRates: () => read("rates", () => request<ExchangeRates>("/services/exchange-rates"), 60 * 60_000),
-  marketplace: (offset = 0) => read(`marketplace:${offset}`, () => request<TravelService[]>(`/services/marketplace${pageQuery(offset)}`)),
+  marketplace: (cursor?: string | null) => read(`marketplace:${cursor ?? ""}`, () => requestPage<TravelService>(`/services/marketplace${pageQuery(cursor)}`)),
   workspace: () => read("workspace", () => request<WorkspaceMetadata>("/providers/workspace")),
-  providers: () => read("providers", () => request<Organization[]>("/providers")),
+  providers: (cursor?: string | null) => read(`providers:${cursor ?? ""}`, () => requestPage<Organization>(`/providers${pageQuery(cursor)}`)),
   createProvider: (input: ProviderInput) =>
     afterWrite(["providers", "marketplace", "services", "workspace", "members"],
       request<Organization>("/providers", { method: "POST", body: JSON.stringify(input) })),
@@ -536,7 +547,7 @@ export const api = {
     input: Partial<Omit<ServiceInput, "providerOrganizationId">> & { status?: TravelService["status"] }
   ) => afterWrite(["services", "marketplace", "providers", "workspace", "bookings"],
     request<TravelService>(`/services/${seg(id)}`, { method: "PATCH", body: JSON.stringify(input) })),
-  bookings: (offset = 0) => read(`bookings:${offset}`, () => request<Booking[]>(`/bookings${pageQuery(offset)}`)),
+  bookings: (cursor?: string | null) => read(`bookings:${cursor ?? ""}`, () => requestPage<Booking>(`/bookings${pageQuery(cursor)}`)),
   /** `idempotencyKey` is one per user action: the same key on a retry returns the first booking, never a second one. */
   createBooking: (input: BookingInput, idempotencyKey: string) =>
     afterWrite(["bookings"], request<Booking>("/bookings", {
@@ -556,6 +567,16 @@ export const api = {
     request<{ membershipId: string; status: string }>(
       `/users/me/invitations/${seg(id)}/${accept ? "accept" : "decline"}`, { method: "POST" }),
   members: () => read("members", () => request<TenantMember[]>("/tenants/members")),
+  /**
+   * Ends EVERY session of this account (all devices and workspaces, this one included). Local state is cleared only
+   * after the server confirmed: a failed call leaves the user signed in and able to retry.
+   */
+  async logoutAll(): Promise<void> {
+    const userId = readSession()?.user.userId;
+    await request<void>("/auth/logout-all", { method: "POST" });
+    clearSession();
+    broadcastSignOut(userId);
+  },
   /** Best effort, fire-and-forget: ends the cookie session and clears the cookie when the client gives up on a session on its own (idle timeout). */
   endServerSession(): void {
     void fetch(`${API_URL}/auth/logout`, { method: "POST", cache: "no-store", credentials: CREDENTIALS, headers: { ...CSRF_HEADERS } }).catch(() => undefined);

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api } from "../lib/api";
 import { useLanguage } from "../i18n/useLanguage";
+import { useText } from "../i18n/useText";
+import { errorText } from "../lib/errors";
 
 /**
  * The server invalidated this user's old MFA recovery codes (GET /auth/mfa ->
@@ -10,6 +12,7 @@ import { useLanguage } from "../i18n/useLanguage";
  */
 export function MfaRecoveryNotice() {
   const { pick } = useLanguage();
+  const tr = useText();
   const dialog = useRef<HTMLDialogElement>(null);
   const [required, setRequired] = useState(false);
   const [codes, setCodes] = useState<string[] | null>(null);
@@ -44,7 +47,10 @@ export function MfaRecoveryNotice() {
       const result = await api.regenerateRecoveryCodes(password, code);
       setCodes(result.recoveryCodes);
     } catch (reason) {
-      setError(reason instanceof Error && reason.message ? reason.message : pick("تعذر إنشاء الرموز. تحقق من كلمة المرور والرمز.", "Could not create the codes. Check your password and code."));
+      setError(errorText(reason, pick, tr, {
+        wrongSecret: pick("كلمة المرور أو رمز التحقق غير صحيح.", "The password or verification code is incorrect."),
+        fallback: pick("تعذر إنشاء الرموز. تحقق من كلمة المرور والرمز.", "Could not create the codes. Check your password and code.")
+      }));
     } finally {
       setPassword("");
       setCode("");
