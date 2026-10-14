@@ -4,15 +4,9 @@
 name: Image scan and SBOM
 
 on:
+  # Runs on every pull request to main (no path filter) so it can be a required check.
   pull_request:
-    paths:
-      - "backend/Dockerfile"
-      - "frontend/Dockerfile"
-      - "backend/pnpm-lock.yaml"
-      - "frontend/pnpm-lock.yaml"
-      - "docker-compose.yml"
-      - ".trivyignore"
-      - ".github/workflows/image-scan.yml"
+    branches: [main]
   push:
     branches: [main]
   schedule:
