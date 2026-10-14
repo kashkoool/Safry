@@ -19,3 +19,13 @@ export class MailDeliveryError extends Error {
     this.name = "MailDeliveryError";
   }
 }
+
+export const MAIL_RETRY = Symbol("MAIL_RETRY");
+
+/** Total tries (first send included) and the base wait before the second try. */
+export interface MailRetryPolicy {
+  attempts: number;
+  baseDelayMs: number;
+}
+
+export const DEFAULT_MAIL_RETRY: MailRetryPolicy = { attempts: 3, baseDelayMs: 2000 };

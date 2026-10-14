@@ -18,6 +18,7 @@ Every workflow lives in `.github/workflows/`. Actions are pinned by full commit 
 | `docker-size-budget.yml` | Docker image-size budget | PR touching image inputs, push | no | Fails when an image grows past its size cap |
 | `prisma-migrate-status.yml` | prisma-migrate-status | PR touching Prisma files, push, manual | no | Applies all migrations to a fresh database and fails on schema drift |
 | `no-ai-attribution.yml` | No AI attribution | PR | no | Blocks AI co-author trailers and footers in commits and PR text |
+| `fuzz.yml` | Property-based fuzzing | PRs touching `backend/src/common`, `backend/src/config` or `backend/src/modules/mail`; weekly | no | fast-check property tests (`backend/src/common/fuzz.spec.ts`) over cursor decoding, money arithmetic, base32/TOTP, mail rendering and environment validation, 20000 cases per property; the same file runs with 300 cases in the normal unit suite |
 | `scorecard.yml` | Scorecard analysis | push, weekly | no | OpenSSF Scorecard results to code scanning |
 
 Dependabot (`.github/dependabot.yml`) opens weekly minor and patch updates. Major versions are never proposed automatically: they

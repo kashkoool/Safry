@@ -91,4 +91,9 @@ describe("validateEnvironment", () => {
       expect(() => validateEnvironment({ ...production, DATABASE_URL: "postgresql://u:p@localhost:5432/safry" })).not.toThrow();
     });
   });
+  it("validates the mail retry settings", () => {
+    expect(validateEnvironment({ ...valid, MAIL_RETRY_ATTEMPTS: "1", MAIL_RETRY_BASE_MS: "0" })).toMatchObject({ MAIL_RETRY_ATTEMPTS: 1, MAIL_RETRY_BASE_MS: 0 });
+    for (const attempts of ["0", "6", "x", "1.5"]) expect(() => validateEnvironment({ ...valid, MAIL_RETRY_ATTEMPTS: attempts })).toThrow("MAIL_RETRY_ATTEMPTS");
+    for (const base of ["-1", "30001", "x"]) expect(() => validateEnvironment({ ...valid, MAIL_RETRY_BASE_MS: base })).toThrow("MAIL_RETRY_BASE_MS");
+  });
 });

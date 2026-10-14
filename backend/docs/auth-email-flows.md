@@ -64,6 +64,18 @@ proves the mailbox). Afterwards it lifts the sign-in lockout of the account and 
 - A failure to issue or hand over a link after registration or an address change never turns the committed change into an
   error: it is logged (error class only) and the user asks for a new link through `/auth/email/resend`.
 
+## Delivery retry
+
+Mail is handed over after the HTTP answer is decided, so retries never change response time. A transient failure (network
+error, timeout, HTTP 429 or 5xx) is retried in the same process: 3 tries in total, waiting about 2 s and then 10 s (plus or
+minus 20% jitter; `MAIL_RETRY_ATTEMPTS` 1-5, `MAIL_RETRY_BASE_MS`). Every try reuses the same idempotency key, so the provider
+cannot send the message twice. Any other failure (other 4xx such as an invalid recipient, unexpected errors) is not retried and
+is logged as a permanent failure. The final failure is logged with the mail kind and the attempt count only, never the
+recipient, body or link.
+
+Limit: the pending retry lives in memory only (links and tokens are deliberately never stored in the database). A process
+restart during a backoff wait loses it; the user then requests a new link.
+
 ## Known trade-offs
 
 - **Pre-registration.** Anyone can self-register an address they do not own, with a password of their choice. That account stays
