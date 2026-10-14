@@ -111,8 +111,13 @@ export class CredentialService {
         });
         return;
       }
-      const token = await this.issue(user, "PASSWORD_RESET", RESET_TTL_MINUTES * 60_000, ipAddress, "identity.password.reset_requested");
-      if (token) this.mail.sendDetached(user.email, user.locale, { kind: "password-reset", link: this.link("/reset-password", token), validForMinutes: RESET_TTL_MINUTES });
+      // A failure here must look like success: an unknown address answers 202, so a known one must too (no enumeration under failure).
+      try {
+        const token = await this.issue(user, "PASSWORD_RESET", RESET_TTL_MINUTES * 60_000, ipAddress, "identity.password.reset_requested");
+        if (token) this.mail.sendDetached(user.email, user.locale, { kind: "password-reset", link: this.link("/reset-password", token), validForMinutes: RESET_TTL_MINUTES });
+      } catch (error) {
+        this.logger.error(`password reset link not sent: ${error instanceof Error ? error.name : "unknown error"}`);
+      }
     }));
   }
 
