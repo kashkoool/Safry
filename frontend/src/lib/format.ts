@@ -1,8 +1,9 @@
 import type { ExchangeRates, SupportedCurrency } from "./api";
 import { currentLocale } from "../i18n/locale";
+import { convertMinorUnits, formatMinorUnits } from "./minor-units";
 
 export const money = (cents: number, currency: SupportedCurrency = "SAR"): string =>
-  new Intl.NumberFormat(currentLocale(), { style: "currency", currency }).format(cents / 100);
+  formatMinorUnits(cents, currency, currentLocale());
 
 export function convertedMoney(cents: number, from: SupportedCurrency, to: SupportedCurrency,
   snapshot: ExchangeRates | null): string | null {
@@ -11,6 +12,7 @@ export function convertedMoney(cents: number, from: SupportedCurrency, to: Suppo
   const fresh = (currency: SupportedCurrency): boolean => currency === "USD" ||
     Date.now() - Date.parse(snapshot.rates[currency].date) < (currency === "SYP" ? 35 : 7) * 24 * 60 * 60 * 1000;
   if (!fresh(from) || !fresh(to)) return null;
-  const converted = Math.round(cents / snapshot.rates[from].rate * snapshot.rates[to].rate);
+  const converted = convertMinorUnits(cents, from, to, snapshot.rates[from].rate, snapshot.rates[to].rate);
+  if (!Number.isFinite(converted)) return null;
   return money(converted, to);
 }

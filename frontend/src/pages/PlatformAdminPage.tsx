@@ -34,6 +34,7 @@ import {
 } from "../lib/platform";
 import { CreateTenantDialog, TenantActivityDialog, TenantStatusDialog, UnlockLoginDialog } from "../components/platform/TenantTools";
 import type { PlatformTenant } from "../lib/platform";
+import { CURRENCY_EXPONENTS, formatMinorUnits } from "../lib/minor-units";
 import "./platform-admin.css";
 
 const sections = [
@@ -482,13 +483,13 @@ const fieldNames: Record<string, string> = {
   nameAr: "اسم الشركة بالعربية", nameEn: "اسم الشركة بالإنجليزية", titleAr: "العنوان بالعربية", titleEn: "العنوان بالإنجليزية", descriptionAr: "الوصف بالعربية", descriptionEn: "الوصف بالإنجليزية", cityAr: "المدينة بالعربية", cityEn: "المدينة بالإنجليزية", detailsAr: "تفاصيل الخدمة بالعربية", detailsEn: "تفاصيل الخدمة بالإنجليزية",
   id: "المعرف", name: "الاسم", displayName: "اسم المستخدم", email: "البريد", phone: "الهاتف", status: "الحالة", isPlatformAdmin: "مدير نظام", deletedAt: "تاريخ الحذف", createdAt: "تاريخ الإنشاء", updatedAt: "آخر تعديل", memberships: "العضويات", tenant: "الجهة", tenantId: "معرف الجهة", organization: "المنشأة", providerOrganizationId: "معرف المنشأة", roles: "الأدوار", role: "الدور", permissions: "الصلاحيات", permission: "الصلاحية", permissionOverrides: "استثناءات الصلاحيات", code: "الرمز", title: "العنوان", description: "الوصف", category: "نوع الخدمة", type: "نوع النشاط", city: "المدينة", priceCents: "السعر الأصلي", totalCents: "إجمالي الحجز", unitPriceCents: "سعر الوحدة المتفق عليه", currency: "العملة", capacity: "السعة", details: "تفاصيل الخدمة", components: "مكونات البرنامج", service: "الخدمة", serviceId: "معرف الخدمة", packageId: "معرف البرنامج", traveler: "المسافر", user: "المستخدم", travelersCount: "عدد المسافرين", units: "عدد الوحدات", serviceDate: "تاريخ الخدمة", endDate: "تاريخ المغادرة", notes: "الملاحظات", action: "العملية", actor: "المنفذ", entityId: "معرف السجل المتأثر", entityType: "نوع السجل", occurredAt: "وقت العملية", metadata: "تفاصيل التغيير", before: "قبل التغيير", after: "بعد التغيير", reason: "السبب", roleIds: "معرفات الأدوار", retainedBusinessRecords: "تم الاحتفاظ بالسجلات", expiresAt: "تنتهي في", revokedAt: "أُلغيت في", lastUsedAt: "آخر استخدام", userAgent: "المتصفح", contactEmail: "بريد التواصل", licenseNumber: "رقم الترخيص", _count: "أعداد السجلات", services: "الخدمات", bookings: "الحجوزات", members: "الأعضاء", roomType: "نوع الغرفة", maxGuests: "أقصى نزلاء", mealPlan: "نظام الوجبات", durationDays: "عدد الأيام", departureCity: "مدينة الانطلاق", departureDate: "موعد الإقلاع", itinerary: "مسار البرنامج", origin: "من", destination: "إلى", flightNumber: "رقم الرحلة", cabin: "الدرجة", vehicleType: "نوع المركبة", seats: "المقاعد", mealType: "نوع الوجبة", menu: "قائمة الطعام", visaType: "نوع التأشيرة", requirements: "المتطلبات", site: "الموقع", scope: "النطاق"
 };
-function RecordDetails({ value, field = "" }: { value: unknown; field?: string }) {
+function RecordDetails({ value, field = "", currency }: { value: unknown; field?: string; currency?: string }) {
   const tr = useText();
   if (value === null || value === undefined) return <span>{tr("—")}</span>;
   if (typeof value === "boolean") return <span>{tr(value ? "نعم / سماح" : "لا / منع")}</span>;
-  if (Array.isArray(value)) return value.length ? <div className="admin-detail-array">{value.map((item, i) => <div key={i}><RecordDetails value={item} /></div>)}</div> : <span>{tr("لا توجد سجلات")}</span>;
-  if (typeof value === "object") return <dl className="admin-detail-list">{Object.entries(value).map(([key, item]) => <div key={key}><dt>{tr(fieldNames[key] ?? permissionLabels[key] ?? key)}</dt><dd><RecordDetails value={item} field={key} /></dd></div>)}</dl>;
-  if (["priceCents", "totalCents", "unitPriceCents"].includes(field) && typeof value === "number") return <span>{tr((value / 100).toLocaleString(currentLocale(), { minimumFractionDigits: 2 }))}</span>;
+  if (Array.isArray(value)) return value.length ? <div className="admin-detail-array">{value.map((item, i) => <div key={i}><RecordDetails value={item} currency={currency} /></div>)}</div> : <span>{tr("لا توجد سجلات")}</span>;
+  if (typeof value === "object") return <dl className="admin-detail-list">{Object.entries(value).map(([key, item]) => <div key={key}><dt>{tr(fieldNames[key] ?? permissionLabels[key] ?? key)}</dt><dd><RecordDetails value={item} field={key} currency={typeof (value as { currency?: unknown }).currency === "string" ? (value as { currency: string }).currency : currency} /></dd></div>)}</dl>;
+  if (["priceCents", "totalCents", "unitPriceCents"].includes(field) && typeof value === "number") return <span>{tr(formatMinorUnits(value, currency && Object.hasOwn(CURRENCY_EXPONENTS, currency) ? currency : "USD", currentLocale(), false))}</span>;
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) return <span>{tr(time(value))}</span>;
   return <span>{tr(states[String(value)] ?? String(value))}</span>;
 }

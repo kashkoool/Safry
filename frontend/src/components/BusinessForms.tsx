@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { X } from "lucide-react";
 import { useLanguage } from "../i18n/useLanguage";
 import { englishCurrencyNames } from "../i18n/labels";
-import { toMinorUnits } from "../lib/minor-units";
+import { minorToDecimal, toMinorUnits } from "../lib/minor-units";
 import {
   api,
   ApiError,
@@ -101,7 +101,7 @@ export function ServiceEditor({
     cityEn: service?.cityEn ?? "",
     description: service?.descriptionAr ?? service?.description ?? "",
     descriptionEn: service?.descriptionEn ?? "",
-    price: String((service?.priceCents ?? 0) / 100 || ""),
+    price: service?.priceCents ? minorToDecimal(service.priceCents, service.currency) : "",
     currency: service?.currency ?? "SAR" as SupportedCurrency,
     capacity: String(service?.capacity ?? 20)
   });
@@ -126,7 +126,7 @@ export function ServiceEditor({
         city: form.city,
         description: form.description,
         category,
-        priceCents: toMinorUnits(form.price),
+        priceCents: toMinorUnits(form.price, form.currency),
         currency: form.currency,
         capacity: Number(form.capacity),
         details,
