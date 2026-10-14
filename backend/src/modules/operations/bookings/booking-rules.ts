@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
+import { MAX_MINOR_UNITS } from "../../../common/money/money.js";
 import type { ServiceCategory } from "../../../generated/prisma/enums.js";
 
 const day = 86400000;
@@ -9,15 +10,13 @@ const day = 86400000;
 const MAX_TRAVELERS = 20;
 const MAX_UNITS = 20;
 const MAX_NIGHTS = 90;
-/** `totalCents` is a 32-bit Postgres integer. */
-const INT32_MAX = 2_147_483_647;
 export function bookingTerms(
   category: ServiceCategory,
   details: Record<string, string>,
-  priceCents: number,
+  priceCents: bigint,
   input: { travelersCount: number; units?: number; serviceDate: string; endDate?: string },
   today = new Date().toISOString().slice(0, 10)
-): { units: number; nights: number; serviceDate: Date; endDate: Date | null; totalCents: number } {
+): { units: number; nights: number; serviceDate: Date; endDate: Date | null; totalCents: bigint } {
   const { serviceDate, endDate } = input;
   if (
     !/^\d{4}-\d{2}-\d{2}$/.test(serviceDate) ||
@@ -52,8 +51,9 @@ export function bookingTerms(
     if (!Number.isInteger(nights) || nights < 1 || nights > MAX_NIGHTS)
       throw new BadRequestException("مدة الإقامة من ليلة إلى 90 ليلة");
   } else if (endDate) throw new BadRequestException("تاريخ نهاية الإقامة مخصص للفنادق");
-  const totalCents = priceCents * units * nights;
-  if (!Number.isSafeInteger(totalCents) || totalCents < 1 || totalCents > INT32_MAX)
+  // Exact bigint arithmetic; the ceiling is the largest integer a JSON number carries exactly (money columns are bigint).
+  const totalCents = priceCents * BigInt(units) * BigInt(nights);
+  if (totalCents < 1n || totalCents > MAX_MINOR_UNITS)
     throw new BadRequestException("قيمة الحجز تتجاوز الحد المدعوم");
   return {
     units,

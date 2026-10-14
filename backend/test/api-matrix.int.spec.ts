@@ -60,6 +60,16 @@ describe("api route matrix", () => {
     );
   });
 
+  it("lists the e-mail credential routes as public routes that take a body (no bearer token can exist at that point)", () => {
+    const wanted = ["POST /api/v1/auth/password/forgot", "POST /api/v1/auth/password/reset", "POST /api/v1/auth/email/verify", "POST /api/v1/auth/email/resend"];
+    for (const key of wanted) {
+      const route = routes.find((r) => `${r.method} ${r.path}` === key);
+      expect(route, key).toBeDefined();
+      expect(route!.public, key).toBe(true);
+      expect(route!.hasBody, key).toBe(true);
+    }
+  });
+
   describe("unauthenticated", () => {
     it("answers 401 on every non-public route, with and without a body, and with a garbage bearer token", async () => {
       const failures: string[] = [];

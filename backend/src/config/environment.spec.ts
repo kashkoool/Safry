@@ -56,7 +56,7 @@ describe("validateEnvironment", () => {
   it("never lets row-level security be switched off outside development and tests", () => {
     for (const env of ["production", "staging", undefined])
       expect(() => validateEnvironment({ ...valid, MFA_ENCRYPTION_KEY: "unit-test-mfa-key-not-the-jwt-secret-0123456789", NODE_ENV: env, DATABASE_RLS: "off" })).toThrow("DATABASE_RLS=off");
-    expect(() => validateEnvironment({ ...valid, MFA_ENCRYPTION_KEY: "unit-test-mfa-key-not-the-jwt-secret-0123456789", NODE_ENV: "production", DATABASE_RLS: "on" })).not.toThrow();
+    expect(() => validateEnvironment({ ...valid, MFA_ENCRYPTION_KEY: "unit-test-mfa-key-not-the-jwt-secret-0123456789", NODE_ENV: "production", DATABASE_RLS: "on", MAIL_TRANSPORT: "resend", RESEND_API_KEY: "re_abcdabcdabcdabcdabcdabcdabcd", MAIL_FROM: "Safry <no-reply@mail.safry.test>", APP_BASE_URL: "https://app.safry.test" })).not.toThrow();
   });
 
   it("validates the row-level-security mode, pool size and MFA key", () => {
@@ -78,7 +78,7 @@ describe("validateEnvironment", () => {
   });
 
   describe("database TLS in production", () => {
-    const production = { ...valid, NODE_ENV: "production", MFA_ENCRYPTION_KEY: "another-secure-test-key-0123456789abcdef!" };
+    const production = { ...valid, NODE_ENV: "production", MFA_ENCRYPTION_KEY: "another-secure-test-key-0123456789abcdef!", MAIL_TRANSPORT: "resend", RESEND_API_KEY: "re_abcdabcdabcdabcdabcdabcdabcd", MAIL_FROM: "Safry <no-reply@mail.safry.test>", APP_BASE_URL: "https://app.safry.test" };
     it("requires sslmode for a routable database host", () => {
       const remote = "postgresql://u:p@db.example.internal:5432/safry";
       expect(() => validateEnvironment({ ...production, DATABASE_URL: remote })).toThrow("sslmode");

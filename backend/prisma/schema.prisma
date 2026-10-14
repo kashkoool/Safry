@@ -58,6 +58,11 @@ enum ServiceStatus {
   INACTIVE
 }
 
+enum CredentialTokenPurpose {
+  PASSWORD_RESET
+  EMAIL_VERIFICATION
+}
+
 enum BookingStatus {
   PENDING
   CONFIRMED
@@ -99,6 +104,7 @@ model User {
   emailVerifiedAt                 DateTime?          @db.Timestamptz(3)
   memberships                     TenantMembership[]
   sessions                        RefreshSession[]
+  credentialTokens                CredentialToken[]
   auditEvents                     AuditEvent[]       @relation("AuditActor")
   createdAt                       DateTime           @default(now()) @db.Timestamptz(3)
   updatedAt                       DateTime           @updatedAt @db.Timestamptz(3)
@@ -167,6 +173,7 @@ model ProviderOrganization {
   city          String                   @db.VarChar(120)
   contactEmail  String                   @db.VarChar(320)
   phone         String                   @default("") @db.VarChar(32)
+  // Intentionally NOT unique: two organizations may share a license number (product decision), and "" means unknown.
   licenseNumber String                   @default("") @db.VarChar(120)
   specialties   Json                     @default("[]")
   status        TenantStatus             @default(ACTIVE)
@@ -215,7 +222,8 @@ model TravelService {
   category               ServiceCategory
   city                   String               @db.VarChar(120)
   cityEn                 String               @default("") @db.VarChar(120)
-  priceCents             Int
+  // Integer minor units (cents) in a bigint column; the API carries a JSON number (see src/common/money).
+  priceCents             BigInt
   currency               String               @default("SAR") @db.Char(3)
   status                 ServiceStatus        @default(DRAFT)
   details                Json                 @default("{}")
@@ -255,8 +263,9 @@ model Booking {
   serviceId            String           @db.Uuid
   travelerMembershipId String           @db.Uuid
   travelersCount       Int              @default(1)
-  totalCents           Int
-  unitPriceCents       Int
+  // bigint minor units; exact arithmetic in booking-rules.ts, JSON numbers at the API boundary.
+  totalCents           BigInt
+  unitPriceCents       BigInt
   units                Int              @default(1)
   serviceDate          DateTime         @db.Date
   endDate              DateTime?        @db.Date
@@ -399,4 +408,23 @@ model LoginThrottle {
 
   @@index([updatedAt])
   @@map("login_throttles")
+}
+
+/// Single-use links mailed to an identity (password reset, e-mail verification). Only the SHA-256 of the 32-byte token is stored.
+/// Identity-level (an identity spans tenants), so there is no tenant column: row-level security allows only the explicit system scope.
+model CredentialToken {
+  id        String                 @id @default(uuid()) @db.Uuid
+  userId    String                 @db.Uuid
+  purpose   CredentialTokenPurpose
+  tokenHash String                 @unique @db.Char(64)
+  /// Normalised address the link was sent to; a verification link stops working when the account address changes.
+  email     String                 @db.VarChar(320)
+  expiresAt DateTime               @db.Timestamptz(3)
+  usedAt    DateTime?              @db.Timestamptz(3)
+  createdAt DateTime               @default(now()) @db.Timestamptz(3)
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, createdAt])
+  @@index([expiresAt])
+  @@map("credential_tokens")
 }

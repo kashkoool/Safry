@@ -2,10 +2,11 @@ import type { ExecutionContext } from "@nestjs/common";
 import type { Request } from "express";
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
-import { APP_FILTER, APP_GUARD } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { validateEnvironment } from "./config/environment.js";
 import { AllExceptionsFilter } from "./common/filters/all-exceptions.filter.js";
+import { MoneySerializationInterceptor } from "./common/money/money.interceptor.js";
 import { RequestContextMiddleware } from "./common/middleware/request-context.middleware.js";
 import { TenantContextMiddleware } from "./common/middleware/tenant-context.middleware.js";
 import { HttpSupportModule } from "./common/http/http.module.js";
@@ -20,6 +21,7 @@ import { EntitiesModule } from "./modules/entities/entities.module.js";
 import { OperationsModule } from "./modules/operations/operations.module.js";
 import { TravelServicesModule } from "./modules/travel-services/travel-services.module.js";
 import { PlatformModule } from "./modules/platform/platform.module.js";
+import { MailModule } from "./modules/mail/mail.module.js";
 
 @Module({
   imports: [
@@ -46,6 +48,7 @@ import { PlatformModule } from "./modules/platform/platform.module.js";
       }
     }),
     DatabaseModule,
+    MailModule,
     HttpSupportModule,
     HealthModule,
     IdentityModule,
@@ -56,6 +59,7 @@ import { PlatformModule } from "./modules/platform/platform.module.js";
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
+    { provide: APP_INTERCEPTOR, useClass: MoneySerializationInterceptor },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: UserRateLimitGuard },

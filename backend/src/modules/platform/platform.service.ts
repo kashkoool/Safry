@@ -8,6 +8,7 @@ import {
 import { PrismaService } from "../../database/prisma.service.js";
 import { AccountLinkingService } from "../identity/users/account-linking.service.js";
 import { MfaService } from "../identity/auth/mfa.service.js";
+import { CredentialService } from "../identity/auth/credential.service.js";
 import type { AuthUser } from "../../common/security/auth-user.js";
 import type { Prisma } from "../../generated/prisma/client.js";
 import type {
@@ -60,7 +61,8 @@ export class PlatformService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly linking: AccountLinkingService,
-    private readonly mfa: MfaService
+    private readonly mfa: MfaService,
+    private readonly credentials: CredentialService
   ) {}
   private overviewCache: { at: number; value: unknown } | undefined;
 
@@ -284,8 +286,9 @@ export class PlatformService {
       const current = await this.prisma.user.findUnique({ where: { id }, select: { isPlatformAdmin: true } });
       if (current && !current.isPlatformAdmin) await this.mfa.stepUp(actor, input.currentPassword, input.mfaCode, ipAddress);
     }
+    let addressChanged = false;
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const updated = await this.prisma.$transaction(async (tx) => {
         await this.lockAdmin(tx, actor);
         const old = await tx.user.findUnique({ where: { id } });
         if (!old) throw new NotFoundException();
@@ -293,6 +296,7 @@ export class PlatformService {
         if (id === actor.userId && input.isPlatformAdmin === false)
           throw new ConflictException("لا يمكنك إزالة صلاحية مدير النظام من حسابك الحالي");
         const email = input.email?.trim().toLowerCase();
+        addressChanged = Boolean(email && email !== old.emailNormalized);
         const changed = await tx.user.update({
           where: { id },
           data: {
@@ -323,6 +327,9 @@ export class PlatformService {
         });
         return changed;
       });
+      // The new address starts unverified (it blocks sign-in until confirmed): mail the link to it.
+      if (addressChanged) await this.credentials.sendVerificationTo(id, ipAddress);
+      return updated;
     } catch (error) {
       if (isUniqueViolation(error))
         throw new ConflictException("البريد مستخدم بحساب آخر");
@@ -482,7 +489,8 @@ export class PlatformService {
           email,
           displayName: input.displayName,
           phone: input.phone,
-          password: input.password
+          password: input.password,
+          emailVerified: true
         });
         const member = await tx.tenantMembership.create({
           data: { tenantId: tenant.id, userId: user.id, status: "ACTIVE", providerOrganizationId: org?.id }

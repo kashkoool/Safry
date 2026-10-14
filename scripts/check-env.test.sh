@@ -14,6 +14,8 @@ while IFS= read -r line; do
     *) printf '%s\n' "$line" ;;
   esac
 done < "$here/../docker.env.example" > "$base"
+# Values that must have a real shape (a random hex string is not a sender address or an https origin).
+printf '%s\n' 'MAIL_FROM=Safry <no-reply@mail.safry.test>' 'APP_BASE_URL=https://app.safry.test' >> "$base"
 
 failures=0
 # case <name> <expected exit> <expected output fragment or -> <extra env lines...>
@@ -33,4 +35,10 @@ check "2 hops + public bind WITHOUT tls profile fails"    1 "FAIL WEB_BIND"   TR
 check "2 hops + public bind WITH tls profile fails"       1 "FAIL WEB_BIND"   TRUST_PROXY=2 WEB_BIND=0.0.0.0 SITE_ADDRESS=app.example.net
 check "3 hops + public bind fails"                        1 "FAIL WEB_BIND"   TRUST_PROXY=3 WEB_BIND=10.0.0.5
 check "explicit acknowledgement downgrades it to a warn"  0 "acknowledged"    TRUST_PROXY=2 WEB_BIND=0.0.0.0 ALLOW_PUBLIC_WEB_BIND_WITH_PROXY_HOPS=true
+check "placeholder sender fails"                         1 "FAIL MAIL_FROM"  MAIL_FROM=CHANGE_ME_SENDER
+check "malformed sender fails"                           1 "FAIL MAIL_FROM"  "MAIL_FROM=not an address"
+check "http app origin fails"                            1 "FAIL APP_BASE_URL" APP_BASE_URL=http://app.safry.test
+check "app origin with a path fails"                     1 "FAIL APP_BASE_URL" APP_BASE_URL=https://app.safry.test/app
+check "placeholder Resend key fails"                     1 "FAIL RESEND_API_KEY" RESEND_API_KEY=CHANGE_ME_RESEND_API_KEY_FROM_THE_RESEND_DASHBOARD
+check "missing Resend key fails"                         1 "RESEND_API_KEY"  RESEND_API_KEY=
 exit "$failures"

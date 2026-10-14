@@ -266,6 +266,9 @@ describe("tenant isolation", () => {
       const memberships = await world.prisma.tenantMembership.count({ where: { user: { emailNormalized: email } } });
       expect(memberships).toBe(2);
 
+      // Self-registered accounts sign in only after the address is confirmed (the mail flow is covered in credentials.int.spec.ts).
+      expect((await world.login({ email, password, tenant: a } as TestUser)).status).toBe(401);
+      await world.markEmailVerified(email);
       const inA = await world.login({ email, password, tenant: a } as TestUser);
       const inB = await world.login({ email, password, tenant: b } as TestUser);
       expect(inA.status).toBe(200);

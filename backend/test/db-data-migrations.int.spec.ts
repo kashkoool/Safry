@@ -166,7 +166,7 @@ describe("2026-10-12 migrations on a database with seeded legacy rows, as a non-
     await owner.query(`UPDATE bookings SET status = 'CANCELLED' WHERE "serviceDate" IS NULL AND status = 'CONFIRMED'`);
     prismaCommand(["migrate", "resolve", "--rolled-back", bookingsMigration], db.ownerUrl, config);
     prismaCommand(["migrate", "deploy"], db.ownerUrl, config);
-    const applied = await owner.query<{ migration_name: string }>(`SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL AND migration_name >= $1 ORDER BY 1`, [first]);
+    const applied = await owner.query<{ migration_name: string }>(`SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL AND migration_name >= $1 AND migration_name < '20261013' ORDER BY 1`, [first]);
     expect(applied.rows.map((r) => r.migration_name)).toEqual([
       "20261012_auth_invalidate_legacy_recovery_codes",
       "20261012_db_audit_partitioning",

@@ -110,12 +110,13 @@ export class AuthService {
     // With MFA the address's streak ends only after the second factor; the password step is refunded.
     if (passwordValid)
       await (user!.mfaEnabledAt ? this.security.refund(emailNormalized, metadata.ipAddress) : this.security.succeed(emailNormalized, metadata.ipAddress));
-    if (!user || !passwordValid || user.status !== "ACTIVE" || user.deletedAt !== null || !membership) {
+    // A self-registered account must confirm its address first. The refusal is the same 401 as any other failure; the audit reason tells support.
+    if (!user || !passwordValid || user.status !== "ACTIVE" || user.deletedAt !== null || user.emailVerifiedAt === null || !membership) {
       await this.security.recordFailure({
         userId: user?.id,
         tenantId: membership?.tenantId,
         ipAddress: metadata.ipAddress,
-        reason: !attempt.allowed ? "throttled" : !user ? "unknown_account" : !passwordValid ? "bad_password" : "inactive_account_or_tenant",
+        reason: !attempt.allowed ? "throttled" : !user ? "unknown_account" : !passwordValid ? "bad_password" : user.emailVerifiedAt === null ? "email_unverified" : "inactive_account_or_tenant",
         blocked: attempt.blocks && !passwordValid
       });
       throw new UnauthorizedException(INVALID_CREDENTIALS);

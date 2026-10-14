@@ -35,7 +35,7 @@
     "test:int:all": "nest build && node -e \"require('node:fs').rmSync('test/.coverage',{recursive:true,force:true})\" && vitest run && vitest run -c vitest.int.config.ts && tsx scripts/route-coverage.ts",
     "test:docker": "bash test/docker/run.sh",
     "test:all": "vitest run && pnpm test:int",
-    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json"
+    "typecheck": "tsc --noEmit && tsc -p test/tsconfig.json && tsc -p scripts/tsconfig.json"
   },
   "dependencies": {
     "@nestjs/common": "^12.1.2",

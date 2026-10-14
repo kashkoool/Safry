@@ -71,6 +71,32 @@ database login lockout (progressive, never blocks the owner's own address).
   Expression indexes (for example the case-insensitive organization name) are not representable in
   `schema.prisma` and are not compared by that command.
 
+### Money columns (bigint minor units)
+
+`travel_services.priceCents`, `bookings.unitPriceCents` and `bookings.totalCents` are PostgreSQL `bigint` (migration
+`20261014_db_money_bigint`; they were 32-bit `integer`, which stops at 2,147,483,647 minor units). The values are integer minor
+units (cents); there is no fractional amount anywhere, so `bigint` is exact and `numeric` was not needed.
+
+- **In the application** amounts are `bigint` (Prisma `BigInt`) and every product is computed with `bigint`
+  (`bookingTerms` in `booking-rules.ts`); no floating-point arithmetic touches money. A total above `Number.MAX_SAFE_INTEGER`
+  (9,007,199,254,740,991) is refused with `400`.
+- **At the API** nothing changed: money fields stay JSON numbers. A global interceptor (`src/common/money`) converts every
+  `bigint` in a response to a number and **throws** (HTTP 500, nothing rounded) for a stored value beyond the largest exact JSON
+  integer, so a precision-losing answer is impossible. Request fields are still validated as integers by the DTOs (service
+  price 100..100,000,000 minor units).
+- **Locking**: `ALTER COLUMN ... TYPE bigint` rewrites the table and its indexes under `ACCESS EXCLUSIVE`; reads and writes of
+  `travel_services` / `bookings` wait until the migration commits (a few seconds per million rows). The migration sets
+  `lock_timeout = 10s`, so it fails fast instead of queueing every request behind a long transaction; just rerun it when quiet.
+  For a table too large for one rewrite, use expand/contract instead: add nullable `bigint` columns, dual-write, backfill in
+  batches, switch reads, drop the old columns in a later migration.
+- **Rolling back**: an image built before this change reads these columns as 32-bit integers. Roll the migration and the new
+  image out together, and do not run the old image against values above 2,147,483,647 (only the new image can create them).
+- Rehearsal: `test/db-money-migration.int.spec.ts` migrates a populated database as a CREATEROLE, NOSUPERUSER owner with values at
+  2,147,483,647, applies the migration, checks every value survived, writes 2,147,483,648 and 9,007,199,254,740,991 as the
+  restricted runtime login, and checks forced row-level security and `prisma migrate diff`.
+- `provider_organizations.licenseNumber` is intentionally **not** unique: two organizations may share a license number (an empty string
+  means unknown). Do not add a uniqueness constraint.
+
 ## 3. Backup, restore and point-in-time recovery
 
 Proposed targets (owner to confirm, see decisions): RPO 5 minutes, RTO 1 hour.

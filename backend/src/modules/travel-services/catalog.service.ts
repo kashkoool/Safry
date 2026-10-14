@@ -5,6 +5,7 @@ import {
   NotFoundException
 } from "@nestjs/common";
 import type { Response } from "express";
+import { toMinorUnits } from "../../common/money/money.js";
 import { finishPage, keysetPage, type PageQueryDto } from "../../common/pagination.js";
 import type { AuthUser } from "../../common/security/auth-user.js";
 import { isOperator, isTenantAdmin } from "../../common/security/principal.js";
@@ -117,7 +118,7 @@ export class CatalogService {
           description: input.description.trim(),
           category: input.category,
           city: input.city.trim(),
-          priceCents: input.priceCents,
+          priceCents: toMinorUnits(input.priceCents),
           currency: input.currency ?? "SAR",
           capacity: input.capacity,
           details,
@@ -170,7 +171,7 @@ export class CatalogService {
           detailsEn: input.detailsEn === undefined ? undefined : validateDetails(service.category, input.detailsEn, true),
           description: input.description?.trim(),
           city: input.city?.trim(),
-          priceCents: input.priceCents,
+          priceCents: input.priceCents === undefined ? undefined : toMinorUnits(input.priceCents),
           currency: input.currency,
           capacity: input.capacity,
           status: input.status,

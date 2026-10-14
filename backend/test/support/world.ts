@@ -262,10 +262,17 @@ export class World {
         emailNormalized: email,
         displayName: email,
         passwordHash: await hash(password),
-        isPlatformAdmin: options.isPlatformAdmin ?? false
+        isPlatformAdmin: options.isPlatformAdmin ?? false,
+        // Fixture accounts are already verified; self-registered ones are not (see test/credentials.int.spec.ts).
+        emailVerifiedAt: new Date()
       }
     });
     return this.link(tenant, user.id, email, password, options);
+  }
+
+  /** Stands in for the e-mailed confirmation link for an account that registered through the API. */
+  async markEmailVerified(email: string): Promise<void> {
+    await this.prisma.user.update({ where: { emailNormalized: email.toLowerCase() }, data: { emailVerifiedAt: new Date() } });
   }
 
   /** Adds an existing identity to one more tenant. */
