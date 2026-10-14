@@ -2,7 +2,7 @@
 
 Four public endpoints under `/api/v1/auth` (also in Swagger when it is enabled). Request bodies are JSON. The two `202` endpoints
 return a small JSON body; the reset and verify endpoints return `204` with no body at all (a client must not parse an empty
-body as JSON). None needs a bearer token or a tenant, and run in the explicit system scope (an e-mail address is one identity across tenants).
+body as JSON). None needs a bearer token or a tenant, and all run in the explicit system scope (an e-mail address is one identity across tenants).
 
 | Method and path | Body | Success | Limits (per minute) |
 |---|---|---|---|
