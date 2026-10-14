@@ -1,0 +1,64 @@
+name: Dependabot security auto-merge
+
+# Level-1 auto-merge: ONLY Dependabot SECURITY-advisory pull requests, and only the low-risk kind.
+#
+# Merged automatically (after every required check passes):
+#   - opened by dependabot[bot] AND labelled `security`
+#   - a patch or minor update
+#   - not a Docker base image and not GitHub Actions (those change the runtime or the pipeline: always read by hand)
+# Never merged automatically: version updates, major updates, Docker base images, anything not labelled `security`.
+#
+# Safety net:
+#   1. Branch protection on `main` requires the CI checks; `gh pr merge --auto` only queues the merge, so a failing
+#      check holds it open for a human.
+#   2. pull_request_target gives a writable token, so this workflow NEVER checks out or runs pull request code.
+#      It only reads Dependabot's metadata and calls `gh`.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    # The pull request author, not github.actor (on `labeled` events the actor is whoever added the label).
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide
+        id: decide
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+        run: |
+          set -eu
+          echo "labels=$LABELS update-type=$UPDATE_TYPE ecosystem=$ECOSYSTEM"
+          case ",$LABELS," in *,security,*) security=yes ;; *) security=no ;; esac
+          if [ "$security" != "yes" ]; then echo "result=skip" >> "$GITHUB_OUTPUT"; echo "Not a security advisory: left for human review."; exit 0; fi
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch|version-update:semver-minor) ;;
+            *) echo "result=skip" >> "$GITHUB_OUTPUT"; echo "Not a patch or minor update ($UPDATE_TYPE): left for human review."; exit 0 ;;
+          esac
+          case "$ECOSYSTEM" in
+            docker|docker_compose|github_actions) echo "result=skip" >> "$GITHUB_OUTPUT"; echo "Runtime or pipeline change ($ECOSYSTEM): left for human review."; exit 0 ;;
+          esac
+          echo "result=merge" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge
+        if: ${{ steps.decide.outputs.result == 'merge' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash --delete-branch "$PR_URL"
