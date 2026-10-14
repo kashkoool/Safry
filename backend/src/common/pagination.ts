@@ -41,7 +41,7 @@ export function encodeCursor(row: { createdAt: Date; id: string }): string {
 
 const CURSOR_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
-function decodeCursor(raw: string): { createdAt: Date; id: string } {
+export function decodeCursor(raw: string): { createdAt: Date; id: string } {
   try {
     const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as Partial<Cursor>;
     // Strict ISO form as encodeCursor writes it, and a sane range: a parseable but absurd year (+275760-09-13) reaches

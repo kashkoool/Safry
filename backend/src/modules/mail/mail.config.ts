@@ -1,7 +1,7 @@
 import type { ConfigService } from "@nestjs/config";
 import { ConsoleTransport } from "./console.transport.js";
 import { ResendTransport } from "./resend.transport.js";
-import type { MailTransport } from "./mail.types.js";
+import { DEFAULT_MAIL_RETRY, type MailRetryPolicy, type MailTransport } from "./mail.types.js";
 
 export type MailTransportName = "resend" | "console";
 
@@ -24,4 +24,11 @@ export function createMailTransport(config: ConfigService): MailTransport {
 /** Frontend origin that links point to, without a trailing slash. */
 export function appBaseUrl(config: { get<T = string>(key: string, fallback?: T): T | undefined }): string {
   return (config.get<string>("APP_BASE_URL") ?? "http://localhost:3001").replace(/\/+$/, "");
+}
+
+export function createMailRetryPolicy(config: ConfigService): MailRetryPolicy {
+  return {
+    attempts: config.get<number>("MAIL_RETRY_ATTEMPTS", DEFAULT_MAIL_RETRY.attempts),
+    baseDelayMs: config.get<number>("MAIL_RETRY_BASE_MS", DEFAULT_MAIL_RETRY.baseDelayMs)
+  };
 }

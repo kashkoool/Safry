@@ -207,6 +207,7 @@ Settings (API container; compose already wires them, `scripts/check-env.sh` chec
 | `MAIL_FROM` | sender on the verified domain: `Safry <no-reply@mail.your-domain.tld>` |
 | `APP_BASE_URL` | public `https` origin of the web app, no path; links look like `${APP_BASE_URL}/reset-password#token=...` |
 | `MAIL_TIMEOUT_MS`, `AUTH_MAIL_MIN_RESPONSE_MS` | optional: provider timeout (default 8000), fixed minimum answer time of the "send me a link" endpoints (default 300) |
+| `MAIL_RETRY_ATTEMPTS`, `MAIL_RETRY_BASE_MS` | optional: total tries for transient mail failures (1-5, default 3) and base wait (default 2000 ms, then x5) |
 
 ### One-time setup
 

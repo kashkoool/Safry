@@ -14,7 +14,7 @@ function requiredString(config: Environment, key: string, minimumLength = 1): st
 const TUNABLE_INTEGERS = ["DATABASE_CONNECT_TIMEOUT_MS", "DATABASE_IDLE_TIMEOUT_MS", "DATABASE_STATEMENT_TIMEOUT_MS",
     "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS", "DATABASE_TX_MAX_WAIT_MS", "DATABASE_TX_TIMEOUT_MS", "AUTH_CACHE_TTL_MS",
     "AUTH_CACHE_MAX_ENTRIES", "RATE_LIMIT_IP_PER_MINUTE", "RATE_LIMIT_ACCOUNT_PER_MINUTE", "RATE_LIMIT_USER_PER_MINUTE",
-    "SHUTDOWN_DRAIN_MS", "SHUTDOWN_DEADLINE_MS", "HTTP_KEEP_ALIVE_TIMEOUT_MS", "HTTP_REQUEST_TIMEOUT_MS", "ACTIVITY_WRITE_INTERVAL_MS", "MAIL_TIMEOUT_MS", "AUTH_MAIL_MIN_RESPONSE_MS"];
+    "SHUTDOWN_DRAIN_MS", "SHUTDOWN_DEADLINE_MS", "HTTP_KEEP_ALIVE_TIMEOUT_MS", "HTTP_REQUEST_TIMEOUT_MS", "ACTIVITY_WRITE_INTERVAL_MS", "MAIL_TIMEOUT_MS", "AUTH_MAIL_MIN_RESPONSE_MS", "MAIL_RETRY_ATTEMPTS", "MAIL_RETRY_BASE_MS"];
 
 /**
  * Shannon estimate of the bits in a secret (length x per-character entropy). It catches repeated,
@@ -83,6 +83,12 @@ export function assertMailConfig(config: Environment): void {
     if (url.origin !== value.replace(/\/+$/, "")) throw new Error("APP_BASE_URL must be a bare origin (scheme://host[:port], no path)");
     if (production && (url.protocol !== "https:" || isPlaceholder(value))) throw new Error("APP_BASE_URL must be a real https origin in production");
   }
+  const attempts = config["MAIL_RETRY_ATTEMPTS"];
+  if (attempts !== undefined && (!Number.isInteger(Number(attempts)) || Number(attempts) < 1 || Number(attempts) > 5))
+    throw new Error("MAIL_RETRY_ATTEMPTS must be an integer from 1 (no retry) to 5");
+  const baseMs = config["MAIL_RETRY_BASE_MS"];
+  if (baseMs !== undefined && (!Number.isInteger(Number(baseMs)) || Number(baseMs) > 30_000))
+    throw new Error("MAIL_RETRY_BASE_MS must be an integer from 0 to 30000");
   if (transport === "resend") {
     const key = requiredString(config, "RESEND_API_KEY", 16);
     if (isPlaceholder(key)) throw new Error("RESEND_API_KEY is a placeholder value; create a key in the Resend dashboard");

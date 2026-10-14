@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigService } from "@nestjs/config";
 import { ConsoleTransport } from "./console.transport.js";
 import { createMailTransport, mailTransportName, appBaseUrl } from "./mail.config.js";
-import { MailService } from "./mail.service.js";
+import { MailService, backoffMs } from "./mail.service.js";
 import { MailDeliveryError } from "./mail.types.js";
 import { ResendTransport } from "./resend.transport.js";
 import { escapeHtml, mailLocale, renderMail } from "./templates.js";
@@ -78,14 +78,68 @@ describe("console transport and the mail service", () => {
     for (const n of [1, 2, 3]) await transport.send({ ...message, subject: `s${n}` }, `k${n}`);
     expect(transport.outbox.map((m) => m.subject)).toEqual(["s2", "s3"]);
   });
-  it("detached delivery swallows a provider failure and logs neither recipient nor body", async () => {
-    const failing = { name: "console" as const, send: (): Promise<void> => Promise.reject(new MailDeliveryError("mail provider answered HTTP 500", 500)) };
-    const service = new MailService(failing);
-    const errors: string[] = [];
-    (service as unknown as { logger: { error: (m: string) => void } }).logger = { error: (m: string): number => errors.push(m) };
-    service.sendDetached("victim@example.test", "en", { kind: "password-changed" });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(errors).toEqual(['mail "password-changed" not delivered: mail provider answered HTTP 500']);
+  describe("detached delivery retry", () => {
+    const harness = (sends: Array<Error | "ok">): { service: MailService; keys: string[]; logs: string[] } => {
+      const keys: string[] = [];
+      const logs: string[] = [];
+      let i = 0;
+      const transport = {
+        name: "console" as const,
+        send: (_m: unknown, k: string): Promise<void> => {
+          keys.push(k);
+          const next = sends[Math.min(i++, sends.length - 1)] ?? "ok";
+          return next === "ok" ? Promise.resolve() : Promise.reject(next);
+        }
+      };
+      const service = new MailService(transport, { attempts: 3, baseDelayMs: 2000 });
+      const sink = (m: string): number => logs.push(m);
+      (service as unknown as { logger: object }).logger = { error: sink, warn: sink, log: sink };
+      return { service, keys, logs };
+    };
+    const transient = new MailDeliveryError("mail provider answered HTTP 503", 503);
+    const send = (s: MailService): void => s.sendDetached("victim@example.test", "en", { kind: "password-changed" }, "idem-fixed");
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it("succeeds on the second try and never throws to the caller", async () => {
+      const h = harness([transient, "ok"]);
+      expect(() => send(h.service)).not.toThrow();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.keys).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(h.keys).toHaveLength(2);
+      expect(h.logs.some((l) => l.includes("delivered on attempt 2"))).toBe(true);
+    });
+    it("gives up after 3 tries, reuses one idempotency key, and logs kind and count without recipient", async () => {
+      const h = harness([transient]);
+      send(h.service);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.keys).toEqual(["idem-fixed", "idem-fixed", "idem-fixed"]);
+      expect(h.logs.at(-1)).toBe('mail "password-changed" not delivered after 3 attempts, giving up: mail provider answered HTTP 503');
+      expect(h.logs.join("\n")).not.toContain("victim@example.test");
+    });
+    it("retries a network failure and HTTP 429", async () => {
+      for (const failure of [new MailDeliveryError("mail provider unreachable"), new MailDeliveryError("mail provider answered HTTP 429", 429)]) {
+        const h = harness([failure, "ok"]);
+        send(h.service);
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(h.keys).toHaveLength(2);
+      }
+    });
+    it("does not retry a permanent failure and logs it distinctly", async () => {
+      for (const failure of [new MailDeliveryError("mail provider answered HTTP 422", 422), new MailDeliveryError("mail provider answered HTTP 401", 401), new TypeError("boom")]) {
+        const h = harness([failure]);
+        send(h.service);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(h.keys).toHaveLength(1);
+        expect(h.logs.at(-1)).toContain("permanent failure (no retry)");
+      }
+    });
+    it("backoff is 2 s then 10 s within +-20% jitter", () => {
+      expect(backoffMs(2000, 1, () => 0)).toBe(1600);
+      expect(backoffMs(2000, 1, () => 1)).toBe(2400);
+      expect(backoffMs(2000, 2, () => 0.5)).toBe(10_000);
+    });
   });
 });
 
