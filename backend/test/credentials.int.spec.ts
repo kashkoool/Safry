@@ -261,6 +261,23 @@ describe("password reset and e-mail verification", () => {
       expect(Math.round(Number(row.minutes))).toBe(60);
     });
 
+    it("the retention procedure removes only tokens that expired or were used more than the retention ago", async () => {
+      const target = await newUser();
+      const insert = (label: string, expires: string, used: string | null): Promise<unknown> =>
+        world.sql.query(
+          `INSERT INTO credential_tokens (id, "userId", purpose, "tokenHash", email, "expiresAt", "usedAt") VALUES (gen_random_uuid(), $1, 'PASSWORD_RESET', $2, $3, now() + $4::interval, ${used ? "now() + $5::interval" : "NULL"})`,
+          used ? [target.userId, sha256(label), label, expires, used] : [target.userId, sha256(label), label, expires]
+        );
+      await insert("old-expired", "-10 days", null);
+      await insert("old-used", "1 hour", "-9 days");
+      await insert("recent-expired", "-1 day", null);
+      await insert("live", "1 hour", null);
+      await world.sql.query("CALL purge_credential_tokens(interval '7 days')");
+      const left = (await world.sql.query<{ email: string }>(`SELECT email FROM credential_tokens WHERE "userId" = $1 ORDER BY email`, [target.userId])).rows.map((r) => r.email);
+      expect(left).toEqual(["live", "recent-expired"]);
+      await expect(world.sql.query("CALL purge_credential_tokens(interval '1 hour')")).rejects.toThrow("at least 1 day");
+    });
+
     it("two simultaneous uses of one token: exactly one wins", async () => {
       const target = await newUser();
       const token = await requestLink(target);
