@@ -141,7 +141,7 @@ export function DashboardPage() {
   const [detail, setDetail] = useState<TravelService | null>(null);
   const [chosenCurrency, setDisplayCurrency] = useState<SupportedCurrency | null>(storedCurrency);
   // A personal choice wins; otherwise the workspace's configured currency; otherwise SAR.
-  const displayCurrency: SupportedCurrency = chosenCurrency ?? supportedCurrencies.find((currency) => currency === tenant?.settings.currency) ?? "SAR";
+  const displayCurrency: SupportedCurrency = chosenCurrency ?? supportedCurrencies.find((currency) => currency === tenant?.settings?.currency) ?? "SAR";
   const [exchangeRates, setExchangeRates] = useState<ExchangeRates | null>(null);
   const [exchangeError, setExchangeError] = useState(false);
   const [confirmation, setConfirmation] = useState<{ text: string; run: () => Promise<unknown> } | null>(
