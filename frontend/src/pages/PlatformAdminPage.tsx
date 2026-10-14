@@ -7,8 +7,10 @@ import {
   Activity,
   Building2,
   FileClock,
+  KeyRound,
   LayoutDashboard,
   LogOut,
+  UserRound,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -30,6 +32,8 @@ import {
   type AdminRecord,
   type AdminReferences,
 } from "../lib/platform";
+import { CreateTenantDialog, TenantActivityDialog, TenantStatusDialog, UnlockLoginDialog } from "../components/platform/TenantTools";
+import type { PlatformTenant } from "../lib/platform";
 import "./platform-admin.css";
 
 const sections = [
@@ -98,6 +102,10 @@ export function PlatformAdminPage() {
   const [editor, setEditor] = useState<AdminRecord | "new" | null>(null);
   const [access, setAccess] = useState<AdminRecord | null>(null);
   const [detail, setDetail] = useState<AdminRecord | null>(null);
+  const [creatingTenant, setCreatingTenant] = useState(false);
+  const [statusFor, setStatusFor] = useState<(AdminRecord & PlatformTenant) | null>(null);
+  const [activityFor, setActivityFor] = useState<(AdminRecord & PlatformTenant) | null>(null);
+  const [unlocking, setUnlocking] = useState(false);
   const [confirmation, setConfirmation] = useState<{ account: AdminRecord; action: string } | null>(null);
   useEffect(() => {
     if (!user?.isPlatformAdmin || !section) return;
@@ -160,6 +168,9 @@ export function PlatformAdminPage() {
           <LanguageSwitch />
           <Link className="ghost-button" to="/workspace/overview">
             <LayoutDashboard size={17} /> {pick("إدارة الجهة الحالية", "Current workspace")}
+          </Link>
+          <Link className="ghost-button" to="/account/profile">
+            <UserRound size={17} /> {pick("حسابي", "My account")}
           </Link>
           <button
             className="ghost-button"
@@ -242,6 +253,16 @@ export function PlatformAdminPage() {
           {section === "users" && (
             <button className="secondary-button" onClick={() => setEditor("new")} disabled={!refs}>
               <Plus size={16} /> {pick("حساب جديد", "New account")}
+            </button>
+          )}
+          {section === "users" && (
+            <button className="ghost-button" onClick={() => setUnlocking(true)}>
+              <KeyRound size={16} /> {pick("رفع حظر الدخول", "Unlock sign-in")}
+            </button>
+          )}
+          {section === "tenants" && (
+            <button className="secondary-button" onClick={() => setCreatingTenant(true)}>
+              <Plus size={16} /> {pick("مساحة عمل جديدة", "New workspace")}
             </button>
           )}
         </div>
@@ -331,6 +352,12 @@ export function PlatformAdminPage() {
                     <td data-label={pick("الإجراءات", "Actions")}>
                       <div className="admin-actions">
                         <button onClick={() => setDetail(item)}>{pick("التفاصيل", "Details")}</button>
+                        {section === "tenants" && (
+                          <>
+                            <button onClick={() => setActivityFor(item as AdminRecord & PlatformTenant)}>{pick("النشاط", "Activity")}</button>
+                            <button onClick={() => setStatusFor(item as AdminRecord & PlatformTenant)}>{pick("تغيير الحالة", "Change status")}</button>
+                          </>
+                        )}
                         {section === "users" && (
                           <>
                             <button disabled={Boolean(item.deletedAt)} onClick={() => setEditor(item)}>
@@ -437,6 +464,10 @@ export function PlatformAdminPage() {
       {confirmation && (
         <StateEditor {...confirmation} onClose={() => setConfirmation(null)} onSaved={saved} />
       )}
+      {creatingTenant && <CreateTenantDialog onClose={() => setCreatingTenant(false)} onSaved={() => { setCreatingTenant(false); saved(); }} />}
+      {statusFor && <TenantStatusDialog tenant={statusFor} ownTenantId={user.tenantId} onClose={() => setStatusFor(null)} onSaved={() => { setStatusFor(null); saved(); }} />}
+      {activityFor && <TenantActivityDialog tenant={activityFor} onClose={() => setActivityFor(null)} />}
+      {unlocking && <UnlockLoginDialog onClose={() => setUnlocking(false)} onDone={(text) => { setUnlocking(false); setMessage(text); }} />}
       {detail && (
         <Modal title={tr("تفاصيل السجل")} onClose={() => setDetail(null)}>
           <p className="form-hint">{tr("بيانات السجل كما هي محفوظة، بدون كلمات مرور أو رموز دخول.")}</p>

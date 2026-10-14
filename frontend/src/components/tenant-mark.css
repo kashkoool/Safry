@@ -1,0 +1,6 @@
+.tenant-mark { display: inline-flex; align-items: center; justify-content: center; inline-size: 36px; block-size: 36px; border-radius: 10px; flex-shrink: 0; overflow: hidden; font-size: 13px; font-weight: 700; background: var(--surface-3); color: var(--text-primary); border: 1px solid var(--border); }
+.tenant-mark img { inline-size: 100%; block-size: 100%; object-fit: contain; }
+.ta-identity { display: flex !important; align-items: center; gap: 10px; margin-block-start: 5px; }
+.ta-identity strong { margin-block-start: 0 !important; }
+.ta-identity { display: flex !important; align-items: center; gap: 10px; margin-block-start: 5px; }
+.ta-identity strong { margin-block-start: 0 !important; }

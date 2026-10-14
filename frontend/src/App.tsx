@@ -9,6 +9,8 @@ import { getLoginPortal } from "./lib/api";
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const PlatformAdminPage = lazy(() => import("./pages/PlatformAdminPage").then((m) => ({ default: m.PlatformAdminPage })));
 const OrganizationManagementPage = lazy(() => import("./pages/OrganizationManagementPage").then((m) => ({ default: m.OrganizationManagementPage })));
+const AccessPage = lazy(() => import("./pages/AccessPage").then((m) => ({ default: m.AccessPage })));
+const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const AccountPage = lazy(() => import("./pages/AccountPage").then((m) => ({ default: m.AccountPage })));
 const RegisterPage = lazy(() => import("./pages/RegisterPage").then((m) => ({ default: m.RegisterPage })));
 import { MfaRecoveryNotice } from "./components/MfaRecoveryNotice";
@@ -44,6 +46,9 @@ export function App() {
           </ProtectedRoute>
         }
       />
+      <Route path="/workspace/access" element={<Navigate to="/workspace/access/roles" replace />} />
+      <Route path="/workspace/access/:section" element={<ProtectedRoute><AccessPage /></ProtectedRoute>} />
+      <Route path="/workspace/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
       <Route
         path="/workspace/:view"
         element={

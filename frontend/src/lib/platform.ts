@@ -1,4 +1,5 @@
 import { request } from "./api";
+import type { AuditEvent } from "./tenant-admin";
 import { cached, invalidate } from "./cache";
 
 const seg = encodeURIComponent;
@@ -78,7 +79,20 @@ export interface NewAccount extends AdminProfile {
   roleId: string;
   providerOrganizationId?: string;
 }
+export interface PlatformTenant {
+  id: string;
+  code: string;
+  name: string;
+  status: "ACTIVE" | "SUSPENDED" | "ARCHIVED";
+}
 export const platform = {
+  createTenant: (input: { code: string; name: string; settings?: Record<string, unknown> }) =>
+    afterWrite(request<PlatformTenant>("/platform/tenants", { method: "POST", body: JSON.stringify(input) })),
+  setTenantStatus: (id: string, status: PlatformTenant["status"], reason: string) =>
+    afterWrite(request<PlatformTenant>(`/platform/tenants/${seg(id)}/status`, { method: "POST", body: JSON.stringify({ status, reason }) })),
+  tenantActivity: (id: string) => request<AuditEvent[]>(`/platform/tenants/${seg(id)}/activity`),
+  /** Clears a sign-in block for an e-mail address; the API answers 204 whether or not one existed. */
+  unlockLogin: (email: string) => request<void>("/auth/login-throttle/unlock", { method: "POST", body: JSON.stringify({ email }) }),
   overview: () => cached("platform:overview", 15_000, () => request<Record<string, number | string>>("/platform/overview")),
   references: () => cached("platform:references", 5 * 60_000, () => request<AdminReferences>("/platform/references")),
   records: (kind: string, page: number, tenantId: string, q: string, signal?: AbortSignal) =>

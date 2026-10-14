@@ -1,0 +1,69 @@
+/* Team directory, roles, permission audit, workspace settings and platform tenant tools. Logical properties only. */
+.ta-visually-hidden { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ta-page { min-height: 100vh; padding: 36px clamp(20px,4vw,72px) 56px; background: radial-gradient(ellipse at 90% 0,#1c2d434d,transparent 45%),var(--surface-0); color: var(--text-primary); }
+.ta-header { display: flex; align-items: center; gap: 26px; flex-wrap: wrap; margin-block-end: 28px; }
+.ta-header-copy { flex: 1; min-inline-size: 240px; }
+.ta-header h1 { margin: 8px 0; font-size: clamp(26px,3vw,36px); letter-spacing: -.03em; line-height: 1.35; }
+.ta-header p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 1.8; max-inline-size: 660px; }
+.ta-header .eyebrow { display: flex; align-items: center; gap: 7px; color: var(--accent); }
+.ta-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-inline-start: auto; }
+[dir="rtl"] .ta-header-actions > a > svg { transform: rotate(180deg); }
+.ta-tabs { display: flex; gap: 5px; overflow-x: auto; margin-block-end: 24px; background: var(--surface-1); padding: 5px; border: 1px solid var(--border); border-radius: 15px; }
+.ta-tabs a { white-space: nowrap; text-decoration: none; color: var(--text-secondary); border-radius: 10px; padding: 13px 20px; font-size: 14px; font-weight: 600; }
+.ta-tabs a:hover { background: var(--surface-2); color: var(--text-primary); }
+.ta-tabs a[aria-current="page"] { color: var(--accent-strong); background: var(--surface-3); box-shadow: inset 0 0 0 1px #d8b36a33; }
+.ta-panel { min-inline-size: 0; padding: 26px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface-1); }
+.ta-panel h2 { margin-block: 0 6px; font-size: clamp(20px,2vw,25px); }
+.ta-toolbar { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-block: 18px; }
+.ta-toolbar label { display: grid; gap: 6px; font-size: 13px; color: var(--text-secondary); font-weight: 600; }
+.ta-toolbar .ta-grow { flex: 1; min-inline-size: 220px; }
+.ta-panel :is(input:not([type=checkbox]):not([type=radio]),select,textarea) { inline-size: 100%; min-inline-size: 0; padding: 11px 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-0); color: var(--text-primary); font-size: 14px; }
+.ta-panel input[type=color] { padding: 3px; block-size: 44px; inline-size: 64px; }
+.ta-panel input[type=checkbox], .ta-dialog input[type=checkbox] { inline-size: 18px; block-size: 18px; accent-color: var(--accent); flex-shrink: 0; }
+.ta-count { color: var(--text-secondary); font-size: 13px; margin-block: 8px; }
+.ta-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 13px; }
+.ta-table { border-collapse: collapse; inline-size: 100%; min-inline-size: 680px; text-align: start; font-size: 14px; }
+.ta-table th { background: var(--surface-2); color: var(--text-secondary); font-size: 13px; font-weight: 600; padding: 13px 16px; text-align: start; white-space: nowrap; }
+.ta-table td { padding: 15px 16px; border-block-start: 1px solid var(--border); vertical-align: top; line-height: 1.7; overflow-wrap: anywhere; }
+.ta-table td strong { display: block; font-weight: 600; }
+.ta-table small { display: block; color: var(--text-muted); font-size: 13px; margin-block-start: 3px; overflow-wrap: anywhere; }
+.ta-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.ta-actions button { min-block-size: 38px; padding: 6px 12px; font-size: 13px; }
+.ta-actions button:disabled, .ta-panel button:disabled { opacity: .5; cursor: not-allowed; }
+.ta-actions .ta-danger, .ta-danger { color: var(--danger); border-color: #ff9d9d40; }
+.ta-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 7px; font-size: 12px; font-weight: 600; border: 1px solid #73d4b226; background: #73d4b212; color: var(--success); white-space: nowrap; }
+.ta-badge::before { content: ""; inline-size: 5px; block-size: 5px; border-radius: 50%; background: currentColor; }
+.ta-badge--warn { color: var(--accent-strong); border-color: #d8b36a26; background: #d8b36a12; }
+.ta-badge--muted { color: var(--text-secondary); border-color: var(--border); background: var(--surface-2); }
+.ta-details { margin: 0; display: grid; gap: 4px; }
+.ta-details div { display: flex; gap: 8px; flex-wrap: wrap; }
+.ta-details dt { color: var(--text-muted); font-size: 12px; }
+.ta-details dd { margin: 0; font-size: 13px; }
+.ta-more { display: flex; justify-content: center; margin-block-start: 16px; }
+.ta-note { padding: 12px 14px; border-inline-start: 2px solid var(--border); background: var(--surface-0); border-radius: 8px; line-height: 1.8; font-size: 13px; color: var(--text-secondary); margin-block: 12px; }
+.ta-form { display: grid; gap: 16px; max-inline-size: 760px; }
+.ta-form label, .ta-dialog label { display: grid; gap: 7px; font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+.ta-form .ta-row, .ta-dialog .ta-row { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(220px,100%),1fr)); gap: 16px; }
+.ta-form .ta-inline, .ta-dialog .ta-inline { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.ta-field-hint { font-size: 12px; color: var(--text-muted); font-weight: 400; line-height: 1.7; }
+.ta-dialog { display: grid; gap: 14px; }
+.ta-matrix { display: grid; gap: 12px; }
+.ta-matrix fieldset { margin: 0; border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; background: var(--surface-0); min-inline-size: 0; }
+.ta-matrix legend { padding-inline: 6px; color: var(--text-secondary); font-size: 13px; font-weight: 700; }
+.ta-matrix .ta-perm { display: flex; align-items: flex-start; gap: 10px; padding-block: 7px; font-weight: 500; }
+.ta-matrix .ta-perm small { display: block; font-size: 12px; color: var(--text-muted); font-weight: 400; }
+.ta-logo-preview { display: flex; align-items: center; gap: 12px; }
+.ta-page :is(a,button,input,textarea,select,summary):focus-visible, .ta-dialog :is(a,button,input,textarea,select):focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 3px; }
+@media (max-width: 700px) {
+  .ta-page { padding: 24px 16px 40px; }
+  .ta-panel { padding: 16px; }
+  .ta-header-actions { inline-size: 100%; margin: 0; }
+  .ta-table { min-inline-size: 0; }
+  .ta-table-wrap { border: 0; overflow: visible; }
+  .ta-table thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); }
+  .ta-table, .ta-table tbody { display: block; }
+  .ta-table tbody { display: grid; gap: 12px; }
+  .ta-table tr { display: block; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-0); }
+  .ta-table td { display: block; padding: 8px 0; border: 0; }
+  .ta-table td::before { content: attr(data-label); display: block; margin-block-end: 3px; font-size: 12px; color: var(--text-muted); font-weight: 600; }
+}
