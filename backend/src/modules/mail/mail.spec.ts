@@ -29,7 +29,7 @@ describe("transport selection", () => {
 });
 
 describe("Resend transport", () => {
-  const okFetch = (): typeof fetch => vi.fn(() => Promise.resolve(new Response('{"id":"1"}', { status: 200 }))) as unknown as typeof fetch;
+  const okFetch = (): typeof fetch => vi.fn(() => Promise.resolve(new Response('{"id":"1"}', { status: 200 })));
   it("posts to the Resend API with a bearer key, an idempotency key and a timeout signal", async () => {
     const fetchImpl = okFetch();
     await new ResendTransport(key, "Safry <no-reply@mail.safry.test>", 5000, "https://api.resend.test/emails", fetchImpl).send(message, "idem-1");
@@ -42,7 +42,7 @@ describe("Resend transport", () => {
   });
   it("errors name only the status or failure kind: never the key, recipient or body", async () => {
     const failing = (response: Response | Error): typeof fetch =>
-      vi.fn(() => (response instanceof Error ? Promise.reject(response) : Promise.resolve(response))) as unknown as typeof fetch;
+      vi.fn(() => (response instanceof Error ? Promise.reject(response) : Promise.resolve(response)));
     const send = (f: typeof fetch): Promise<void> => new ResendTransport(key, "no-reply@mail.safry.test", 50, "https://api.resend.test/emails", f).send(message, "i");
     const refused = await send(failing(new Response('{"message":"to a@b.test invalid"}', { status: 422 }))).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(MailDeliveryError);
@@ -60,7 +60,12 @@ describe("Resend transport", () => {
   });
   it("really aborts a request that hangs", async () => {
     const hang = ((_url: string, init: RequestInit) =>
-      new Promise((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason)))) as unknown as typeof fetch;
+      new Promise((_resolve, reject) =>
+        init.signal!.addEventListener("abort", () => {
+          const reason: unknown = init.signal!.reason;
+          reject(reason instanceof Error ? reason : new Error("aborted"));
+        })
+      )) as unknown as typeof fetch;
     const started = Date.now();
     await expect(new ResendTransport(key, "no-reply@mail.safry.test", 40, "https://api.resend.test/emails", hang).send(message, "i")).rejects.toThrow("mail provider timed out");
     expect(Date.now() - started).toBeLessThan(2000);
@@ -74,10 +79,10 @@ describe("console transport and the mail service", () => {
     expect(transport.outbox.map((m) => m.subject)).toEqual(["s2", "s3"]);
   });
   it("detached delivery swallows a provider failure and logs neither recipient nor body", async () => {
-    const failing = { name: "console" as const, send: () => Promise.reject(new MailDeliveryError("mail provider answered HTTP 500", 500)) };
+    const failing = { name: "console" as const, send: (): Promise<void> => Promise.reject(new MailDeliveryError("mail provider answered HTTP 500", 500)) };
     const service = new MailService(failing);
     const errors: string[] = [];
-    (service as unknown as { logger: { error: (m: string) => void } }).logger = { error: (m) => errors.push(m) };
+    (service as unknown as { logger: { error: (m: string) => void } }).logger = { error: (m: string): number => errors.push(m) };
     service.sendDetached("victim@example.test", "en", { kind: "password-changed" });
     await new Promise((r) => setTimeout(r, 10));
     expect(errors).toEqual(['mail "password-changed" not delivered: mail provider answered HTTP 500']);

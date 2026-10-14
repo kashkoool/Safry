@@ -94,7 +94,7 @@ describe("category-specific booking calculations", () => {
   });
 });
 describe("booking totals beyond 32 bits", () => {
-  const hotel = (price: bigint, units: number, nights: number) =>
+  const hotel = (price: bigint, units: number, nights: number): ReturnType<typeof bookingTerms> =>
     bookingTerms("HOTEL", { maxGuests: "4" }, price, { travelersCount: 1, units, serviceDate: "2030-01-10", endDate: new Date(Date.parse("2030-01-10") + nights * 86400000).toISOString().slice(0, 10) }, "2030-01-01");
   it("computes exactly at and above 2147483647", () => {
     expect(hotel(67_108_864n, 16, 2).totalCents).toBe(2_147_483_648n);
