@@ -50,5 +50,6 @@ export function toMinorUnits(text: string, currency: string): number {
 export function convertMinorUnits(minor: number, from: string, to: string, rateFrom: number, rateTo: number): number {
   if (!(Number.isFinite(rateFrom) && rateFrom > 0 && Number.isFinite(rateTo) && rateTo > 0)) return Number.NaN;
   const major = minor / 10 ** currencyExponent(from) / rateFrom * rateTo;
-  return Math.round(major * 10 ** currencyExponent(to));
+  const rounded = Math.round(Math.abs(major) * 10 ** currencyExponent(to)); // half up on the magnitude, then restore the sign
+  return major < 0 ? -rounded : rounded;
 }
