@@ -13,6 +13,9 @@ const AccessPage = lazy(() => import("./pages/AccessPage").then((m) => ({ defaul
 const SettingsPage = lazy(() => import("./pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
 const AccountPage = lazy(() => import("./pages/AccountPage").then((m) => ({ default: m.AccountPage })));
 const RegisterPage = lazy(() => import("./pages/RegisterPage").then((m) => ({ default: m.RegisterPage })));
+const ForgotPasswordPage = lazy(() => import("./pages/ForgotPasswordPage").then((m) => ({ default: m.ForgotPasswordPage })));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage").then((m) => ({ default: m.ResetPasswordPage })));
+const VerifyEmailPage = lazy(() => import("./pages/VerifyEmailPage").then((m) => ({ default: m.VerifyEmailPage })));
 import { MfaRecoveryNotice } from "./components/MfaRecoveryNotice";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -35,6 +38,10 @@ export function App() {
       <Route path="/login/provider" element={<LoginPage portal="provider" />} />
       <Route path="/login/admin" element={<LoginPage portal="admin" />} />
       <Route path="/register/:kind" element={<RegisterPage />} />
+      {/* Public credential pages (opened from mailed links): no auth guard, no session needed. */}
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/admin/login" element={<Navigate to="/login/admin" replace />} />
       <Route path="/admin" element={<Navigate to="/admin/accounts-permissions" replace />} />
       <Route path="/admin/accounts&permission" element={<Navigate to="/admin/accounts-permissions" replace />} />

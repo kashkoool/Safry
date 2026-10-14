@@ -6,9 +6,10 @@ import { Brand } from "../components/Brand";
 import { LanguageSwitch } from "../i18n/LanguageSwitch";
 import { useLanguage } from "../i18n/useLanguage";
 import { useText } from "../i18n/useText";
-import type { LoginInput, MfaChallenge } from "../lib/api";
+import { ApiError, type LoginInput, type MfaChallenge } from "../lib/api";
 import { errorText } from "../lib/errors";
 import { useRetryCountdown } from "../lib/useRetryCountdown";
+import { ResendVerification } from "./credentials/ResendVerification";
 import "./auth-premium.css";
 
 type Portal = "customer" | "provider" | "admin";
@@ -73,6 +74,8 @@ export function LoginPage({ portal }: { portal: Portal }) {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [refused, setRefused] = useState(false);
+  const [showResend, setShowResend] = useState(false);
   const [challenge, setChallenge] = useState<MfaChallenge | null>(null);
   const [code, setCode] = useState("");
   const throttle = useRetryCountdown();
@@ -96,12 +99,17 @@ export function LoginPage({ portal }: { portal: Portal }) {
   }, [user, navigate, returnTo]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setError(""); setSubmitting(true);
+    event.preventDefault(); setError(""); setRefused(false); setShowResend(false); setSubmitting(true);
     try {
       const pending = await login({ ...form, portal });
       if (pending) { setChallenge(pending); setCode(""); setForm(current => ({ ...current, password: "" })); }
     }
-    catch (reason) { throttle.note(reason); setError(errorText(reason, pick, tr, { serverTextFor401: true, fallback: pick("تعذر تسجيل الدخول", "Unable to sign in") })); }
+    catch (reason) {
+      throttle.note(reason);
+      // A refusal looks the same for a wrong password and an unconfirmed email, so the hint is offered on every 401.
+      setRefused(reason instanceof ApiError && reason.status === 401);
+      setError(errorText(reason, pick, tr, { serverTextFor401: true, fallback: pick("تعذر تسجيل الدخول", "Unable to sign in") }));
+    }
     finally { setSubmitting(false); }
   }
 
@@ -139,8 +147,13 @@ export function LoginPage({ portal }: { portal: Portal }) {
         </form> : <form className="auth-form" onSubmit={submit} aria-busy={submitting}>
           <label><span>{pick("البريد الإلكتروني", "Email address")}</span><div className="auth-input"><Mail size={18} /><input type="email" dir="ltr" placeholder="name@company.com" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} autoComplete="email" required /></div></label>
           <label><span>{pick("كلمة المرور", "Password")}</span><div className="auth-input"><LockKeyhole size={18} /><input type={showPassword ? "text" : "password"} dir="ltr" placeholder="••••••••••••" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} autoComplete="current-password" required /><button className="auth-password-toggle" type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? pick("إخفاء كلمة المرور", "Hide password") : pick("إظهار كلمة المرور", "Show password")} aria-pressed={showPassword}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
+          <Link className="auth-forgot-link" to="/forgot-password">{pick("نسيت كلمة المرور؟", "Forgot password?")}</Link>
           <label><span>{pick("رمز الجهة", "Workspace code")}</span><div className="auth-input"><KeyRound size={18} /><input type="text" dir="ltr" value={form.tenantCode} onChange={event => setForm({ ...form, tenantCode: event.target.value.toLowerCase() })} autoComplete="organization" required /></div><small className="auth-field-hint">{pick("اترك الرمز safry ما لم تزودك جهتك برمز آخر.", "Keep safry unless your organization provided another code.")}</small></label>
           {error && <p className="auth-error" role="alert">{tr(error)}</p>}
+          {refused && <div className="credential-resend-panel">
+            <p className="credential-resend-hint">{pick("إن كان حسابك جديداً، فقد تحتاج إلى تأكيد بريدك الإلكتروني أولاً.", "If your account is new, you may need to confirm your email address first.")}</p>
+            {showResend ? <ResendVerification initialEmail={form.email} /> : <button className="auth-link-button" type="button" onClick={() => setShowResend(true)}>{pick("إعادة إرسال رسالة التأكيد", "Resend verification email")}</button>}
+          </div>}
           <button className="auth-submit" type="submit" disabled={submitting || throttle.remaining > 0}>{submitting ? pick("جاري تسجيل الدخول…", "Signing in…") : wait || pick("تسجيل الدخول", "Sign in")}<ArrowLeft size={19} className="auth-directional" /></button>
         </form>}
         {portal !== "admin" && <p className="auth-switch-account">{pick("جديد على سفري؟", "New to Safry?")} <Link to={`/register/${portal}`}>{pick("إنشاء حساب", "Create an account")}</Link></p>}
