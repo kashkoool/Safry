@@ -4,6 +4,7 @@
 #      (migration 20261012_db_audit_partitioning). If this job stops for longer, rows land in audit_events_default (never lost)
 #      and are moved into their month the next time the partition is created.
 #   2. purge_refresh_sessions: batched removal of expired or revoked refresh sessions.
+#   2b. purge_credential_tokens: removes password-reset and verification links 7 days after they expired or were used.
 #   3. purge_audit_events: DROPs audit_events partitions that lie wholly older than the retention (default 24 months).
 #
 #   DATABASE_MIGRATE_URL         owner connection string (falls back to DATABASE_URL). Required.
@@ -25,5 +26,6 @@ else
 fi
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL ensure_audit_event_partitions(0, $ahead)"
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_refresh_sessions(interval '$sessions days')"
+psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_credential_tokens(interval '7 days')"
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_audit_events(interval '$audit_retention')"
 echo "purge done"
