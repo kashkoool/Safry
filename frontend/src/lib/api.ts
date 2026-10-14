@@ -419,7 +419,8 @@ export async function restoreSession(): Promise<AuthUser | null> {
   return next?.user ?? null;
 }
 
-export async function request<T>(path: string, init: RequestInit = {}, allowRefresh = true): Promise<T> {
+/** Sends one authenticated call and returns the successful response; a failure becomes an `ApiError` with a safe message. */
+async function send(path: string, init: RequestInit, allowRefresh: boolean): Promise<Response> {
   const session = readSession();
   const headers = new Headers(init.headers);
   headers.set("accept", "application/json");
@@ -442,14 +443,31 @@ export async function request<T>(path: string, init: RequestInit = {}, allowRefr
     // Late 401 from a request sent before an already-finished refresh: reuse the new token, do not rotate again.
     const latest = readSession();
     const renewed = latest && latest.accessToken !== session.accessToken ? latest : await refreshSession();
-    if (renewed) return request<T>(path, init, false); // at most one retry
+    if (renewed) return send(path, init, false); // at most one retry
   }
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     throw new ApiError(response.status, safeMessage(response.status, body));
   }
+  return response;
+}
+
+export async function request<T>(path: string, init: RequestInit = {}, allowRefresh = true): Promise<T> {
+  const response = await send(path, init, allowRefresh);
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+export interface Page<T> {
+  items: T[];
+  /** Opaque keyset cursor of the next page; null when this was the last one. */
+  nextCursor: string | null;
+}
+/** GET for keyset-paged list endpoints: the body is a plain array and `X-Next-Cursor` is present only while more rows exist. */
+export async function requestPage<T>(path: string, init: RequestInit = {}): Promise<Page<T>> {
+  const response = await send(path, init, true);
+  const items = (await response.json()) as T[];
+  return { items, nextCursor: response.headers.get("x-next-cursor") || null };
 }
 
 const seg = encodeURIComponent;
@@ -458,13 +476,13 @@ export const PAGE_SIZE = 100;
 const pageQuery = (offset: number) => `?limit=${PAGE_SIZE}&offset=${offset}`;
 const TTL = 30_000;
 // Cache keys are scoped to the signed-in user and tenant so data can never be served across identities.
-const scope = () => {
+export const cacheScope = () => {
   const user = readSession()?.user;
   return user ? `${user.userId}:${user.tenantId}:` : "anon:";
 };
-const read = <T>(key: string, load: () => Promise<T>, ttl = TTL) => cached(scope() + key, ttl, load);
-const afterWrite = <T>(prefixes: string[], work: Promise<T>): Promise<T> => {
-  const prefix = scope();
+export const read = <T>(key: string, load: () => Promise<T>, ttl = TTL) => cached(cacheScope() + key, ttl, load);
+export const afterWrite = <T>(prefixes: string[], work: Promise<T>): Promise<T> => {
+  const prefix = cacheScope();
   return work.finally(() => invalidate(...prefixes.map((p) => prefix + p)));
 };
 

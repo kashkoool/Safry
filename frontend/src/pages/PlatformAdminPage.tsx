@@ -21,14 +21,14 @@ import { Brand } from "../components/Brand";
 import { LanguageSwitch } from "../i18n/LanguageSwitch";
 import { useLanguage } from "../i18n/useLanguage";
 import { Modal } from "../components/BusinessForms";
-import { ApiError } from "../lib/api";
+import { StepUpFields } from "../components/StepUpFields";
+import { stepUpError, stepUpOf, type Creds } from "../components/step-up";
 import {
   platform,
   type AdminMembership,
   type AdminPage,
   type AdminRecord,
   type AdminReferences,
-  type StepUp
 } from "../lib/platform";
 import "./platform-admin.css";
 
@@ -463,40 +463,6 @@ function RecordDetails({ value, field = "" }: { value: unknown; field?: string }
 }
 
 const TENANT_ADMIN = "tenant-admin";
-/** Sends the step-up pair only when the dialog asked for it; an empty code is omitted. */
-function stepUpOf(form: { currentPassword: string; mfaCode: string }): StepUp {
-  return { currentPassword: form.currentPassword, ...(form.mfaCode.trim() ? { mfaCode: form.mfaCode.trim() } : {}) };
-}
-function stepUpError(reason: unknown, required: boolean, wrong: string): string | null {
-  return required && reason instanceof ApiError && reason.status === 401 ? wrong : null;
-}
-type Creds = { currentPassword: string; mfaCode: string };
-/** Current password + optional MFA code of the acting admin; the parent clears both after every attempt. */
-function StepUpFields({ value, onChange }: { value: Creds; onChange: (next: Creds) => void }) {
-  const { pick } = useLanguage();
-  return (
-    <>
-      <label>{pick("كلمة مرورك الحالية", "Your current password")}<input
-          type="password"
-          required
-          maxLength={128}
-          autoComplete="current-password"
-          value={value.currentPassword}
-          onChange={(e) => onChange({ ...value, currentPassword: e.target.value })}
-        />
-      </label>
-      <label>{pick("رمز التحقق (إن كانت المصادقة الثنائية مفعّلة)", "Verification code (if you use two-factor sign-in)")}<input
-          dir="ltr"
-          maxLength={64}
-          minLength={6}
-          autoComplete="one-time-code"
-          value={value.mfaCode}
-          onChange={(e) => onChange({ ...value, mfaCode: e.target.value })}
-        />
-      </label>
-    </>
-  );
-}
 function AccountEditor({
   account,
   references,
