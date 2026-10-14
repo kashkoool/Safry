@@ -7,6 +7,8 @@ import { LanguageSwitch } from "../i18n/LanguageSwitch";
 import { useLanguage } from "../i18n/useLanguage";
 import { useText } from "../i18n/useText";
 import type { LoginInput, MfaChallenge } from "../lib/api";
+import { errorText } from "../lib/errors";
+import { useRetryCountdown } from "../lib/useRetryCountdown";
 import "./auth-premium.css";
 
 type Portal = "customer" | "provider" | "admin";
@@ -73,6 +75,8 @@ export function LoginPage({ portal }: { portal: Portal }) {
   const [error, setError] = useState("");
   const [challenge, setChallenge] = useState<MfaChallenge | null>(null);
   const [code, setCode] = useState("");
+  const throttle = useRetryCountdown();
+  const wait = throttle.remaining > 0 ? pick(`أعد المحاولة بعد ${throttle.remaining} ث`, `Try again in ${throttle.remaining} s`) : "";
   const returnTo = searchParams.get("returnTo");
   const title = portal === "customer" ? pick("أهلاً بعودتك", "Welcome back") : portal === "provider" ? pick("مساحة شركتك، بانتظارك", "Your workspace awaits") : pick("إدارة المنصة", "Platform administration");
   const portalLabel = portal === "customer" ? pick("بوابة المسافر", "Traveler portal") : portal === "provider" ? pick("بوابة شركاء السفر", "Travel partner portal") : pick("بوابة مدير النظام", "Administrator portal");
@@ -97,7 +101,7 @@ export function LoginPage({ portal }: { portal: Portal }) {
       const pending = await login({ ...form, portal });
       if (pending) { setChallenge(pending); setCode(""); setForm(current => ({ ...current, password: "" })); }
     }
-    catch (reason) { setError(reason instanceof Error ? reason.message : pick("تعذر تسجيل الدخول", "Unable to sign in")); }
+    catch (reason) { throttle.note(reason); setError(errorText(reason, pick, tr, { serverTextFor401: true, fallback: pick("تعذر تسجيل الدخول", "Unable to sign in") })); }
     finally { setSubmitting(false); }
   }
 
@@ -107,7 +111,8 @@ export function LoginPage({ portal }: { portal: Portal }) {
     catch (reason) {
       // The server consumes the challenge on every attempt, right or wrong: a retry needs a fresh password login.
       setChallenge(null); setCode("");
-      setError(reason instanceof Error ? reason.message : pick("تعذر التحقق من الرمز", "Unable to verify the code"));
+      throttle.note(reason);
+      setError(errorText(reason, pick, tr, { serverTextFor401: true, fallback: pick("تعذر التحقق من الرمز", "Unable to verify the code") }));
     }
     finally { setSubmitting(false); }
   }
@@ -129,14 +134,14 @@ export function LoginPage({ portal }: { portal: Portal }) {
           <p className="auth-notice" role="status">{pick("أدخل الرمز المكوّن من 6 أرقام من تطبيق المصادقة، أو أحد رموز الاسترداد.", "Enter the 6-digit code from your authenticator app, or one of your recovery codes.")}</p>
           <label><span>{pick("رمز التحقق", "Verification code")}</span><div className="auth-input"><ShieldCheck size={18} /><input type="text" dir="ltr" inputMode="text" name="mfaCode" value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" autoFocus minLength={6} maxLength={24} required /></div></label>
           {error && <p className="auth-error" role="alert">{tr(error)}</p>}
-          <button className="auth-submit" type="submit" disabled={submitting}>{submitting ? pick("جاري التحقق…", "Verifying…") : pick("تأكيد", "Verify")}<ArrowLeft size={19} className="auth-directional" /></button>
+          <button className="auth-submit" type="submit" disabled={submitting || throttle.remaining > 0}>{submitting ? pick("جاري التحقق…", "Verifying…") : wait || pick("تأكيد", "Verify")}<ArrowLeft size={19} className="auth-directional" /></button>
           <button className="auth-link-button" type="button" onClick={() => { setChallenge(null); setCode(""); setError(""); }}>{pick("رجوع إلى تسجيل الدخول", "Back to sign in")}</button>
         </form> : <form className="auth-form" onSubmit={submit} aria-busy={submitting}>
           <label><span>{pick("البريد الإلكتروني", "Email address")}</span><div className="auth-input"><Mail size={18} /><input type="email" dir="ltr" placeholder="name@company.com" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} autoComplete="email" required /></div></label>
           <label><span>{pick("كلمة المرور", "Password")}</span><div className="auth-input"><LockKeyhole size={18} /><input type={showPassword ? "text" : "password"} dir="ltr" placeholder="••••••••••••" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} autoComplete="current-password" required /><button className="auth-password-toggle" type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? pick("إخفاء كلمة المرور", "Hide password") : pick("إظهار كلمة المرور", "Show password")} aria-pressed={showPassword}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
           <label><span>{pick("رمز الجهة", "Workspace code")}</span><div className="auth-input"><KeyRound size={18} /><input type="text" dir="ltr" value={form.tenantCode} onChange={event => setForm({ ...form, tenantCode: event.target.value.toLowerCase() })} autoComplete="organization" required /></div><small className="auth-field-hint">{pick("اترك الرمز safry ما لم تزودك جهتك برمز آخر.", "Keep safry unless your organization provided another code.")}</small></label>
           {error && <p className="auth-error" role="alert">{tr(error)}</p>}
-          <button className="auth-submit" type="submit" disabled={submitting}>{submitting ? pick("جاري تسجيل الدخول…", "Signing in…") : pick("تسجيل الدخول", "Sign in")}<ArrowLeft size={19} className="auth-directional" /></button>
+          <button className="auth-submit" type="submit" disabled={submitting || throttle.remaining > 0}>{submitting ? pick("جاري تسجيل الدخول…", "Signing in…") : wait || pick("تسجيل الدخول", "Sign in")}<ArrowLeft size={19} className="auth-directional" /></button>
         </form>}
         {portal !== "admin" && <p className="auth-switch-account">{pick("جديد على سفري؟", "New to Safry?")} <Link to={`/register/${portal}`}>{pick("إنشاء حساب", "Create an account")}</Link></p>}
         {portal === "provider" && <p className="auth-staff-note">{pick("موظف في شركة؟ اطلب بيانات حسابك من مدير منشأتك.", "Company employee? Ask your organization manager for your account details.")}</p>}

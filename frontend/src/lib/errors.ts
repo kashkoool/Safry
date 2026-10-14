@@ -6,6 +6,8 @@ type Translate = <T>(value: T) => T;
 export interface ErrorOptions {
   /** Shown for a 401 on a call where 401 means "wrong password or code" (those calls never refresh the session). */
   wrongSecret?: string;
+  /** Show the server's own sentence for a 401 (sign-in explains WHY it refused: bad credentials, wrong portal, expired challenge). */
+  serverTextFor401?: boolean;
   /** Shown when the failure is not an `ApiError` or carries no usable text. */
   fallback?: string;
 }
@@ -21,6 +23,7 @@ export function errorText(reason: unknown, pick: Pick, tr: Translate, options: E
     case 0:
       return pick("تعذر الاتصال بالخادم. تحقق من اتصالك وحاول مجدداً.", "Could not reach the server. Check your connection and try again.");
     case 401:
+      if (options.serverTextFor401 && reason.message) return tr(reason.message);
       return options.wrongSecret ?? pick("انتهت جلستك. سجّل الدخول من جديد.", "Your session has ended. Sign in again.");
     case 403:
       return pick("ليست لديك صلاحية لتنفيذ هذا الإجراء.", "You do not have permission to do this.");
