@@ -16,6 +16,21 @@ updates:
     groups:
       backend-minor-and-patch:
         update-types: ["minor", "patch"]
+        # Auth, session, validation, database and HTTP-hardening libraries are NOT bundled: each one gets its own
+        # pull request so it is read on its own before merging.
+        exclude-patterns:
+          - "argon2"
+          - "helmet"
+          - "@nestjs/jwt"
+          - "@nestjs/passport"
+          - "passport*"
+          - "@nestjs/throttler"
+          - "class-validator"
+          - "class-transformer"
+          - "@prisma/*"
+          - "prisma"
+          - "pg"
+          - "ioredis"
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:

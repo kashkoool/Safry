@@ -35,3 +35,18 @@ are planned upgrades.
 | Image scan | `docker build --target runtime -t safry-api:scan backend` (also `--target migrate`, and `docker build -t safry-web:scan frontend`), then `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.75.0 image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /ignore/.trivyignore safry-api:scan` (mount `.trivyignore` at `/ignore`) |
 | Lighthouse | `cd frontend && pnpm lighthouse` (set `CHROME_PATH` if Chrome is not found) |
 | Load test | `backend/test/load/README.md`: seed a throwaway database (reduced size through the `LOAD_*` variables), start the API with `start-api.sh`, `node run.mjs --duration 12 --label ci`, then `node check.mjs --label ci` |
+
+## Dependency updates: what merges itself and what never does
+
+Dependabot only opens pull requests. Nothing is merged automatically except the narrow case below.
+
+| Update | Policy |
+|---|---|
+| Major versions (any ecosystem) | Never proposed. Major upgrades are planned work: changelog read, migration done, tests adjusted. |
+| Docker base images | One pull request per image, never grouped, never auto-merged. Read the version before merging. |
+| Auth, session, validation, database and HTTP-hardening libraries (`argon2`, `helmet`, `@nestjs/jwt`, `@nestjs/passport`, `passport*`, `@nestjs/throttler`, `class-validator`, `class-transformer`, `@prisma/*`, `prisma`, `pg`, `ioredis`) | One pull request each, reviewed by hand. |
+| Other minor and patch version updates | Grouped per project, reviewed by hand. |
+| GitHub Actions | Grouped, reviewed by hand. |
+| **Security-advisory pull requests** (label `security`) that are a **patch or minor** update and are **not** a Docker image or GitHub Action | Merged automatically by `dependabot-security-auto-merge.yml`, but only after every required check passes. A failing check keeps the pull request open. |
+
+Rules for whoever merges by hand: open the pull request, read which packages and versions change, and check for a major version, a Dockerfile `FROM` line, or a runtime or database version change. A passing CI run alone is not a review. A test (`backend/src/dockerfile.spec.ts`) fails the build when the Node version in the Dockerfiles, `engines` or `@types/node` drifts from the version CI uses.
