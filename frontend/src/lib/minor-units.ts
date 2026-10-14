@@ -9,7 +9,7 @@ export const CURRENCY_EXPONENTS = {
 } as const;
 
 export function currencyExponent(code: string): number {
-  const exponent = (CURRENCY_EXPONENTS as Record<string, number | undefined>)[code];
+  const exponent = Object.hasOwn(CURRENCY_EXPONENTS, code) ? (CURRENCY_EXPONENTS as Record<string, number>)[code] : undefined;
   if (exponent === undefined) throw new Error(`Unknown currency exponent for ${code}`);
   return exponent;
 }
@@ -48,6 +48,7 @@ export function toMinorUnits(text: string, currency: string): number {
 
 /** Converts minor units between currencies via per-USD rates; rounds half up to a whole minor unit of the target. */
 export function convertMinorUnits(minor: number, from: string, to: string, rateFrom: number, rateTo: number): number {
+  if (!(Number.isFinite(rateFrom) && rateFrom > 0 && Number.isFinite(rateTo) && rateTo > 0)) return Number.NaN;
   const major = minor / 10 ** currencyExponent(from) / rateFrom * rateTo;
   return Math.round(major * 10 ** currencyExponent(to));
 }

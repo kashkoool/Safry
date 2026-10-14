@@ -489,7 +489,7 @@ function RecordDetails({ value, field = "", currency }: { value: unknown; field?
   if (typeof value === "boolean") return <span>{tr(value ? "نعم / سماح" : "لا / منع")}</span>;
   if (Array.isArray(value)) return value.length ? <div className="admin-detail-array">{value.map((item, i) => <div key={i}><RecordDetails value={item} currency={currency} /></div>)}</div> : <span>{tr("لا توجد سجلات")}</span>;
   if (typeof value === "object") return <dl className="admin-detail-list">{Object.entries(value).map(([key, item]) => <div key={key}><dt>{tr(fieldNames[key] ?? permissionLabels[key] ?? key)}</dt><dd><RecordDetails value={item} field={key} currency={typeof (value as { currency?: unknown }).currency === "string" ? (value as { currency: string }).currency : currency} /></dd></div>)}</dl>;
-  if (["priceCents", "totalCents", "unitPriceCents"].includes(field) && typeof value === "number") return <span>{tr(formatMinorUnits(value, currency && currency in CURRENCY_EXPONENTS ? currency : "USD", currentLocale(), false))}</span>;
+  if (["priceCents", "totalCents", "unitPriceCents"].includes(field) && typeof value === "number") return <span>{tr(formatMinorUnits(value, currency && Object.hasOwn(CURRENCY_EXPONENTS, currency) ? currency : "USD", currentLocale(), false))}</span>;
   if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) return <span>{tr(time(value))}</span>;
   return <span>{tr(states[String(value)] ?? String(value))}</span>;
 }

@@ -9,7 +9,7 @@ export const CURRENCY_EXPONENTS = {
 } as const;
 
 export function currencyExponent(code: string): number {
-  const exponent = (CURRENCY_EXPONENTS as Record<string, number | undefined>)[code];
+  const exponent = Object.hasOwn(CURRENCY_EXPONENTS, code) ? (CURRENCY_EXPONENTS as Record<string, number>)[code] : undefined;
   if (exponent === undefined) throw new Error(`Unknown currency exponent for ${code}`);
   return exponent;
 }

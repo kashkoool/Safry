@@ -25,6 +25,8 @@ describe("currency exponent tables", () => {
     expect(currencyExponent("KWD")).toBe(3);
     expect(() => currencyExponent("XXX")).toThrow();
     expect(() => frontendExponent("XXX")).toThrow();
+    expect(() => currencyExponent("toString")).toThrow();
+    expect(() => frontendExponent("toString")).toThrow();
   });
 });
 
@@ -49,5 +51,7 @@ describe("frontend minor-unit helpers", () => {
     // 1.00 USD to KWD at 0.3: 0.300 KWD = 300 fils
     expect(convertMinorUnits(100, "USD", "KWD", 1, 0.3)).toBe(300);
     expect(convertMinorUnits(1000, "JPY", "USD", 150, 1)).toBe(667);
+    expect(convertMinorUnits(100, "USD", "JPY", 0, 150)).toBeNaN();
+    expect(convertMinorUnits(100, "USD", "JPY", 1, Number.POSITIVE_INFINITY)).toBeNaN();
   });
 });
