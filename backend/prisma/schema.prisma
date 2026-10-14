@@ -215,7 +215,8 @@ model TravelService {
   category               ServiceCategory
   city                   String               @db.VarChar(120)
   cityEn                 String               @default("") @db.VarChar(120)
-  priceCents             Int
+  // Integer minor units (cents) in a bigint column; the API carries a JSON number (see src/common/money).
+  priceCents             BigInt
   currency               String               @default("SAR") @db.Char(3)
   status                 ServiceStatus        @default(DRAFT)
   details                Json                 @default("{}")
@@ -255,8 +256,9 @@ model Booking {
   serviceId            String           @db.Uuid
   travelerMembershipId String           @db.Uuid
   travelersCount       Int              @default(1)
-  totalCents           Int
-  unitPriceCents       Int
+  // bigint minor units; exact arithmetic in booking-rules.ts, JSON numbers at the API boundary.
+  totalCents           BigInt
+  unitPriceCents       BigInt
   units                Int              @default(1)
   serviceDate          DateTime         @db.Date
   endDate              DateTime?        @db.Date

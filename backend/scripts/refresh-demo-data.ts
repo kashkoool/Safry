@@ -53,7 +53,7 @@ async function main() {
       const service = demoCatalog[serviceIndex]!;
       const hotel = service.category === "HOTEL";
       const endDate = hotel ? new Date(new Date(date).getTime() + 2 * 86400000) : null;
-      await tx.booking.create({ data: { tenantId: tenant.id, serviceId: newIds[serviceIndex]!, travelerMembershipId: traveler.id, travelersCount: 2, units: hotel ? 1 : 2, serviceDate: new Date(date), endDate, currency: service.currency, unitPriceCents: service.priceCents, totalCents: service.priceCents * 2, status: status as "PENDING" | "CONFIRMED" | "CANCELLED", notes: "Demo booking" } });
+      await tx.booking.create({ data: { tenantId: tenant.id, serviceId: newIds[serviceIndex]!, travelerMembershipId: traveler.id, travelersCount: 2, units: hotel ? 1 : 2, serviceDate: new Date(date), endDate, currency: service.currency, unitPriceCents: service.priceCents, totalCents: service.priceCents * 2n, status: status as "PENDING" | "CONFIRMED" | "CANCELLED", notes: "Demo booking" } });
     }
     await tx.auditEvent.create({ data: { tenantId: tenant.id, action: "demo.catalog.replace", entityType: "demo_catalog", metadata: { removedServiceIds: ids, removedBookingIds: bookings.map(b => b.id), createdServiceIds: newIds, backupPath } } });
   }, { timeout: 30000 });
