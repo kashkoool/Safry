@@ -41,6 +41,17 @@ secret POSTGRES_PASSWORD 24 1
 secret DATABASE_RUNTIME_PASSWORD 24 1
 secret JWT_ACCESS_SECRET 32 0
 secret MFA_ENCRYPTION_KEY 32 0
+secret RESEND_API_KEY 16 0
+mail_from="$(get MAIL_FROM)"
+if [ -n "$mail_from" ]; then
+  placeholder "$mail_from" && problem MAIL_FROM "is still a placeholder"
+  printf '%s' "$mail_from" | grep -Eq '^([^<>]+ <[^<> @]+@[^<> @]+\.[^<> @]+>|[^<> @]+@[^<> @]+\.[^<> @]+)$' || problem MAIL_FROM "must be an address or Name <address>"
+fi
+base_url="$(get APP_BASE_URL)"
+if [ -n "$base_url" ]; then
+  placeholder "$base_url" && problem APP_BASE_URL "is still a placeholder"
+  printf '%s' "$base_url" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]+)?$' || problem APP_BASE_URL "must be a bare https origin (no path, no trailing slash)"
+fi
 [ -n "$(get JWT_ACCESS_SECRET)" ] && [ "$(get JWT_ACCESS_SECRET)" = "$(get MFA_ENCRYPTION_KEY)" ] && problem MFA_ENCRYPTION_KEY "must differ from JWT_ACCESS_SECRET"
 [ -n "$(get POSTGRES_PASSWORD)" ] && [ "$(get POSTGRES_PASSWORD)" = "$(get DATABASE_RUNTIME_PASSWORD)" ] && problem DATABASE_RUNTIME_PASSWORD "must differ from POSTGRES_PASSWORD"
 

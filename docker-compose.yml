@@ -130,6 +130,11 @@ services:
       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
       SESSION_IDLE_TIMEOUT_MINUTES: ${SESSION_IDLE_TIMEOUT_MINUTES:-15}
       SESSION_ABSOLUTE_TIMEOUT_HOURS: ${SESSION_ABSOLUTE_TIMEOUT_HOURS:-24}
+      # Transactional e-mail (password reset, e-mail verification): Resend over HTTPS. See docs/DEPLOYMENT.md, Transactional email.
+      MAIL_TRANSPORT: resend
+      RESEND_API_KEY: ${RESEND_API_KEY:?Set RESEND_API_KEY in .env (Resend dashboard, API keys; never commit it)}
+      MAIL_FROM: ${MAIL_FROM:?Set MAIL_FROM in .env, a sender on your verified Resend domain}
+      APP_BASE_URL: ${APP_BASE_URL:?Set APP_BASE_URL in .env, the public https origin of the web app (links in e-mails point here)}
     healthcheck:
       # Readiness (database reachable) gates the web container; the image's own check is liveness only. Intentional split: docs/DEPLOYMENT.md.
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
