@@ -11,6 +11,11 @@ export interface NewAccount {
   displayName: string;
   phone?: string | undefined;
   password: string;
+  /**
+   * True for accounts a tenant or platform actor creates (created already verified, see docs/DEPLOYMENT.md, Account e-mail
+   * verification). Self-registration leaves it false: the registrant must confirm the address before signing in.
+   */
+  emailVerified?: boolean | undefined;
 }
 
 export interface ResolvedAccount {
@@ -63,7 +68,8 @@ export class AccountLinkingService {
         emailNormalized: email,
         displayName: input.displayName.trim(),
         phone: input.phone,
-        passwordHash: await hashPassword(input.password)
+        passwordHash: await hashPassword(input.password),
+        ...(input.emailVerified ? { emailVerifiedAt: new Date() } : {})
       }
     });
   }
@@ -97,7 +103,7 @@ export class AccountLinkingService {
   async createOrInvite(tx: Prisma.TransactionClient, tenantId: string, input: NewAccount): Promise<InvitedAccount> {
     const email = input.email.trim().toLowerCase();
     const existing = await this.existing(tx, tenantId, email);
-    if (!existing) return { userId: (await this.create(tx, email, input)).id, awaitingOwnerConsent: false };
+    if (!existing) return { userId: (await this.create(tx, email, { ...input, emailVerified: true })).id, awaitingOwnerConsent: false };
     // Invitation spam guard: an identity holds a bounded number of unanswered invitations,
     // counted across tenants. Same message as the other "already used" refusals.
     const pending = await this.pendingInvitations(tx, existing.id);

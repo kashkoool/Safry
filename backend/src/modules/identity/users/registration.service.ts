@@ -5,6 +5,7 @@ import { PrismaService } from "../../../database/prisma.service.js";
 import type { User } from "../../../generated/prisma/client.js";
 import { providerDefinitions } from "../../travel-services/catalog.js";
 import { AccountSecurityService } from "../auth/account-security.service.js";
+import { CredentialService } from "../auth/credential.service.js";
 import { AccountLinkingService } from "./account-linking.service.js";
 import type { RegisterCustomerDto, RegisterProviderDto } from "./dto/register.dto.js";
 import { isUniqueViolation } from "../../../common/filters/database-errors.js";
@@ -17,7 +18,8 @@ export class RegistrationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly linking: AccountLinkingService,
-    private readonly security: AccountSecurityService
+    private readonly security: AccountSecurityService,
+    private readonly credentials: CredentialService
   ) {}
 
   private async tenantOf(tenantCode: string): Promise<string> {
@@ -60,14 +62,27 @@ export class RegistrationService {
     throw error;
   }
 
+  /**
+   * Closing sentence of a registration answer. A new (unverified) identity is mailed a confirmation link and must use it
+   * before signing in; an existing, already verified identity that was linked to one more tenant can sign in at once.
+   */
+  private async confirmation(user: User | undefined, created: string): Promise<string> {
+    if (user && user.emailVerifiedAt === null) {
+      await this.credentials.sendVerification(user);
+      return `${created} أرسلنا رابط تأكيد إلى بريدك الإلكتروني؛ أكّده ثم سجّل الدخول.`;
+    }
+    return `${created} يمكنك تسجيل الدخول الآن.`;
+  }
+
   customer(input: RegisterCustomerDto, ipAddress?: string): Promise<{ message: string }> {
     return runAsSystem(async () => {
       const tenantId = await this.tenantOf(input.tenantCode);
       const role = await this.prisma.role.findUnique({ where: { tenantId_code: { tenantId, code: "traveler" } } });
       if (!role) throw new ConflictException("دور المسافر غير مهيأ لهذه الجهة");
       await this.proveOwnership(tenantId, input.email, input.password, ipAddress);
+      let registered: User | undefined;
       try {
-        await this.prisma.$transaction(async (tx) => {
+        registered = await this.prisma.$transaction(async (tx) => {
           const { user, linked } = await this.linking.resolve(tx, tenantId, input);
           const membership = await tx.tenantMembership.create({ data: {
             tenantId, userId: user.id, status: "ACTIVE", jobTitle: "مسافر"
@@ -77,9 +92,10 @@ export class RegistrationService {
             tenantId, actorUserId: user.id, action: "identity.customer.register",
             entityType: "membership", entityId: membership.id, metadata: { linkedExistingAccount: linked }
           } });
+          return user;
         });
       } catch (error) { this.registrationError(error); }
-      return { message: "أُنشئ حساب المسافر. يمكنك تسجيل الدخول الآن." };
+      return { message: await this.confirmation(registered, "أُنشئ حساب المسافر.") };
     });
   }
 
@@ -93,8 +109,9 @@ export class RegistrationService {
       if (roles.length !== 2) throw new ConflictException("أدوار مقدم الخدمة غير مهيأة لهذه الجهة");
       await this.proveOwnership(tenantId, input.email, input.password, ipAddress);
       const email = input.email.trim().toLowerCase();
+      let registered: User | undefined;
       try {
-        await this.prisma.$transaction(async (tx) => {
+        registered = await this.prisma.$transaction(async (tx) => {
           const organization = await tx.providerOrganization.create({ data: {
             tenantId, name: input.organizationName.trim(), nameAr: input.organizationName.trim(),
             nameEn: input.organizationNameEn.trim(), type: input.type,
@@ -114,9 +131,10 @@ export class RegistrationService {
             entityType: "provider_organization", entityId: organization.id,
             metadata: { status: "SUSPENDED", linkedExistingAccount: linked }
           } });
+          return user;
         });
       } catch (error) { this.registrationError(error); }
-      return { message: "أُنشئ حساب الشركة وهو بانتظار تفعيل النشاط من إدارة الجهة. يمكنك تسجيل الدخول ومراجعة بياناته." };
+      return { message: await this.confirmation(registered, "أُنشئ حساب الشركة وهو بانتظار تفعيل النشاط من إدارة الجهة.") };
     });
   }
 }

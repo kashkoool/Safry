@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, HttpCode, Ip, Param, ParseUUIDPipe, Post, Req, Res, UnauthorizedException, UseGuards } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request, Response } from "express";
-import { ApiBearerAuth, ApiHeader, ApiTags } from "@nestjs/swagger";
+import { ApiAcceptedResponse, ApiBearerAuth, ApiHeader, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import type { AuthUser } from "../../../common/security/auth-user.js";
 import { CurrentUser } from "../../../common/security/current-user.decorator.js";
@@ -24,6 +24,8 @@ import { LoginDto } from "./dto/login.dto.js";
 import { MfaDisableDto, MfaEnableDto, MfaPasswordDto, MfaRegenerateRecoveryDto, MfaVerifyDto } from "./dto/mfa.dto.js";
 import { RefreshTokenDto } from "./dto/refresh-token.dto.js";
 import { ChangePasswordDto, UnlockLoginDto } from "./dto/password.dto.js";
+import { AcceptedDto, ForgotPasswordDto, ResendVerificationDto, ResetPasswordDto, VerifyEmailDto } from "./dto/credential.dto.js";
+import { CredentialService } from "./credential.service.js";
 import { AccountSecurityService } from "./account-security.service.js";
 import { MfaService, type MfaStatus } from "./mfa.service.js";
 
@@ -47,6 +49,7 @@ export class AuthController {
     private readonly registration: RegistrationService,
     private readonly mfa: MfaService,
     private readonly security: AccountSecurityService,
+    private readonly credentials: CredentialService,
     config: ConfigService
   ) {
     this.production = config.get<string>("NODE_ENV") === "production";
@@ -191,6 +194,53 @@ export class AuthController {
   @Post("password")
   async changePassword(@CurrentUser() user: AuthUser, @Body() input: ChangePasswordDto, @Ip() ipAddress: string): Promise<void> {
     await this.authService.changePassword(user, input.currentPassword, input.newPassword, ipAddress);
+  }
+
+  /**
+   * Mails a password-reset link when the address belongs to an active account. The answer (202, `{ accepted: true }`) and its
+   * timing are the same for every address. Limits: per client address and per (address, client address), plus at most one link
+   * per minute and five per hour for one account regardless of who asks.
+   */
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 }, account: { limit: 3, ttl: 60_000 } })
+  @HttpCode(202)
+  @ApiAcceptedResponse({ type: AcceptedDto })
+  @Post("password/forgot")
+  async forgotPassword(@Body() input: ForgotPasswordDto, @Ip() ipAddress: string): Promise<AcceptedDto> {
+    await this.credentials.forgotPassword(input.email, ipAddress);
+    return { accepted: true };
+  }
+
+  /**
+   * Sets a new password from the e-mailed token (single use, valid one hour). Ends every session and refresh token of the
+   * account, lifts its lockout and sends a "password changed" notice. 400 for an unknown, used, expired or altered token.
+   */
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(204)
+  @Post("password/reset")
+  async resetPassword(@Body() input: ResetPasswordDto, @Ip() ipAddress: string): Promise<void> {
+    await this.credentials.resetPassword(input.token, input.newPassword, ipAddress);
+  }
+
+  /** Confirms the address with the e-mailed token (single use, valid 24 hours). 400 for an unknown, used, expired or altered token. */
+  @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @HttpCode(204)
+  @Post("email/verify")
+  async verifyEmail(@Body() input: VerifyEmailDto, @Ip() ipAddress: string): Promise<void> {
+    await this.credentials.verifyEmail(input.token, ipAddress);
+  }
+
+  /** Mails a new verification link to an unverified account; same answer and timing for every address. Same limits as forgot. */
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 }, account: { limit: 3, ttl: 60_000 } })
+  @HttpCode(202)
+  @ApiAcceptedResponse({ type: AcceptedDto })
+  @Post("email/resend")
+  async resendVerification(@Body() input: ResendVerificationDto, @Ip() ipAddress: string): Promise<AcceptedDto> {
+    await this.credentials.resendVerification(input.email, ipAddress);
+    return { accepted: true };
   }
 
   /** Platform-admin unlock path for an e-mail whose sign-in is blocked account-wide. */

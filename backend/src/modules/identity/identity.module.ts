@@ -6,6 +6,7 @@ import { AccessService } from "./access/access.service.js";
 import { AccountSecurityService } from "./auth/account-security.service.js";
 import { AuthController } from "./auth/auth.controller.js";
 import { AuthService } from "./auth/auth.service.js";
+import { CredentialService } from "./auth/credential.service.js";
 import { JwtStrategy } from "./auth/jwt.strategy.js";
 import { MfaService } from "./auth/mfa.service.js";
 import { PlatformTenantsController, TenantController } from "./tenants/tenant.controller.js";
@@ -27,6 +28,7 @@ import { UsersService } from "./users/users.service.js";
   controllers: [AuthController, UsersController, AccessController, TenantController, PlatformTenantsController],
   providers: [
     AuthService,
+    CredentialService,
     AccountSecurityService,
     MfaService,
     JwtStrategy,
@@ -36,6 +38,6 @@ import { UsersService } from "./users/users.service.js";
     AccessService,
     TenantsService
   ],
-  exports: [AccountLinkingService, MfaService]
+  exports: [AccountLinkingService, MfaService, CredentialService]
 })
 export class IdentityModule {}

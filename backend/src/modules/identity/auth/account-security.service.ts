@@ -174,6 +174,19 @@ export class AccountSecurityService {
     return count;
   }
 
+  /**
+   * After a password reset: lifts the account-wide counter and the block of the address that completed the reset. Pair rows of
+   * other addresses are keyed by address too (not enumerable); they are short and expire on their own.
+   */
+  async clearLockout(email: string, ipAddress: string | undefined): Promise<void> {
+    const keys = this.keys("login", email, ipAddress);
+    const now = new Date();
+    await this.prisma.loginThrottle.updateMany({
+      where: { key: { in: [keys.account, keys.pair] } },
+      data: { failures: 0, blockedUntil: null, windowStartedAt: now, updatedAt: now }
+    });
+  }
+
   /** Audits a failed or refused attempt. Unknown e-mails are audited too (without the e-mail), so both paths do the same work. */
   async recordFailure(context: FailureContext): Promise<void> {
     const base = {
