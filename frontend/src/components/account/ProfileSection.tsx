@@ -7,7 +7,8 @@ import { Skeleton } from "../LoadingScreen";
 import { useLanguage } from "../../i18n/useLanguage";
 import { useText } from "../../i18n/useText";
 
-const PHONE_PATTERN = "\\+?[0-9 ()\\-]{6,32}";
+// Written to compile in the browser's strict (v-flag) pattern mode too: brackets and the dash are escaped.
+const PHONE_PATTERN = "\\+?[0-9 \\(\\)\\-]{6,32}";
 const toForm = (profile: UserProfile) => ({
   displayName: profile.displayName,
   phone: profile.phone ?? "",

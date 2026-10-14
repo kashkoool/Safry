@@ -14,8 +14,9 @@
 .account-main .work-panel { padding: var(--space-6); border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface-1); min-width: 0; }
 .account-main .work-panel h2 { margin: 0 0 var(--space-4); font-size: clamp(19px, 2vw, 23px); line-height: 1.5; }
 .account-form { display: grid; gap: var(--space-4); max-width: 560px; }
-.account-form label { display: grid; gap: var(--space-2); font-size: 14px; font-weight: 600; color: var(--text-secondary); }
-.account-form :is(input:not([type="checkbox"]), select) { width: 100%; min-width: 0; min-height: 44px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-0); color: var(--text-primary); font-size: 15px; }
+.account-form label, .account-field { display: grid; gap: var(--space-2); font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+.account-field > label { display: block; }
+.account-form :is(input:not([type="checkbox"]), select), .account-field input { width: 100%; min-width: 0; min-height: 44px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-0); color: var(--text-primary); font-size: 15px; }
 .account-form input[readonly] { background: var(--surface-2); color: var(--text-secondary); }
 .account-form input[aria-invalid="true"] { border-color: var(--danger); }
 .account-form .form-hint, .account-step .form-hint { margin: 0; font-weight: 400; line-height: 1.8; }

@@ -57,21 +57,21 @@ export function PasswordSection() {
         <input dir="ltr" type="password" required minLength={8} maxLength={128} autoComplete="current-password" value={current}
           onChange={(event) => setCurrent(event.target.value)} />
       </label>
-      <label>
-        {pick("كلمة المرور الجديدة", "New password")}
-        <input dir="ltr" type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={next}
+      <div className="account-field">
+        <label htmlFor={`${id}-new`}>{pick("كلمة المرور الجديدة", "New password")}</label>
+        <input id={`${id}-new`} dir="ltr" type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={next}
           aria-describedby={`${id}-rule${fieldError?.field === "next" ? ` ${id}-next` : ""}`} aria-invalid={fieldError?.field === "next" || undefined}
           onChange={(event) => { setFieldError(null); setNext(event.target.value); }} />
         <small id={`${id}-rule`} className="form-hint">{pick("12 خانة على الأقل، وتختلف عن الحالية.", "At least 12 characters, different from the current one.")}</small>
         {fieldError?.field === "next" && <small id={`${id}-next`} role="alert" className="account-field-error">{fieldError.text}</small>}
-      </label>
-      <label>
-        {pick("تأكيد كلمة المرور الجديدة", "Confirm new password")}
-        <input dir="ltr" type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={confirm}
+      </div>
+      <div className="account-field">
+        <label htmlFor={`${id}-confirm-input`}>{pick("تأكيد كلمة المرور الجديدة", "Confirm new password")}</label>
+        <input id={`${id}-confirm-input`} dir="ltr" type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={confirm}
           aria-describedby={fieldError?.field === "confirm" ? `${id}-confirm` : undefined} aria-invalid={fieldError?.field === "confirm" || undefined}
           onChange={(event) => { setFieldError(null); setConfirm(event.target.value); }} />
         {fieldError?.field === "confirm" && <small id={`${id}-confirm`} role="alert" className="account-field-error">{fieldError.text}</small>}
-      </label>
+      </div>
       {error && <p role="alert" className="form-error">{error}</p>}
       {done && (
         <p role="status" className="workspace-alert">
