@@ -15,7 +15,7 @@ oldIds.push("abfed65b-6600-47bf-a713-644a2dedcba8");
 async function main() {
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { code: "safry" } });
   const traveler = await prisma.tenantMembership.findFirstOrThrow({ where: { tenantId: tenant.id, user: { emailNormalized: "traveler@safry.local" } } });
-  const providers = [];
+  const providers: Array<{ item: (typeof demoCatalog)[number]; member: { id: string }; organization: { id: string; name: string } }> = [];
   for (const item of demoCatalog) {
     const member = await prisma.tenantMembership.findFirstOrThrow({ where: { tenantId: tenant.id, user: { emailNormalized: `${item.alias}@safry.local` } }, include: { organization: true } });
     if (!member.organization || member.organization.contactEmail !== `${item.alias}@safry.local`) throw new Error(`Unexpected company mapping: ${item.alias}`);
@@ -45,15 +45,16 @@ async function main() {
       await tx.providerOrganization.update({ where: { id: organization.id }, data: { name: nameAr, nameAr, nameEn: item.companyEn } });
       const { alias, companyAr, companyEn, ...service } = item;
       void alias; void companyAr; void companyEn;
-      await tx.travelService.create({ data: { ...service, id: newIds[index], tenantId: tenant.id, providerMembershipId: member.id, providerOrganizationId: organization.id, status: "ACTIVE", details: { ...item.details, ...(item.category === "FLIGHT" ? { departureDate: date } : {}) } } });
+      await tx.travelService.create({ data: { ...service, priceCents: BigInt(service.priceCents), id: newIds[index], tenantId: tenant.id, providerMembershipId: member.id, providerOrganizationId: organization.id, status: "ACTIVE", details: { ...item.details, ...(item.category === "FLIGHT" ? { departureDate: date } : {}) } } });
     }
     await tx.serviceComponent.createMany({ data: [1, 3].map(index => ({ tenantId: tenant.id, packageId: newIds[0]!, serviceId: newIds[index]! })) });
     for (const [index, status] of ["PENDING", "CONFIRMED", "CANCELLED"].entries()) {
       const serviceIndex = [0, 1, 7][index]!;
       const service = demoCatalog[serviceIndex]!;
+      const price = BigInt(service.priceCents);
       const hotel = service.category === "HOTEL";
       const endDate = hotel ? new Date(new Date(date).getTime() + 2 * 86400000) : null;
-      await tx.booking.create({ data: { tenantId: tenant.id, serviceId: newIds[serviceIndex]!, travelerMembershipId: traveler.id, travelersCount: 2, units: hotel ? 1 : 2, serviceDate: new Date(date), endDate, currency: service.currency, unitPriceCents: service.priceCents, totalCents: service.priceCents * 2n, status: status as "PENDING" | "CONFIRMED" | "CANCELLED", notes: "Demo booking" } });
+      await tx.booking.create({ data: { tenantId: tenant.id, serviceId: newIds[serviceIndex]!, travelerMembershipId: traveler.id, travelersCount: 2, units: hotel ? 1 : 2, serviceDate: new Date(date), endDate, currency: service.currency, unitPriceCents: price, totalCents: price * 2n, status: status as "PENDING" | "CONFIRMED" | "CANCELLED", notes: "Demo booking" } });
     }
     await tx.auditEvent.create({ data: { tenantId: tenant.id, action: "demo.catalog.replace", entityType: "demo_catalog", metadata: { removedServiceIds: ids, removedBookingIds: bookings.map(b => b.id), createdServiceIds: newIds, backupPath } } });
   }, { timeout: 30000 });

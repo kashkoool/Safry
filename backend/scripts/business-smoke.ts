@@ -40,7 +40,7 @@ async function call(
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
-  const result = response.status === 204 ? {} : await response.json();
+  const result = response.status === 204 ? {} : (await response.json()) as Json;
   assert.equal(response.status, expected, `${method} ${path}: ${JSON.stringify(result)}`);
   const pathname = path.split("?")[0]!;
   const route = documented.find(item => item.method === method && new RegExp(`^${item.path.replace(/\{[^}]+\}/g, "[^/]+")}$`).test(pathname));
