@@ -9,6 +9,7 @@ import { getLoginPortal } from "./lib/api";
 const DashboardPage = lazy(() => import("./pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const PlatformAdminPage = lazy(() => import("./pages/PlatformAdminPage").then((m) => ({ default: m.PlatformAdminPage })));
 const OrganizationManagementPage = lazy(() => import("./pages/OrganizationManagementPage").then((m) => ({ default: m.OrganizationManagementPage })));
+const AccountPage = lazy(() => import("./pages/AccountPage").then((m) => ({ default: m.AccountPage })));
 const RegisterPage = lazy(() => import("./pages/RegisterPage").then((m) => ({ default: m.RegisterPage })));
 import { MfaRecoveryNotice } from "./components/MfaRecoveryNotice";
 
@@ -55,6 +56,8 @@ export function App() {
         path="/workspace/organizations/:organizationId/:section"
         element={<ProtectedRoute><OrganizationManagementPage /></ProtectedRoute>}
       />
+      <Route path="/account" element={<Navigate to="/account/profile" replace />} />
+      <Route path="/account/:section" element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
       <Route path="/" element={<Navigate to="/workspace/overview" replace />} />
       <Route path="*" element={<Navigate to="/workspace/overview" replace />} />
     </Routes>

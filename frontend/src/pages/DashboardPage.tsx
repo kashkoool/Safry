@@ -363,10 +363,10 @@ export function DashboardPage() {
               {pick("أقسام المنشأة والموظفون", "Company departments and staff")}
             </Link>
           )}
-          <button className="workspace-account-card" onClick={() => go("profile")}>
+          <Link className="workspace-account-card" to="/account/profile">
             <span className="avatar"><CircleUserRound size={21} /></span>
             <span><strong>{pick("إعدادات حسابك", "Your account")}</strong><small dir="ltr">{user?.email}</small></span>
-          </button>
+          </Link>
           <small className="workspace-tenant-label">{pick("مساحة العمل", "Workspace")}{tr(" · ")}{tr(tenant?.code)}</small>
         </div>
       </aside>
@@ -418,9 +418,9 @@ export function DashboardPage() {
                 </button>
               </div>
             )}
-            <button className="avatar profile-link" aria-label={pick("فتح الحساب", "Open account")} onClick={() => go("profile")}>
+            <Link className="avatar profile-link" aria-label={pick("فتح الحساب", "Open account")} to="/account/profile">
               <CircleUserRound size={22} />
-            </button>
+            </Link>
             <button
               className="logout-button"
               aria-label={pick("تسجيل الخروج", "Sign out")}
@@ -918,6 +918,7 @@ export function DashboardPage() {
                         : "إدارة العروض ضمن تخصص منشأتك، تحديد الأسعار والسعات، ومتابعة الطلبات الخاصة بخدمات منشأتك فقط.")}
                 </p>
                 <p className="form-hint">{tr(" رقم الترخيص بيانات مسجلة من المنشأة؛ لا يشير وحده إلى تحقق رسمي من الترخيص. ")}</p>
+                <Link className="secondary-button" to="/account/profile">{pick("بياناتك الشخصية والأمان", "Your details and security")}</Link>
               </article>
               <SessionsPanel />
             </section>

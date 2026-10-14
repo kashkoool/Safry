@@ -1,0 +1,44 @@
+.account-page { min-height: 100vh; background: radial-gradient(ellipse at 90% 0, #1c2d434d, transparent 45%), var(--surface-0); color: var(--text-primary); }
+.account-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; padding: var(--space-4) clamp(16px, 4vw, 72px); border-block-end: 1px solid var(--border); }
+.account-header__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.account-header__actions .ghost-button { display: inline-flex; align-items: center; gap: var(--space-2); text-decoration: none; }
+.account-main { max-width: 880px; margin-inline: auto; padding: var(--space-8) clamp(16px, 4vw, 32px) var(--space-12); }
+.account-main:focus { outline: none; }
+.account-main h1 { margin: 0 0 var(--space-2); font-size: clamp(26px, 3vw, 36px); letter-spacing: -.03em; line-height: 1.35; }
+.account-email { margin: 0 0 var(--space-6); color: var(--text-secondary); font-size: 14px; overflow-wrap: anywhere; text-align: start; }
+.account-tabs { display: flex; gap: 5px; overflow-x: auto; margin-block-end: var(--space-6); padding: 5px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 15px; }
+.account-tabs a { white-space: nowrap; text-decoration: none; color: var(--text-secondary); border-radius: 10px; padding: 12px 20px; min-height: 44px; display: inline-flex; align-items: center; font-size: 14px; font-weight: 600; }
+.account-tabs a:hover { background: var(--surface-2); color: var(--text-primary); }
+.account-tabs a[aria-current="page"] { color: var(--accent-strong); background: var(--surface-3); box-shadow: inset 0 0 0 1px #d8b36a33; }
+.account-stack { display: grid; gap: var(--space-6); }
+.account-main .work-panel { padding: var(--space-6); border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface-1); min-width: 0; }
+.account-main .work-panel h2 { margin: 0 0 var(--space-4); font-size: clamp(19px, 2vw, 23px); line-height: 1.5; }
+.account-form { display: grid; gap: var(--space-4); max-width: 560px; }
+.account-form label { display: grid; gap: var(--space-2); font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+.account-form :is(input:not([type="checkbox"]), select) { width: 100%; min-width: 0; min-height: 44px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-0); color: var(--text-primary); font-size: 15px; }
+.account-form input[readonly] { background: var(--surface-2); color: var(--text-secondary); }
+.account-form input[aria-invalid="true"] { border-color: var(--danger); }
+.account-form .form-hint, .account-step .form-hint { margin: 0; font-weight: 400; line-height: 1.8; }
+.account-form .form-error, .account-form .workspace-alert, .account-step .form-error, .account-step .workspace-alert { margin: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius-control); border: 1px solid; }
+.account-field-error { color: var(--danger); font-weight: 600; }
+.account-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.account-actions :is(.primary-button, .secondary-button, .ghost-button) { min-height: 44px; }
+.account-danger { border-color: var(--danger); color: var(--danger); background: transparent; }
+.account-danger:hover:not(:disabled) { background: var(--danger); color: var(--surface-0); }
+.account-status { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); font-weight: 600; }
+.account-step { display: grid; gap: var(--space-4); }
+.account-step h3 { margin: 0; font-size: 17px; line-height: 1.6; }
+.account-step h3:focus { outline: none; }
+.account-step h3:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.account-step p { margin: 0; line-height: 1.8; }
+.account-scan { display: flex; gap: var(--space-6); align-items: center; flex-wrap: wrap; }
+.account-qr { inline-size: min(100%, 220px); aspect-ratio: 1; flex: none; border-radius: var(--radius-control); background: #fff; display: block; }
+.account-qr--loading { background: var(--surface-2); }
+.account-key { display: block; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-0); color: var(--accent-strong); font-size: 17px; letter-spacing: .08em; overflow-wrap: anywhere; user-select: all; text-align: start; }
+.account-codes { display: grid; gap: var(--space-4); max-width: 560px; }
+.account-codes ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.account-codes li { padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-0); }
+.account-codes code { font-size: 15px; overflow-wrap: anywhere; }
+.account-check { display: flex; align-items: center; gap: var(--space-2); }
+.account-check input { inline-size: 20px; block-size: 20px; }
+@media (max-width: 520px) { .account-header { padding-inline: 16px; } .account-main .work-panel { padding: var(--space-4); } }
