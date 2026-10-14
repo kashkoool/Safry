@@ -1,7 +1,8 @@
 # Password reset and e-mail verification
 
-Four public endpoints under `/api/v1/auth` (also in Swagger when it is enabled). All take and return JSON, need no bearer
-token and no tenant, and run in the explicit system scope (an e-mail address is one identity across tenants).
+Four public endpoints under `/api/v1/auth` (also in Swagger when it is enabled). Request bodies are JSON. The two `202` endpoints
+return a small JSON body; the reset and verify endpoints return `204` with no body at all (a client must not parse an empty
+body as JSON). None needs a bearer token or a tenant, and run in the explicit system scope (an e-mail address is one identity across tenants).
 
 | Method and path | Body | Success | Limits (per minute) |
 |---|---|---|---|
@@ -14,6 +15,11 @@ Errors: `400` validation (unknown field, wrong type, wrong length, password poli
 `Reset link is invalid or expired` / `Verification link is invalid or expired` for an unknown, used, expired, altered or
 foreign token (one answer for every cause), `429` rate limit. `forgot` and `resend` never answer anything but `202` for a
 well-formed body.
+
+## Status
+
+The frontend pages for `/reset-password` and `/verify-email` (the token travels in the URL fragment) and the resend action are
+delivered in a separate frontend pull request. Until it lands, the emailed links have no page to open.
 
 ## Links and tokens
 
