@@ -482,9 +482,9 @@ export async function requestPage<T>(path: string, init: RequestInit = {}): Prom
 }
 
 const seg = encodeURIComponent;
-/** The API caps list endpoints at this many rows per request; further rows are fetched by offset. */
+/** The API caps list endpoints at this many rows per request; the next rows are fetched with the cursor it hands back. */
 export const PAGE_SIZE = 100;
-const pageQuery = (offset: number) => `?limit=${PAGE_SIZE}&offset=${offset}`;
+const pageQuery = (cursor?: string | null) => `?limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
 const TTL = 30_000;
 // Cache keys are scoped to the signed-in user and tenant so data can never be served across identities.
 export const cacheScope = () => {
@@ -525,11 +525,11 @@ export const api = {
   activity: () => request<void>("/auth/activity", { method: "POST" }),
   me: () => request<AuthUser>("/auth/me"),
   currentTenant: () => read("tenant", () => request<Tenant>("/tenants/current")),
-  services: (offset = 0) => read(`services:${offset}`, () => request<TravelService[]>(`/services${pageQuery(offset)}`)),
+  services: (cursor?: string | null) => read(`services:${cursor ?? ""}`, () => requestPage<TravelService>(`/services${pageQuery(cursor)}`)),
   exchangeRates: () => read("rates", () => request<ExchangeRates>("/services/exchange-rates"), 60 * 60_000),
-  marketplace: (offset = 0) => read(`marketplace:${offset}`, () => request<TravelService[]>(`/services/marketplace${pageQuery(offset)}`)),
+  marketplace: (cursor?: string | null) => read(`marketplace:${cursor ?? ""}`, () => requestPage<TravelService>(`/services/marketplace${pageQuery(cursor)}`)),
   workspace: () => read("workspace", () => request<WorkspaceMetadata>("/providers/workspace")),
-  providers: () => read("providers", () => request<Organization[]>("/providers")),
+  providers: (cursor?: string | null) => read(`providers:${cursor ?? ""}`, () => requestPage<Organization>(`/providers${pageQuery(cursor)}`)),
   createProvider: (input: ProviderInput) =>
     afterWrite(["providers", "marketplace", "services", "workspace", "members"],
       request<Organization>("/providers", { method: "POST", body: JSON.stringify(input) })),
@@ -547,7 +547,7 @@ export const api = {
     input: Partial<Omit<ServiceInput, "providerOrganizationId">> & { status?: TravelService["status"] }
   ) => afterWrite(["services", "marketplace", "providers", "workspace", "bookings"],
     request<TravelService>(`/services/${seg(id)}`, { method: "PATCH", body: JSON.stringify(input) })),
-  bookings: (offset = 0) => read(`bookings:${offset}`, () => request<Booking[]>(`/bookings${pageQuery(offset)}`)),
+  bookings: (cursor?: string | null) => read(`bookings:${cursor ?? ""}`, () => requestPage<Booking>(`/bookings${pageQuery(cursor)}`)),
   /** `idempotencyKey` is one per user action: the same key on a retry returns the first booking, never a second one. */
   createBooking: (input: BookingInput, idempotencyKey: string) =>
     afterWrite(["bookings"], request<Booking>("/bookings", {

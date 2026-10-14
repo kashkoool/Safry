@@ -53,8 +53,9 @@ import {
   currencyNames,
   type SupportedCurrency,
   type WorkspaceMetadata,
-  PAGE_SIZE
+  type Page
 } from "../lib/api";
+import { errorText } from "../lib/errors";
 import "./workspace-premium.css";
 
 const serviceIcons = {
@@ -99,6 +100,8 @@ function preferredCurrency(): SupportedCurrency {
 /** English booking status labels (one map, with a fallback at the call sites so an unknown status never renders `undefined`). */
 const bookingStatusEnglish: Record<string, string> = { PENDING: "Pending", CONFIRMED: "Confirmed", CANCELLED: "Cancelled" };
 
+const emptyPage = <T,>(): Page<T> => ({ items: [], nextCursor: null });
+
 function includesNeedle(text: string, search: string): boolean {
   return text.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
 }
@@ -126,7 +129,8 @@ export function DashboardPage() {
   const [members, setMembers] = useState<TenantMember[]>([]);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 250);
-  const [hasMore, setHasMore] = useState({ services: false, marketplace: false, bookings: false });
+  // Keyset cursor of the next page per list; null = that list is complete (the server sends no cursor on the last page).
+  const [cursors, setCursors] = useState<Record<"services" | "marketplace" | "bookings" | "providers", string | null>>({ services: null, marketplace: null, bookings: null, providers: null });
   const [filter, setFilter] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -176,40 +180,46 @@ export function DashboardPage() {
     ] = await Promise.all([
       user?.permissions.includes("tenant.read") ? api.currentTenant() : Promise.resolve(null),
       user?.permissions.includes("tenant.read") ? api.workspace() : Promise.resolve(null),
-      user?.permissions.includes("catalog.service.read") ? api.services() : Promise.resolve([]),
-      user?.permissions.includes("catalog.service.read") ? api.marketplace() : Promise.resolve([]),
-      user?.permissions.includes("booking.read") ? api.bookings() : Promise.resolve([]),
-      user?.permissions.includes("catalog.service.read") ? api.providers() : Promise.resolve([]),
+      user?.permissions.includes("catalog.service.read") ? api.services() : Promise.resolve(emptyPage<TravelService>()),
+      user?.permissions.includes("catalog.service.read") ? api.marketplace() : Promise.resolve(emptyPage<TravelService>()),
+      user?.permissions.includes("booking.read") ? api.bookings() : Promise.resolve(emptyPage<Booking>()),
+      user?.permissions.includes("catalog.service.read") ? api.providers() : Promise.resolve(emptyPage<Organization>()),
       isAdmin && user?.permissions.includes("identity.user.read") ? api.members() : Promise.resolve([])
     ]);
     setTenant(nextTenant);
     setMetadata(nextMetadata);
-    setServices(nextServices);
-    setMarketplace(nextMarketplace);
-    setBookings(nextBookings);
-    setProviders(nextProviders);
+    setServices(nextServices.items);
+    setMarketplace(nextMarketplace.items);
+    setBookings(nextBookings.items);
+    setProviders(nextProviders.items);
     setMembers(nextMembers);
-    setHasMore({
-      services: nextServices.length >= PAGE_SIZE,
-      marketplace: nextMarketplace.length >= PAGE_SIZE,
-      bookings: nextBookings.length >= PAGE_SIZE
+    setCursors({
+      services: nextServices.nextCursor,
+      marketplace: nextMarketplace.nextCursor,
+      bookings: nextBookings.nextCursor,
+      providers: nextProviders.nextCursor
     });
   }, [isAdmin, user?.permissions]);
-  // The API returns at most PAGE_SIZE rows per request; "load more" appends the next page by offset.
-  async function loadMore(kind: "services" | "marketplace" | "bookings"): Promise<void> {
+  // "Load more" follows the cursor the API returned with the previous page and stops when it no longer sends one.
+  async function loadMore(kind: "services" | "marketplace" | "bookings" | "providers"): Promise<void> {
+    const cursor = cursors[kind];
+    if (!cursor) return;
     setBusy(true);
+    setError("");
     try {
-      if (kind === "bookings") {
-        const next = await api.bookings(rawBookings.length);
-        setBookings((current) => [...current, ...next]);
-        setHasMore((current) => ({ ...current, bookings: next.length >= PAGE_SIZE }));
-      } else {
-        const next = await (kind === "services" ? api.services(rawServices.length) : api.marketplace(rawMarketplace.length));
-        (kind === "services" ? setServices : setMarketplace)((current) => [...current, ...next]);
-        setHasMore((current) => ({ ...current, [kind]: next.length >= PAGE_SIZE }));
-      }
+      const next = await (kind === "bookings" ? api.bookings(cursor)
+        : kind === "providers" ? api.providers(cursor)
+          : kind === "services" ? api.services(cursor) : api.marketplace(cursor));
+      const append = <T extends { id: string }>(current: T[], more: T[]): T[] => {
+        const known = new Set(current.map((item) => item.id)); // a row added meanwhile must not appear twice
+        return [...current, ...more.filter((item) => !known.has(item.id))];
+      };
+      if (kind === "bookings") setBookings((current) => append(current, next.items as Booking[]));
+      else if (kind === "providers") setProviders((current) => append(current, next.items as Organization[]));
+      else (kind === "services" ? setServices : setMarketplace)((current) => append(current, next.items as TravelService[]));
+      setCursors((current) => ({ ...current, [kind]: next.nextCursor }));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تحميل البيانات");
+      setError(errorText(reason, pick, tr, { fallback: pick("تعذر تحميل المزيد.", "Could not load more.") }));
     } finally {
       setBusy(false);
     }
@@ -291,7 +301,7 @@ export function DashboardPage() {
       if (refresh) await reload();
       setMessage(success);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تنفيذ العملية");
+      setError(errorText(reason, pick, tr, { fallback: pick("تعذر تنفيذ العملية.", "The action could not be completed.") }));
     } finally {
       setBusy(false);
       setConfirmation(null);
@@ -665,7 +675,7 @@ export function DashboardPage() {
                   </article>
                 ))}
               </div>
-              {(view === "marketplace" ? hasMore.marketplace : hasMore.services) && <div className="load-more"><button className="ghost-button" disabled={busy} onClick={() => void loadMore(view === "marketplace" ? "marketplace" : "services")}>{pick("عرض المزيد", "Load more")}</button></div>}
+              {(view === "marketplace" ? cursors.marketplace : cursors.services) && <div className="load-more"><button className="ghost-button" disabled={busy} onClick={() => void loadMore(view === "marketplace" ? "marketplace" : "services")}>{pick("عرض المزيد", "Load more")}</button></div>}
               {!loading && !shownServices.length && (
                 <div className="empty-state workspace-empty"><Search size={32} /><h3>{pick("لم نجد خدمة مطابقة", "No matching services")}</h3><p>{pick("جرّب كلمة أخرى أو أزل الفلاتر لاكتشاف المزيد.", "Try another search or clear your filters to explore more.")}</p><button className="ghost-button" onClick={() => { setSearch(""); setFilter(""); }}>{pick("مسح البحث والفلاتر", "Clear search and filters")}</button></div>
               )}
@@ -758,7 +768,7 @@ export function DashboardPage() {
                   </article>
                 ))}
               </div>
-              {hasMore.bookings && <div className="load-more"><button className="ghost-button" disabled={busy} onClick={() => void loadMore("bookings")}>{pick("عرض المزيد", "Load more")}</button></div>}
+              {cursors.bookings && <div className="load-more"><button className="ghost-button" disabled={busy} onClick={() => void loadMore("bookings")}>{pick("عرض المزيد", "Load more")}</button></div>}
               {!loading && !shownBookings.length && <div className="empty-state workspace-empty"><TicketCheck size={32} /><h3>{pick("لا توجد حجوزات هنا بعد", "No bookings here yet")}</h3><p>{search || filter ? pick("جرّب تغيير البحث أو حالة الحجز.", "Try changing your search or booking status.") : pick("ستظهر طلبات الحجز هنا لتتابع تفاصيلها وحالتها.", "Booking requests will appear here, with their details and status.")}</p>{isTraveler && <button className="secondary-button" onClick={() => go("marketplace")}>{pick("اكتشف الخدمات", "Explore services")}</button>}</div>}
             </section>
           )}
@@ -837,6 +847,7 @@ export function DashboardPage() {
                     </article>
                   ))}
               </div>
+              {cursors.providers && <div className="load-more"><button className="ghost-button" disabled={busy} onClick={() => void loadMore("providers")}>{pick("عرض المزيد", "Load more")}</button></div>}
             </section>
           )}
 
