@@ -59,9 +59,8 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    groups:
-      docker:
-        patterns: ["*"]
+    # No grouping for Docker: each base-image bump is its own pull request, so the image and version are visible
+    # in the title and a Node or database version change cannot hide inside a combined update.
   - package-ecosystem: "docker"
     directory: "/frontend"
     schedule:
@@ -70,9 +69,8 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-    groups:
-      docker:
-        patterns: ["*"]
+    # No grouping for Docker: each base-image bump is its own pull request, so the image and version are visible
+    # in the title and a Node or database version change cannot hide inside a combined update.
   # Root compose images (postgres, caddy): tracks upstream rebuilds that drop the gosu/Go-stdlib findings.
   - package-ecosystem: "docker-compose"
     directory: "/"
