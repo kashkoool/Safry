@@ -10,8 +10,8 @@ Every workflow lives in `.github/workflows/`. Actions are pinned by full commit 
 | `ci.yml` | Migrate image (hardened run against PostgreSQL 17) | PR, push to main | yes | Builds the `migrate` image and runs it read-only, without capabilities; checks every migration is applied |
 | `ci.yml` | Secret scan (gitleaks) | PR, push to main | yes | Scans the full git history |
 | `ci.yml` | E2E (Playwright against the real stack) | PR, push to main | not yet | Real API + PostgreSQL + the production nginx image (strict CSP), full Playwright suite in Chromium; report and traces are uploaded only on failure |
-| `image-scan.yml` | Image scan (api / migrate / web) | PR touching Dockerfiles, lockfiles or compose; push to main; weekly | not yet | Builds the three images, Trivy scan (HIGH/CRITICAL, fixable only), SARIF to code scanning, CycloneDX SBOM artifact. Reviewed exceptions in `.trivyignore`, each with an expiry date |
-| `lighthouse.yml` | Lighthouse (performance, accessibility, best practices) | PR touching `frontend/**`; weekly | not yet | Median of 3 runs; budgets in `frontend/lighthouserc.json` (performance 0.9, accessibility 0.95, best practices 0.9) |
+| `image-scan.yml` | Image scan (api / migrate / web) | every pull request; push to main; weekly | yes | Builds the three images, Trivy scan (HIGH/CRITICAL, fixable only), SARIF to code scanning, CycloneDX SBOM artifact. Reviewed exceptions in `.trivyignore`, each with an expiry date |
+| `lighthouse.yml` | Lighthouse (performance, accessibility, best practices) | every pull request; weekly | yes | Median of 3 runs; budgets in `frontend/lighthouserc.json` (performance 0.9, accessibility 0.95, best practices 0.9) |
 | `load-test.yml` | Load test (reduced dataset) | manual and weekly only | no | autocannon scenarios against the real API; fails on error rate above 0.5 % or p99 above the limit in `backend/test/load/thresholds.json`; results table in the job summary |
 | `codeql.yml` | Analyze (javascript-typescript) | PR, push, weekly | no | CodeQL static analysis |
 | `dependency-review.yml` | dependency-review | PR | no | Fails on newly introduced high-severity dependency advisories |
