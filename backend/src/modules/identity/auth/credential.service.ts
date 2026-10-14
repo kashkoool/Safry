@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { runAsSystem, requestContext } from "../../../common/context/request-context.js";
 import { hashPassword } from "../../../common/security/password.js";
@@ -35,6 +35,8 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  */
 @Injectable()
 export class CredentialService {
+  private readonly logger = new Logger(CredentialService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
@@ -104,7 +106,9 @@ export class CredentialService {
     return this.paced(() => runAsSystem(async () => {
       const user = await this.prisma.user.findUnique({ where: { emailNormalized: email.trim().toLowerCase() } });
       if (!this.eligible(user)) {
-        await this.prisma.$transaction((tx) => this.audit(tx, "identity.password.reset_requested", null, ipAddress, { matched: false }));
+        await this.prisma.$transaction(async (tx) => {
+          await this.audit(tx, "identity.password.reset_requested", null, ipAddress, { matched: false });
+        });
         return;
       }
       const token = await this.issue(user, "PASSWORD_RESET", RESET_TTL_MINUTES * 60_000, ipAddress, "identity.password.reset_requested");
@@ -117,23 +121,37 @@ export class CredentialService {
     return this.paced(() => runAsSystem(async () => {
       const user = await this.prisma.user.findUnique({ where: { emailNormalized: email.trim().toLowerCase() } });
       if (!this.eligible(user) || user.emailVerifiedAt !== null) {
-        await this.prisma.$transaction((tx) => this.audit(tx, "identity.email.verification_requested", null, ipAddress, { matched: false }));
+        await this.prisma.$transaction(async (tx) => {
+          await this.audit(tx, "identity.email.verification_requested", null, ipAddress, { matched: false });
+        });
         return;
       }
       await this.sendVerification(user, ipAddress);
     }));
   }
 
-  /** Issues and mails a verification link (registration, address change, resend). Never throws on a mail failure. */
+  /**
+   * Issues and mails a verification link (registration, address change, resend). Runs after the change that needs the link has
+   * committed, so it never throws: a failure to issue or to hand the mail over is logged (error class only, no address or token)
+   * and the user can ask for a new link through /auth/email/resend.
+   */
   async sendVerification(user: MailAccount, ipAddress?: string): Promise<void> {
-    const token = await runAsSystem(() => this.issue(user, "EMAIL_VERIFICATION", VERIFY_TTL_HOURS * 3_600_000, ipAddress, "identity.email.verification_requested"));
-    if (token) this.mail.sendDetached(user.email, user.locale, { kind: "email-verification", link: this.link("/verify-email", token), validForHours: VERIFY_TTL_HOURS });
+    try {
+      const token = await runAsSystem(() => this.issue(user, "EMAIL_VERIFICATION", VERIFY_TTL_HOURS * 3_600_000, ipAddress, "identity.email.verification_requested"));
+      if (token) this.mail.sendDetached(user.email, user.locale, { kind: "email-verification", link: this.link("/verify-email", token), validForHours: VERIFY_TTL_HOURS });
+    } catch (error) {
+      this.logger.error(`verification link not sent: ${error instanceof Error ? error.name : "unknown error"}`);
+    }
   }
 
-  /** For callers that only hold a user id (platform address change). */
+  /** For callers that only hold a user id (platform address change). Never throws, like `sendVerification`. */
   async sendVerificationTo(userId: string, ipAddress?: string): Promise<void> {
-    const user = await runAsSystem(() => this.prisma.user.findUnique({ where: { id: userId } }));
-    if (this.eligible(user) && user.emailVerifiedAt === null) await this.sendVerification(user, ipAddress);
+    try {
+      const user = await runAsSystem(() => this.prisma.user.findUnique({ where: { id: userId } }));
+      if (this.eligible(user) && user.emailVerifiedAt === null) await this.sendVerification(user, ipAddress);
+    } catch (error) {
+      this.logger.error(`verification link not sent: ${error instanceof Error ? error.name : "unknown error"}`);
+    }
   }
 
   /** Token row for a presented token, or undefined. Shape and digest checks come before and after the lookup. */
