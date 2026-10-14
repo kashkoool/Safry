@@ -108,6 +108,7 @@ async function main(): Promise<void> {
         emailNormalized: email,
         displayName: alias,
         passwordHash: await hash(password),
+        emailVerifiedAt: new Date(),
         isPlatformAdmin: alias === "admin"
       }
     });
@@ -193,6 +194,10 @@ async function main(): Promise<void> {
     { displayName: "No self registration", email: `no-staff-${stamp}@test.safry.local`, password,
       tenantCode: tenant.code, organizationId: hotel.organizationId, jobTitle: "Agent" }, 404);
   userIds.push((await prisma.user.findUniqueOrThrow({ where: { emailNormalized: registeredTravelerEmail } })).id);
+  // Self-registered accounts sign in only after confirming their address (the mail flow is covered by the integration suites).
+  await call("/auth/login", "POST", undefined,
+    { email: registeredTravelerEmail, password, tenantCode: tenant.code, portal: "customer" }, 401);
+  await prisma.user.update({ where: { emailNormalized: registeredTravelerEmail }, data: { emailVerifiedAt: new Date() } });
   await call("/auth/login", "POST", undefined,
     { email: registeredTravelerEmail, password, tenantCode: tenant.code, portal: "customer" });
   const registeredProviderEmail = `registered-provider-${stamp}@test.safry.local`;
@@ -201,6 +206,7 @@ async function main(): Promise<void> {
       organizationName: "فندق الاختبار", organizationNameEn: "Pending QA Hotel", type: "HOTEL", city: "Makkah", phone: "", licenseNumber: "" }, 201);
   const registeredProvider = await prisma.user.findUniqueOrThrow({ where: { emailNormalized: registeredProviderEmail } });
   userIds.push(registeredProvider.id);
+  await prisma.user.update({ where: { id: registeredProvider.id }, data: { emailVerifiedAt: new Date() } });
   const registeredMembership = await prisma.tenantMembership.findFirstOrThrow({
     where: { userId: registeredProvider.id, tenantId: tenant.id }, include: { organization: true }
   });
@@ -488,7 +494,8 @@ async function main(): Promise<void> {
       email: `foreign-${stamp}@test.safry.local`,
       emailNormalized: `foreign-${stamp}@test.safry.local`,
       displayName: "Foreign",
-      passwordHash: await hash(password)
+      passwordHash: await hash(password),
+      emailVerifiedAt: new Date()
     }
   });
   userIds.push(foreignUser.id);

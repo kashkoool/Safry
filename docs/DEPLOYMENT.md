@@ -180,6 +180,7 @@ Operational consequences:
 | `TRUST_PROXY` | no | default `1`; see section 4 |
 | `CORS_ORIGINS` | no | empty = same-origin only; otherwise exact `https://` origins (credentials are allowed for exactly these); `*` is rejected |
 | `SWAGGER_ENABLED` | no | default `false` in production |
+| `RESEND_API_KEY`, `MAIL_FROM`, `APP_BASE_URL` | yes | transactional e-mail, see section 5a; `MAIL_TRANSPORT` is fixed to `resend` by compose |
 | `SITE_ADDRESS`, `HTTP_PORT`, `HTTPS_PORT`, `HTTP_BIND` | tls profile | public host name and published ports |
 | `BACKUP_INTERVAL_SECONDS`, `BACKUP_KEEP_DAYS` | backup profile | default daily, keep 14 days |
 | `SESSION_RETENTION_DAYS`, `AUDIT_RETENTION_DAYS` | maintenance profile | daily maintenance job (`backend/scripts/db/purge.sh`): creates audit partitions ahead, purges sessions 30 days after expiry (default), drops `audit_events` partitions older than 24 months (default; `AUDIT_RETENTION_DAYS` overrides, min 30) |
@@ -190,6 +191,62 @@ Secrets are injected at runtime from `.env` (or the host's secret manager export
 none are baked into images (`.env*` is in both `.dockerignore` files). `scripts/check-env.sh` checks
 completeness against `docker-compose.yml` and rejects placeholders, short/low-variety secrets, reused
 secrets, URL-unsafe database passwords, wildcard/`http` CORS origins and enabled Swagger.
+
+## 5a. Transactional email (Resend)
+
+Password reset, e-mail confirmation and the "your password was changed" notice are sent through [Resend](https://resend.com)
+over its HTTPS API (no SDK; the API image calls `https://api.resend.com/emails` with a bounded timeout). The behaviour of the
+flows (endpoints, tokens, verification rule) is in `backend/docs/auth-email-flows.md`.
+
+Settings (API container; compose already wires them, `scripts/check-env.sh` checks them):
+
+| Variable | Notes |
+|---|---|
+| `MAIL_TRANSPORT` | `resend` (compose sets it) or `console`. Production refuses `console` and refuses to start without a real key |
+| `RESEND_API_KEY` | secret, never defaulted, required when the transport is `resend`; placeholders rejected at boot |
+| `MAIL_FROM` | sender on the verified domain: `Safry <no-reply@mail.your-domain.tld>` |
+| `APP_BASE_URL` | public `https` origin of the web app, no path; links look like `${APP_BASE_URL}/reset-password#token=...` |
+| `MAIL_TIMEOUT_MS`, `AUTH_MAIL_MIN_RESPONSE_MS` | optional: provider timeout (default 8000), fixed minimum answer time of the "send me a link" endpoints (default 300) |
+
+### One-time setup
+
+1. Create a Resend account and open **Domains > Add domain**. Use a sending subdomain such as `mail.your-domain.tld`, so the
+   records never touch the mailboxes of the root domain.
+2. Resend shows the DNS records to add. In Cloudflare (**DNS > Records**) create each exactly as shown, with the proxy **off
+   (grey cloud, "DNS only")**: mail records cannot be proxied. Typical set:
+   - **SPF**: a `TXT` record (and the `MX` Resend lists) on the `send.` subdomain Resend names, value `v=spf1 include:amazonses.com ~all`
+     (Resend sends through Amazon SES; copy what the dashboard shows, it is authoritative).
+   - **DKIM**: a `TXT` record `resend._domainkey.<your sending domain>` with the long `p=...` public key from the dashboard.
+   - **DMARC**: a `TXT` record `_dmarc.<your domain>`. Start with `v=DMARC1; p=none; rua=mailto:dmarc@your-domain.tld`, read the
+     aggregate reports for two to four weeks, then tighten to `p=quarantine` and later `p=reject`.
+3. Click **Verify DNS records** in Resend and wait until the domain shows *Verified* (usually minutes, up to a day).
+4. **API Keys > Create API key**: permission *Sending access*, restricted to that one domain. Copy the key once.
+5. Put it where the API reads it: the compose `.env` on the host (`RESEND_API_KEY=...`, file mode 600, never committed), or the
+   secret manager of the host. With the Azure layout in `INFRASTRUCTURE.md` it belongs in **Key Vault** with an App Service
+   Key Vault reference (managed identity, "get secret" only). Never put it in git, CI variables, images or chat. Rotate it by
+   creating a new key, deploying, then deleting the old one in Resend.
+6. Set `MAIL_FROM` and `APP_BASE_URL`, run `scripts/check-env.sh .env`, deploy.
+
+### Testing without a mail account
+
+Development and tests use `MAIL_TRANSPORT=console` (the default outside production). Nothing leaves the machine: the API logs
+the recipient, the subject and the link, for example `MailConsole to=user@example.test subject="Reset your Safry password" link=http://localhost:3001/reset-password#token=...`.
+That log line contains a credential, which is why production refuses the transport. After setting up Resend, send yourself a
+reset request from the real site and confirm it arrives in the inbox (not spam) and that the link opens the reset page.
+
+### Deliverability checklist
+
+- [ ] Domain shows *Verified* in Resend; SPF, DKIM and DMARC records exist and are DNS only in Cloudflare.
+- [ ] Sender (`MAIL_FROM`) uses that exact domain; `no-reply@` is fine because replies are not expected.
+- [ ] DMARC starts at `p=none` with a `rua` mailbox you read; tighten after the reports are clean.
+- [ ] Send a test to Gmail and Outlook and open "Show original": `SPF: PASS`, `DKIM: PASS`, `DMARC: PASS`.
+- [ ] The messages are plain text plus simple HTML, no remote images, no tracking pixels or rewritten links (as shipped).
+- [ ] Watch Resend's bounce and complaint rates; stop and investigate above about 4% bounces or 0.08% complaints.
+- [ ] The API log shows no `not delivered` lines (they carry the HTTP status of the provider, never the recipient or the body).
+- [ ] The API key is the restricted, single-domain kind and is stored only in the secret store.
+
+Delivery is fire-and-forget after the HTTP answer (so provider latency cannot reveal whether an address has an account). A
+provider outage therefore loses that message; the user simply asks again (the per-account limit allows one link a minute).
 
 ## 6. Backups and restore
 
