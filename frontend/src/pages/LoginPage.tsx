@@ -150,12 +150,12 @@ export function LoginPage({ portal }: { portal: Portal }) {
           <Link className="auth-forgot-link" to="/forgot-password">{pick("نسيت كلمة المرور؟", "Forgot password?")}</Link>
           <label><span>{pick("رمز الجهة", "Workspace code")}</span><div className="auth-input"><KeyRound size={18} /><input type="text" dir="ltr" value={form.tenantCode} onChange={event => setForm({ ...form, tenantCode: event.target.value.toLowerCase() })} autoComplete="organization" required /></div><small className="auth-field-hint">{pick("اترك الرمز safry ما لم تزودك جهتك برمز آخر.", "Keep safry unless your organization provided another code.")}</small></label>
           {error && <p className="auth-error" role="alert">{tr(error)}</p>}
-          {refused && <div className="credential-resend-panel">
+          <button className="auth-submit" type="submit" disabled={submitting || throttle.remaining > 0}>{submitting ? pick("جاري تسجيل الدخول…", "Signing in…") : wait || pick("تسجيل الدخول", "Sign in")}<ArrowLeft size={19} className="auth-directional" /></button>
+        </form>}
+        {!challenge && refused && <div className="credential-resend-panel">
             <p className="credential-resend-hint">{pick("إن كان حسابك جديداً، فقد تحتاج إلى تأكيد بريدك الإلكتروني أولاً.", "If your account is new, you may need to confirm your email address first.")}</p>
             {showResend ? <ResendVerification initialEmail={form.email} /> : <button className="auth-link-button" type="button" onClick={() => setShowResend(true)}>{pick("إعادة إرسال رسالة التأكيد", "Resend verification email")}</button>}
           </div>}
-          <button className="auth-submit" type="submit" disabled={submitting || throttle.remaining > 0}>{submitting ? pick("جاري تسجيل الدخول…", "Signing in…") : wait || pick("تسجيل الدخول", "Sign in")}<ArrowLeft size={19} className="auth-directional" /></button>
-        </form>}
         {portal !== "admin" && <p className="auth-switch-account">{pick("جديد على سفري؟", "New to Safry?")} <Link to={`/register/${portal}`}>{pick("إنشاء حساب", "Create an account")}</Link></p>}
         {portal === "provider" && <p className="auth-staff-note">{pick("موظف في شركة؟ اطلب بيانات حسابك من مدير منشأتك.", "Company employee? Ask your organization manager for your account details.")}</p>}
         {import.meta.env.DEV && <details className="auth-demo"><summary>{pick("حسابات التجربة المحلية", "Local demo accounts")}</summary><p>{pick("اختر حساباً لتعبئة بريده، ثم أدخل كلمة المرور التي عيّنتها عند تشغيل البذر المحلي.", "Choose an account to fill in its email, then enter the password you set when you ran the local seed.")}</p><div>{DEMOS.filter(demo => demo.portal === portal).map(demo => <button type="button" key={demo.email} className={form.email === demo.email ? "is-selected" : ""} onClick={() => { setForm({ email: demo.email, password: "", tenantCode: "safry" }); setError(""); }}>{pick(demo.label[0], demo.label[1])}</button>)}</div></details>}
