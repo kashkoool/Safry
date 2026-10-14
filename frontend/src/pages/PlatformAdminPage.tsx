@@ -32,7 +32,7 @@ import {
   type AdminRecord,
   type AdminReferences,
 } from "../lib/platform";
-import { CreateTenantDialog, TenantActivityDialog, TenantStatusDialog, UnlockLoginDialog } from "../components/platform/TenantTools";
+import { CreateTenantDialog, TenantActivityDialog, TenantStatusDialog, UnlockLoginDialog, AccountActionDialog } from "../components/platform/TenantTools";
 import type { PlatformTenant } from "../lib/platform";
 import { CURRENCY_EXPONENTS, formatMinorUnits } from "../lib/minor-units";
 import "./platform-admin.css";
@@ -107,6 +107,7 @@ export function PlatformAdminPage() {
   const [statusFor, setStatusFor] = useState<(AdminRecord & PlatformTenant) | null>(null);
   const [activityFor, setActivityFor] = useState<(AdminRecord & PlatformTenant) | null>(null);
   const [unlocking, setUnlocking] = useState(false);
+  const [accountAction, setAccountAction] = useState<{ kind: "unlock" | "resend"; email: string } | null>(null);
   const [confirmation, setConfirmation] = useState<{ account: AdminRecord; action: string } | null>(null);
   useEffect(() => {
     if (!user?.isPlatformAdmin || !section) return;
@@ -348,6 +349,12 @@ export function PlatformAdminPage() {
                                   : "نشطة"
                               : "مسجلة")}
                       </span>
+                      {section === "users" && item.lockedUntil && new Date(item.lockedUntil) > new Date() && (
+                        <span className="admin-state warning">{pick("محظور حتى", "Locked until")} {tr(time(item.lockedUntil))}</span>
+                      )}
+                      {section === "users" && item.email && item.emailVerifiedAt === null && (
+                        <span className="admin-state warning">{pick("البريد غير مؤكَّد", "Email not verified")}</span>
+                      )}
                       <small>{tr(time(item.occurredAt ?? item.createdAt))}</small>
                     </td>
                     <td data-label={pick("الإجراءات", "Actions")}>
@@ -364,6 +371,12 @@ export function PlatformAdminPage() {
                             <button disabled={Boolean(item.deletedAt)} onClick={() => setEditor(item)}>
                               {pick("تعديل", "Edit")}
                             </button>
+                            {item.email && item.lockedUntil && new Date(item.lockedUntil) > new Date() && (
+                              <button onClick={() => setAccountAction({ kind: "unlock", email: item.email! })}>{pick("رفع الحظر", "Unlock sign-in")}</button>
+                            )}
+                            {item.email && item.emailVerifiedAt === null && !item.deletedAt && (
+                              <button onClick={() => setAccountAction({ kind: "resend", email: item.email! })}>{pick("إعادة إرسال رسالة التأكيد", "Resend verification email")}</button>
+                            )}
                             {item.id !== user.userId && <details className="admin-action-menu" onKeyDown={(event) => {
                               if (event.key === "Escape") {
                                 event.currentTarget.open = false;
@@ -469,6 +482,7 @@ export function PlatformAdminPage() {
       {statusFor && <TenantStatusDialog tenant={statusFor} ownTenantId={user.tenantId} onClose={() => setStatusFor(null)} onSaved={() => { setStatusFor(null); saved(); }} />}
       {activityFor && <TenantActivityDialog tenant={activityFor} onClose={() => setActivityFor(null)} />}
       {unlocking && <UnlockLoginDialog onClose={() => setUnlocking(false)} onDone={(text) => { setUnlocking(false); setMessage(text); }} />}
+      {accountAction && <AccountActionDialog {...accountAction} onClose={() => setAccountAction(null)} onDone={(text) => { setAccountAction(null); setMessage(text); setTick((t) => t + 1); }} />}
       {detail && (
         <Modal title={tr("تفاصيل السجل")} onClose={() => setDetail(null)}>
           <p className="form-hint">{tr("بيانات السجل كما هي محفوظة، بدون كلمات مرور أو رموز دخول.")}</p>

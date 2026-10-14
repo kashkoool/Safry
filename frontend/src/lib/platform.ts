@@ -34,6 +34,8 @@ export interface AdminRecord {
   status?: string;
   isPlatformAdmin?: boolean;
   deletedAt?: string | null;
+  lockedUntil?: string | null;
+  emailVerifiedAt?: string | null;
   createdAt?: string;
   occurredAt?: string;
   action?: string;

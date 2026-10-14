@@ -4,6 +4,9 @@ import { AuditTable } from "../AuditTable";
 import { TenantSettingsFields } from "../TenantSettingsFields";
 import { useLanguage } from "../../i18n/useLanguage";
 import { useText } from "../../i18n/useText";
+import { credentials } from "../../lib/credentials";
+import { errorText } from "../../lib/errors";
+import { useRetryCountdown } from "../../lib/useRetryCountdown";
 import { platform, type PlatformTenant } from "../../lib/platform";
 import type { AuditEvent } from "../../lib/tenant-admin";
 import { formFromSettings, settingsPatch } from "../../lib/tenant-settings";
@@ -180,6 +183,54 @@ export function UnlockLoginDialog({ onClose, onDone }: { onClose: () => void; on
           <button className="primary-button" disabled={busy}>{busy ? pick("جاري التنفيذ…", "Working…") : pick("رفع الحظر", "Unlock")}</button>
         </div>
       </form>
+    </Dialog>
+  );
+}
+
+/** Per-account support action with a confirmation step: lift the sign-in block, or mail a new confirmation link. */
+export function AccountActionDialog({ kind, email, onClose, onDone }: { kind: "unlock" | "resend"; email: string; onClose: () => void; onDone: (text: string) => void }) {
+  const tr = useText();
+  const { pick } = useLanguage();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const countdown = useRetryCountdown();
+  const unlock = kind === "unlock";
+  async function confirm(): Promise<void> {
+    if (busy || countdown.remaining > 0) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (unlock) {
+        await platform.unlockLogin(email);
+        onDone(pick("تم رفع الحظر عن تسجيل دخول", "Sign-in unlocked for") + ` ${email}.`);
+      } else {
+        await credentials.resendVerification(email);
+        onDone(pick("إن كان التأكيد مطلوباً فقد أُرسل رابط جديد إلى", "If a confirmation was needed, a new link was sent to") + ` ${email}.`);
+      }
+    } catch (failure) {
+      countdown.note(failure);
+      setError(errorText(failure, pick, tr));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const action = unlock ? pick("رفع الحظر", "Unlock") : pick("إرسال الرابط", "Send link");
+  return (
+    <Dialog title={unlock ? pick("رفع حظر تسجيل الدخول", "Unlock sign-in") : pick("إعادة إرسال رسالة التأكيد", "Resend verification email")} onClose={onClose}>
+      <div className="ta-dialog">
+        <p className="ta-note">
+          {unlock
+            ? pick("سيتمكن صاحب الحساب من تسجيل الدخول فوراً. تُسجَّل العملية في سجل التدقيق.", "The account owner will be able to sign in again right away. The action is recorded in the audit trail.")
+            : pick("سيُرسل رابط تأكيد جديد إلى هذا البريد. لا تُعرض أي معلومات إضافية عن الحساب.", "A new confirmation link will be mailed to this address. No further account details are shown.")}
+        </p>
+        <p dir="ltr"><strong>{email}</strong></p>
+        <p role="status" aria-live="polite">{countdown.remaining > 0 ? pick(`يمكنك المحاولة بعد ${countdown.remaining} ث`, `Try again in ${countdown.remaining} s`) : ""}</p>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="form-actions">
+          <button type="button" className="ghost-button" onClick={onClose}>{pick("رجوع", "Cancel")}</button>
+          <button type="button" className="primary-button" disabled={busy || countdown.remaining > 0} onClick={() => void confirm()}>{busy ? pick("جاري التنفيذ…", "Working…") : action}</button>
+        </div>
+      </div>
     </Dialog>
   );
 }
