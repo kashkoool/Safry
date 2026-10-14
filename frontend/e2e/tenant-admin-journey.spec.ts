@@ -44,8 +44,8 @@ test("workspace administration against the real API", async ({ page }) => {
   await dialog.getByRole("button", { name: "Confirm" }).click();
   await expect(member.getByText("Suspended")).toBeVisible();
   await member.getByRole("button", { name: "History" }).click();
-  await expect(page.getByRole("dialog").getByText("Change member status")).toBeVisible();
-  await expect(page.getByRole("dialog").getByText("End-to-end check")).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("Change member status").first()).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("End-to-end check").first()).toBeVisible();
   await page.keyboard.press("Escape");
   await member.getByRole("button", { name: "Change status" }).click();
   await page.getByRole("dialog").getByLabel("New status").selectOption("ACTIVE");
@@ -81,7 +81,7 @@ test("workspace administration against the real API", async ({ page }) => {
   const tenantRow = page.getByRole("row", { name: new RegExp(`E2E workspace ${suffix}`) });
   await expect(tenantRow).toBeVisible();
   await tenantRow.getByRole("button", { name: "Activity" }).click();
-  await expect(page.getByRole("dialog").getByText("Create workspace")).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("Create workspace").first()).toBeVisible();
   await page.keyboard.press("Escape");
   await tenantRow.getByRole("button", { name: "Change status" }).click();
   dialog = page.getByRole("dialog");
