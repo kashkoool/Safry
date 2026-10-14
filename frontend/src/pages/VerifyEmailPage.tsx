@@ -6,7 +6,7 @@ import { useText } from "../i18n/useText";
 import { ApiError, getLoginPortal } from "../lib/api";
 import { credentials } from "../lib/credentials";
 import { errorText } from "../lib/errors";
-import { useCooldown } from "../lib/useCooldown";
+import { useRetryCountdown } from "../lib/useRetryCountdown";
 import { CredentialLayout } from "./credentials/CredentialLayout";
 import { FocusMessage } from "./credentials/FocusMessage";
 import { ResendVerification } from "./credentials/ResendVerification";
@@ -21,7 +21,7 @@ export function VerifyEmailPage() {
   const [phase, setPhase] = useState<Phase>(token ? "verifying" : "invalid");
   const [failure, setFailure] = useState("");
   const started = useRef(false);
-  const cooldown = useCooldown();
+  const cooldown = useRetryCountdown();
 
   async function verify(value: string) {
     setPhase("verifying"); setFailure("");

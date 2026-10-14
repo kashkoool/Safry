@@ -6,7 +6,7 @@ import { useText } from "../i18n/useText";
 import { ApiError, getLoginPortal } from "../lib/api";
 import { credentials, passwordStrength, PASSWORD_MAX, PASSWORD_MIN } from "../lib/credentials";
 import { errorText } from "../lib/errors";
-import { useCooldown } from "../lib/useCooldown";
+import { useRetryCountdown } from "../lib/useRetryCountdown";
 import { CredentialLayout } from "./credentials/CredentialLayout";
 import { FocusMessage } from "./credentials/FocusMessage";
 import { useFragmentToken } from "./credentials/useFragmentToken";
@@ -26,7 +26,7 @@ export function ResetPasswordPage() {
   const [error, setError] = useState("");
   const [phase, setPhase] = useState<Phase>(token ? "form" : "invalid");
   const inFlight = useRef(false);
-  const cooldown = useCooldown();
+  const cooldown = useRetryCountdown();
   const strength = passwordStrength(password);
   const mismatch = confirm.length > 0 && confirm !== password;
   const errorId = `${ids}-error`;

@@ -5,7 +5,7 @@ import { useLanguage } from "../i18n/useLanguage";
 import { useText } from "../i18n/useText";
 import { credentials } from "../lib/credentials";
 import { errorText } from "../lib/errors";
-import { useCooldown } from "../lib/useCooldown";
+import { useRetryCountdown } from "../lib/useRetryCountdown";
 import { CredentialLayout } from "./credentials/CredentialLayout";
 import { FocusMessage } from "./credentials/FocusMessage";
 import { RESEND_COOLDOWN_SECONDS } from "./credentials/ResendVerification";
@@ -18,7 +18,7 @@ export function ForgotPasswordPage() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
   const inFlight = useRef(false);
-  const cooldown = useCooldown();
+  const cooldown = useRetryCountdown();
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

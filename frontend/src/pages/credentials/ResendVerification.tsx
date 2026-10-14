@@ -4,7 +4,7 @@ import { useLanguage } from "../../i18n/useLanguage";
 import { useText } from "../../i18n/useText";
 import { credentials } from "../../lib/credentials";
 import { errorText } from "../../lib/errors";
-import { useCooldown } from "../../lib/useCooldown";
+import { useRetryCountdown } from "../../lib/useRetryCountdown";
 import { FocusMessage } from "./FocusMessage";
 import "./credentials.css";
 
@@ -24,7 +24,7 @@ export function ResendVerification({ initialEmail = "" }: { initialEmail?: strin
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
   const inFlight = useRef(false);
-  const cooldown = useCooldown();
+  const cooldown = useRetryCountdown();
   const errorId = `${fieldId}-error`;
 
   async function submit(event: FormEvent<HTMLFormElement>) {

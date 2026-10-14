@@ -34,13 +34,10 @@ test.describe("credential journeys on the real backend", () => {
   const password = generated();
   const newPassword = generated();
 
-  test.beforeAll(async () => {
-    test.skip(!LOG, "E2E_API_LOG is not set: the emailed link cannot be read (set it to the API log file; the API must use the console mail transport)");
-    const api = await pwRequest.newContext({ baseURL: apiURL });
-    // A malformed body is a 400 where the endpoint exists and a 404 where the backend predates it.
-    const probe = await api.post("/api/v1/auth/password/forgot", { headers: HEADERS, data: {} });
-    await api.dispose();
-    test.skip(probe.status() === 404, "this backend has no /auth/password/forgot yet (credential flows not deployed)");
+  test.beforeAll(() => {
+    // CI must exercise these for real: a missing log path there is a setup error, not a reason to skip.
+    if (!LOG && process.env.CI) throw new Error("E2E_API_LOG must point at the API log file (see .github/workflows/ci.yml)");
+    test.skip(!LOG, "E2E_API_LOG is not set: the emailed link cannot be read (point it at the API log; the API must use MAIL_TRANSPORT=console)");
   });
   test.beforeEach(async ({ page }) => { await useEnglish(page); });
 
