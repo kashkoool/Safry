@@ -43,3 +43,5 @@
 .account-check { display: flex; align-items: center; gap: var(--space-2); }
 .account-check input { inline-size: 20px; block-size: 20px; }
 @media (max-width: 520px) { .account-header { padding-inline: 16px; } .account-main .work-panel { padding: var(--space-4); } }
+.account-page .workspace-skip-link { position: fixed; inset-block-start: 8px; inset-inline-start: 8px; z-index: 100; padding: 12px 18px; border-radius: 10px; background: var(--accent); color: var(--surface-0); transform: translateY(-180%); }
+.account-page .workspace-skip-link:focus { transform: translateY(0); }
