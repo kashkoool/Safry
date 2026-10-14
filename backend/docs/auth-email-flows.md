@@ -55,6 +55,23 @@ proves the mailbox). Afterwards it lifts the sign-in lockout of the account and 
 - A platform administrator changing an account's address makes it unverified again and mails a link to the new address.
 - Registration of an identity that already exists (linking it to one more tenant after proof of its password) sends no mail
   when that identity is verified and says it can sign in immediately.
+- A failure to issue or hand over a link after registration or an address change never turns the committed change into an
+  error: it is logged (error class only) and the user asks for a new link through `/auth/email/resend`.
+
+## Known trade-offs
+
+- **Pre-registration.** Anyone can self-register an address they do not own, with a password of their choice. That account stays
+  unverified and cannot sign in. If the real owner later uses the confirmation link without resetting the password, the account
+  becomes verified with the registrant's password. Mitigations: the confirmation mail says to ignore it if the recipient did not
+  create an account, and a password reset replaces the password, voids other links and ends every session. Recipients who did not
+  register should ignore the mail or reset the password.
+- **Backfill migration.** `20261014_auth_backfill_email_verified` marks every existing user verified. Run it only on the initial
+  empty database, or after counting the unverified users (`SELECT count(*) FROM users WHERE "emailVerifiedAt" IS NULL`) and
+  deciding that none of them is an unproven self-registration; otherwise restrict the `UPDATE` to known accounts first.
+- **Per-account link cap.** One link a minute and five an hour per account bound mail volume, but a third party who knows an
+  address can use up the hourly allowance and delay a new link for that account for up to an hour (the most recent link keeps
+  working). This is accepted; the per-address limits (5 requests a minute per client address, 3 per e-mail and client address)
+  limit how fast one source can do it.
 
 ## Mail
 
