@@ -8,6 +8,7 @@ import {
 import { PrismaService } from "../../database/prisma.service.js";
 import { AccountLinkingService } from "../identity/users/account-linking.service.js";
 import { MfaService } from "../identity/auth/mfa.service.js";
+import { AccountSecurityService } from "../identity/auth/account-security.service.js";
 import { CredentialService } from "../identity/auth/credential.service.js";
 import type { AuthUser } from "../../common/security/auth-user.js";
 import type { Prisma } from "../../generated/prisma/client.js";
@@ -45,6 +46,7 @@ const accountSelect = {
   ...identity,
   phone: true,
   status: true,
+  emailVerifiedAt: true,
   isPlatformAdmin: true,
   deletedAt: true,
   createdAt: true,
@@ -62,7 +64,8 @@ export class PlatformService {
     private readonly prisma: PrismaService,
     private readonly linking: AccountLinkingService,
     private readonly mfa: MfaService,
-    private readonly credentials: CredentialService
+    private readonly credentials: CredentialService,
+    private readonly security: AccountSecurityService
   ) {}
   private overviewCache: { at: number; value: unknown } | undefined;
 
@@ -124,6 +127,8 @@ export class PlatformService {
           }),
           this.prisma.user.count({ where })
         ]);
+        const blocked = await this.security.blockedUntilByEmail((items as Array<{ email: string }>).map((row) => row.email));
+        items = (items as Array<{ email: string }>).map((row) => ({ ...row, lockedUntil: blocked.get(row.email) ?? null }));
         break;
       }
       case "services": {
