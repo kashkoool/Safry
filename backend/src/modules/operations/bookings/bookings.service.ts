@@ -45,13 +45,15 @@ export class BookingsService {
     });
     if (stale.length === 0) return;
     const ids = stale.map((row) => row.id);
-    const done = await tx.booking.updateMany({
-      where: { id: { in: ids }, tenantId: user.tenantId, status: "PENDING" },
-      data: { status: "CANCELLED" }
-    });
-    if (done.count > 0)
+    // Audit only the rows this transaction actually cancelled: a concurrent cancel or sweep may have taken some of them.
+    const cancelled: string[] = [];
+    for (const id of ids) {
+      const done = await tx.booking.updateMany({ where: { id, tenantId: user.tenantId, status: "PENDING" }, data: { status: "CANCELLED" } });
+      if (done.count > 0) cancelled.push(id);
+    }
+    if (cancelled.length > 0)
       await tx.auditEvent.createMany({
-        data: ids.map((entityId) => ({ tenantId: user.tenantId, actorUserId: user.userId, action: "booking.expire", entityType: "booking", entityId }))
+        data: cancelled.map((entityId) => ({ tenantId: user.tenantId, actorUserId: user.userId, action: "booking.expire", entityType: "booking", entityId }))
       });
   }
 
