@@ -222,6 +222,17 @@ export class AuthService {
     if (!allowed) throw new UnauthorizedException("هذا الحساب غير مخوّل لبوابة الدخول المحددة");
   }
 
+  /** Family id of the live (not rotated, revoked or expired) session this refresh token belongs to; null otherwise. */
+  liveSessionFamily(refreshToken: string): Promise<string | null> {
+    return runAsSystem(async () => {
+      const session = await this.prisma.refreshSession.findUnique({
+        where: { tokenHash: sha256(refreshToken) },
+        select: { familyId: true, revokedAt: true, expiresAt: true }
+      });
+      return session && !session.revokedAt && session.expiresAt > new Date() ? session.familyId : null;
+    });
+  }
+
   refresh(refreshToken: string, metadata: ClientMetadata): Promise<IssuedTokenPair> {
     return runAsSystem(() => this.rotate(refreshToken, metadata));
   }
