@@ -149,6 +149,17 @@ export class AccountSecurityService {
     return this.refundOne(tx, key);
   }
 
+  /** Active account-wide sign-in blocks for the given e-mails (platform admin view). Returns e-mail -> block end; unblocked e-mails are absent. */
+  async blockedUntilByEmail(emails: string[]): Promise<Map<string, Date>> {
+    const byKey = new Map(emails.map((email) => [this.keys("login", email, undefined).account, email]));
+    if (!byKey.size) return new Map();
+    const rows = await this.prisma.loginThrottle.findMany({
+      where: { key: { in: [...byKey.keys()] }, blockedUntil: { gt: new Date() } },
+      select: { key: true, blockedUntil: true }
+    });
+    return new Map(rows.map((row) => [byKey.get(row.key)!, row.blockedUntil!]));
+  }
+
   /**
    * Platform-admin unlock: lifts the account-wide block of the e-mail and audits who did it. Pair
    * blocks are keyed by address as well; they are short and expire on their own.

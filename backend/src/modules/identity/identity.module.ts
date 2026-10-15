@@ -38,6 +38,6 @@ import { UsersService } from "./users/users.service.js";
     AccessService,
     TenantsService
   ],
-  exports: [AccountLinkingService, MfaService, CredentialService]
+  exports: [AccountLinkingService, MfaService, CredentialService, AccountSecurityService]
 })
 export class IdentityModule {}
