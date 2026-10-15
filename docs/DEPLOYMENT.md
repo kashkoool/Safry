@@ -210,6 +210,9 @@ Settings (API container; compose already wires them, `scripts/check-env.sh` chec
 | `APP_BASE_URL` | public `https` origin of the web app, no path; links look like `${APP_BASE_URL}/reset-password#token=...` |
 | `MAIL_TIMEOUT_MS`, `AUTH_MAIL_MIN_RESPONSE_MS` | optional: provider timeout (default 8000), fixed minimum answer time of the "send me a link" endpoints (default 300) |
 | `MAIL_RETRY_ATTEMPTS`, `MAIL_RETRY_BASE_MS` | optional: total tries for transient mail failures (1-5, default 3) and base wait (default 2000 ms, then x5) |
+| `BOOKING_MAX_PENDING_PER_TRAVELER` | optional: open PENDING bookings one traveler may hold (1-1000, default 10); more answers 409 `BOOKING_PENDING_LIMIT` |
+| `BOOKING_MAX_DAYS_AHEAD` | optional: furthest bookable service date in days from today (1-1825, default 365); later answers 400 `BOOKING_DATE_TOO_FAR` |
+| `BOOKING_PENDING_TTL_HOURS` | optional: hours until an unconfirmed PENDING booking expires (1-720, default 48). Expiry is computed from `createdAt`: expired bookings free capacity at once, cannot be confirmed (409 `BOOKING_EXPIRED`), are listed as CANCELLED with `expired: true`, and are cancelled in the database lazily when touched; no scheduler needed |
 
 ### One-time setup
 

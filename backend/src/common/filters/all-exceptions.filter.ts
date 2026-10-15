@@ -70,9 +70,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
             ? "Internal server error"
             : "Request failed";
 
-    // Stable machine code (lower snake case) when the exception carries one, e.g. mfa_enrollment_required.
+    // Stable machine code (letters, digits, underscore) when the exception carries one, e.g. mfa_enrollment_required or BOOKING_EXPIRED.
     const rawCode = typeof exceptionBody === "object" && exceptionBody && "code" in exceptionBody ? exceptionBody.code : undefined;
-    const code = typeof rawCode === "string" && /^[a-z][a-z_]{0,63}$/.test(rawCode) ? rawCode : undefined;
+    const code = typeof rawCode === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(rawCode) ? rawCode : undefined;
     response.status(status).json({
       statusCode: status,
       message,

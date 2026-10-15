@@ -545,8 +545,8 @@ describe("authorization", () => {
       expect((await list("?limit=201")).status).toBe(400);
       expect((await list("?limit=0")).status).toBe(400);
       expect((await list("?offset=-1")).status).toBe(400);
-      expect((await list("?offset=100001")).status).toBe(400);
-      expect((await list("?offset=100000")).status).toBe(200);
+      expect((await list("?offset=1001")).status).toBe(400);
+      expect((await list("?offset=1000")).status).toBe(200);
       const first = (await list("?limit=3")).body as { id: string }[];
       const next = (await list("?limit=3&offset=3")).body as { id: string }[];
       expect(first.length + next.length).toBe(6);
