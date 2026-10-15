@@ -80,7 +80,7 @@ export class AccountSecurityService {
     const keys = this.keys(scope, email, ipAddress);
     const now = new Date();
     const result = await this.prisma.$transaction(async (tx) => {
-      await tx.loginThrottle.createMany({ data: [{ key: keys.account }, { key: keys.pair }], skipDuplicates: true });
+      await tx.loginThrottle.createMany({ data: [{ key: keys.account }, { key: keys.pair, accountKey: keys.account }], skipDuplicates: true });
       await tx.$queryRaw`SELECT "key" FROM "login_throttles" WHERE "key" IN (${keys.account}, ${keys.pair}) ORDER BY "key" FOR UPDATE`;
       const rows = await tx.loginThrottle.findMany({ where: { key: { in: [keys.account, keys.pair] } } });
       const account = rows.find((row) => row.key === keys.account)!;
@@ -107,7 +107,7 @@ export class AccountSecurityService {
       const delay = Math.min(60_000 * 2 ** (pairAttempts - this.maxAttempts), this.lockoutMs);
       await tx.loginThrottle.update({
         where: { key: keys.pair },
-        data: { failures: pairAttempts, blockedUntil: pairBlocks ? new Date(now.getTime() + delay) : null, updatedAt: now }
+        data: { failures: pairAttempts, blockedUntil: pairBlocks ? new Date(now.getTime() + delay) : null, accountKey: keys.account, updatedAt: now }
       });
       return { allowed: true, blocks: accountBlocks || pairBlocks };
     });
@@ -161,13 +161,13 @@ export class AccountSecurityService {
   }
 
   /**
-   * Platform-admin unlock: lifts the account-wide block of the e-mail and audits who did it. Pair
-   * blocks are keyed by address as well; they are short and expire on their own.
+   * Platform-admin unlock: lifts the account-wide block of the e-mail and the blocks of every (e-mail, address) pair of it,
+   * and audits who did it. Address trust is kept. Pair rows written before the account key existed expire on their own.
    */
   async unlock(email: string, actor?: { userId: string; tenantId: string }): Promise<number> {
     const account = this.keys("login", email, undefined).account;
     const { count } = await this.prisma.loginThrottle.updateMany({
-      where: { key: account },
+      where: { OR: [{ key: account }, { accountKey: account }] },
       data: { failures: 0, blockedUntil: null, windowStartedAt: new Date() }
     });
     if (actor)
