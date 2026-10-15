@@ -130,6 +130,9 @@ export class ProvidersService {
       }
     });
     if (!owned) throw new NotFoundException("المنشأة غير متاحة لهذا الحساب");
+    // Same rule as service creation and the organization workspace: a suspended organization is edited by the tenant, not by its own staff.
+    if (!user.roles.includes("tenant-admin") && owned.status !== "ACTIVE")
+      throw new ForbiddenException("المنشأة غير مفعلة؛ لا يمكن تعديل بياناتها قبل تفعيلها من إدارة الجهة");
     // The organization's legal identity is edited by its manager or the tenant, not by every staff member (GAP-AUTHZ-014).
     if (!user.roles.includes("tenant-admin") && !user.permissions.includes("organization.staff.manage"))
       throw new ForbiddenException("تعديل بيانات المنشأة متاح لمسؤولها فقط");
