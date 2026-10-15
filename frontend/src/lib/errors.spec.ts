@@ -3,7 +3,7 @@ import { ApiError } from "./api";
 import { errorText, retryAfterOf } from "./errors";
 
 const pick = (arabic: string, english: string) => `${arabic}|${english}`;
-const tr = (value: string) => `tr:${value}`;
+const tr = <T,>(value: T): T => (typeof value === "string" ? (`tr:${value}` as T) : value);
 
 describe("retryAfterOf", () => {
   it("uses the server's Retry-After for a 429 and 30 seconds when it sent none", () => {

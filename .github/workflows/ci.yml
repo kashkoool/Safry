@@ -116,6 +116,8 @@ jobs:
       # "build" runs "tsc -b" first, so this step is also the typecheck.
       - name: Typecheck and build
         run: pnpm build
+      - name: Unit tests
+        run: pnpm test:unit
       - name: i18n inventory
         run: pnpm check:i18n
       - name: Dependency audit (production)
