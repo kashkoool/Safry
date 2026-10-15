@@ -5,7 +5,7 @@ import type { Response } from "express";
 
 export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 200;
-export const MAX_PAGE_OFFSET = 100000;
+export const MAX_PAGE_OFFSET = 1000;
 
 /** Query parameters shared by every list endpoint: `?limit=` (1..200, default 100) and `?cursor=`. */
 export class PageQueryDto {
