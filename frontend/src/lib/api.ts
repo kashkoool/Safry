@@ -1,6 +1,8 @@
 import { cached, clearCache, invalidate } from "./cache";
 export interface AuthUser {
   isPlatformAdmin?: boolean;
+  /** Present on GET /auth/me; false means a platform administrator who must enrol two-factor first. */
+  mfaEnabled?: boolean;
   userId: string;
   tenantId: string;
   membershipId: string;
@@ -225,6 +227,8 @@ export function isMfaChallenge(result: LoginResult): result is MfaChallenge {
 
 interface ApiErrorBody {
   message?: string | string[];
+  /** Stable machine code, e.g. `mfa_enrollment_required`. */
+  code?: string;
   requestId?: string;
 }
 
@@ -233,11 +237,14 @@ export class ApiError extends Error {
   readonly status: number;
   /** Seconds the server asked the client to wait (`Retry-After` on a 429); undefined otherwise. */
   readonly retryAfter?: number;
-  constructor(status: number, message: string, retryAfter?: number) {
+  /** Stable lower-snake-case machine code from the API, when it sent one. */
+  readonly code?: string;
+  constructor(status: number, message: string, retryAfter?: number, code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.retryAfter = retryAfter;
+    this.code = code;
   }
 }
 
@@ -458,7 +465,7 @@ async function send(path: string, init: RequestInit, allowRefresh: boolean): Pro
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     const wait = response.status === 429 ? parseRetryAfter(response.headers.get("retry-after")) : undefined;
-    throw new ApiError(response.status, safeMessage(response.status, body), wait);
+    throw new ApiError(response.status, safeMessage(response.status, body), wait, typeof body.code === "string" && /^[a-z][a-z_]{0,63}$/.test(body.code) ? body.code : undefined);
   }
   return response;
 }

@@ -3,6 +3,7 @@ import { currentLocale } from "../i18n/locale";
 import { useLocalizedData } from "../i18n/useLocalizedData";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
+import { ApiError } from "../lib/api";
 import {
   Activity,
   Building2,
@@ -96,6 +97,7 @@ export function PlatformAdminPage() {
   const result = useLocalizedData(rawResult);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [message, setMessage] = useState("");
   const [tick, setTick] = useState(0);
   const [auto, setAuto] = useState(false);
@@ -129,7 +131,9 @@ export function PlatformAdminPage() {
         setUpdated(new Date().toISOString());
       })
       .catch((reason) => {
-        if (live && !(reason instanceof DOMException && reason.name === "AbortError")) setError(errorText(reason));
+        if (!live || (reason instanceof DOMException && reason.name === "AbortError")) return;
+        if (reason instanceof ApiError && reason.status === 403 && reason.code === "mfa_enrollment_required") setMfaRequired(true);
+        else setError(errorText(reason));
       })
       .finally(() => {
         if (live) setLoading(false);
@@ -146,6 +150,18 @@ export function PlatformAdminPage() {
   }, [auto]);
   if (!user?.isPlatformAdmin) return <Navigate to="/workspace/overview" replace />;
   if (!section) return <Navigate to="/admin/accounts-permissions" replace />;
+  if (mfaRequired)
+    return (
+      <main className="platform-admin">
+        <section className="work-panel" role="alert" aria-labelledby="mfa-required-title">
+          <h1 id="mfa-required-title">{pick("فعّل المصادقة الثنائية للمتابعة", "Turn on two-factor sign-in to continue")}</h1>
+          <p>{pick("حسابات مدير النظام تتطلب المصادقة الثنائية. فعّلها من إعدادات حسابك ثم عد إلى هذه الصفحة.", "Platform administrator accounts require two-factor sign-in. Turn it on in your account settings, then come back to this page.")}</p>
+          <p>
+            <Link className="primary-button" to="/account/security">{pick("تفعيل المصادقة الثنائية", "Set up two-factor sign-in")}</Link>
+          </p>
+        </section>
+      </main>
+    );
   function saved() {
     setTick((t) => t + 1);
     setMessage("تم الحفظ وتسجيل العملية في سجل التدقيق");
