@@ -9,6 +9,7 @@ interface Row {
   windowStartedAt: Date;
   blockedUntil: Date | null;
   trustedUntil: Date | null;
+  accountKey?: string;
   updatedAt: Date;
 }
 
@@ -16,10 +17,10 @@ interface Row {
 function setup(settings: Record<string, number> = {}): { service: AccountSecurityService; rows: Map<string, Row> } {
   const rows = new Map<string, Row>();
   const loginThrottle = {
-    createMany: ({ data }: { data: Array<{ key: string }> }): Promise<{ count: number }> => {
-      for (const { key } of data)
+    createMany: ({ data }: { data: Array<{ key: string; accountKey?: string }> }): Promise<{ count: number }> => {
+      for (const { key, accountKey } of data)
         if (!rows.has(key))
-          rows.set(key, { key, failures: 0, windowStartedAt: new Date(), blockedUntil: null, trustedUntil: null, updatedAt: new Date() });
+          rows.set(key, { key, ...(accountKey ? { accountKey } : {}), failures: 0, windowStartedAt: new Date(), blockedUntil: null, trustedUntil: null, updatedAt: new Date() });
       return Promise.resolve({ count: data.length });
     },
     findMany: ({ where }: { where: { key: { in: string[] } } }): Promise<Row[]> => Promise.resolve(where.key.in.map((key) => ({ ...rows.get(key)! }))),
@@ -28,14 +29,19 @@ function setup(settings: Record<string, number> = {}): { service: AccountSecurit
       Object.assign(rows.get(where.key)!, data);
       return Promise.resolve({});
     },
-    updateMany: ({ where, data }: { where: { key: string; failures?: { gt: number } }; data: Omit<Partial<Row>, "failures"> & { failures?: number | { decrement: number } } }): Promise<{ count: number }> => {
-      const row = rows.get(where.key);
-      if (!row || (where.failures && !(row.failures > where.failures.gt))) return Promise.resolve({ count: 0 });
+    updateMany: ({ where, data }: { where: { key?: string | { in: string[] }; OR?: Array<{ key?: string; accountKey?: string }>; failures?: { gt: number } }; data: Omit<Partial<Row>, "failures"> & { failures?: number | { decrement: number } } }): Promise<{ count: number }> => {
+      const matches = [...rows.values()].filter((row) =>
+        (where.key === undefined || (typeof where.key === "string" ? row.key === where.key : where.key.in.includes(row.key))) &&
+        (where.OR === undefined || where.OR.some((clause) => (clause.key !== undefined && row.key === clause.key) || (clause.accountKey !== undefined && row.accountKey === clause.accountKey))) &&
+        !(where.failures && !(row.failures > where.failures.gt))
+      );
       const { failures, ...rest } = data;
-      Object.assign(row, rest);
-      if (typeof failures === "number") row.failures = failures;
-      else if (failures) row.failures -= failures.decrement;
-      return Promise.resolve({ count: 1 });
+      for (const row of matches) {
+        Object.assign(row, rest);
+        if (typeof failures === "number") row.failures = failures;
+        else if (failures) row.failures -= failures.decrement;
+      }
+      return Promise.resolve({ count: matches.length });
     },
     deleteMany: (): Promise<{ count: number }> => Promise.resolve({ count: 0 })
   };
@@ -96,7 +102,8 @@ describe("AccountSecurityService throttle", () => {
     const { service } = setup({ LOGIN_MAX_ATTEMPTS: 3 });
     for (let ip = 1; ip <= 20; ip++) await service.begin("e@x.test", `198.51.100.${ip}`);
     expect((await service.begin("e@x.test", "203.0.113.9")).allowed).toBe(false);
-    expect(await service.unlock("E@x.test")).toBe(1);
+    // The account-wide row plus the 21 (e-mail, address) rows created above.
+    expect(await service.unlock("E@x.test")).toBe(22);
     expect((await service.begin("e@x.test", "203.0.113.9")).allowed).toBe(true);
   });
 });
