@@ -298,6 +298,9 @@ export class PlatformService {
         const old = await tx.user.findUnique({ where: { id } });
         if (!old) throw new NotFoundException();
         if (old.deletedAt) throw new ConflictException("استعد الحساب المحذوف أولاً");
+        // Platform administration is only ever held by an account with an enrolled second factor.
+        if (input.isPlatformAdmin === true && !old.isPlatformAdmin && old.mfaEnabledAt === null)
+          throw new ConflictException({ code: "target_mfa_required", message: "يجب على الحساب تفعيل المصادقة متعددة العوامل قبل منحه صلاحية مدير النظام" });
         if (id === actor.userId && input.isPlatformAdmin === false)
           throw new ConflictException("لا يمكنك إزالة صلاحية مدير النظام من حسابك الحالي");
         const email = input.email?.trim().toLowerCase();

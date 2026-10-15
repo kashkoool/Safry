@@ -33,6 +33,13 @@ describe("AllExceptionsFilter", () => {
     expect(JSON.stringify(body)).not.toContain("parser detail");
   });
 
+  it("passes a stable lower-snake-case code through and drops anything else", () => {
+    vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const ok = run(new ForbiddenException({ code: "mfa_enrollment_required", message: "m" })).body as { code?: string };
+    expect(ok.code).toBe("mfa_enrollment_required");
+    expect((run(new ForbiddenException({ code: "<script>", message: "m" })).body as { code?: string }).code).toBeUndefined();
+  });
+
   it("still answers 500 for an unknown error and for a non-client status", () => {
     vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
     expect(run(new Error("boom")).status).toBe(500);

@@ -71,7 +71,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       },
       include: {
         // Only what the principal needs: never load passwordHash or MFA secrets on the per-request path.
-        user: { select: { email: true, isPlatformAdmin: true, authVersion: true } },
+        user: { select: { email: true, isPlatformAdmin: true, authVersion: true, mfaEnabledAt: true } },
         roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } }
       }
     });
@@ -80,6 +80,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException("انتهت صلاحية الجلسة؛ سجل الدخول مجدداً");
     return {
       isPlatformAdmin: member.user.isPlatformAdmin,
+      mfaEnabled: member.user.mfaEnabledAt !== null,
       userId: payload.sub,
       tenantId: payload.tid,
       membershipId: payload.mid,

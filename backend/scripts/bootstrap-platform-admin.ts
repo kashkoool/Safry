@@ -11,6 +11,9 @@ try {
     const user = await tx.user.findUniqueOrThrow({ where: { emailNormalized: email } });
     if (user.status !== "ACTIVE" || user.deletedAt) throw new Error("Bootstrap administrator must be active");
     if (user.isPlatformAdmin) return;
+    // A platform administrator needs a second factor: enrol 2FA on the account first (the first admin created by
+    // `db:bootstrap` enrols after signing in and is not promoted by this script).
+    if (!user.mfaEnabledAt) throw new Error("Bootstrap administrator must have MFA enabled before promotion; sign in and enrol two-factor authentication first");
     await tx.user.update({ where: { id: user.id }, data: { isPlatformAdmin: true } });
     await tx.auditEvent.create({
       data: { actorUserId: user.id, action: "platform.admin.bootstrap", entityType: "user", entityId: user.id }

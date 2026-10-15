@@ -17,7 +17,7 @@ describe("JwtStrategy principal lookup", () => {
           return Promise.resolve({
             providerOrganizationId: null,
             permissionOverrides: null,
-            user: { email: "a@b.test", isPlatformAdmin: false, authVersion: 0 },
+            user: { email: "a@b.test", isPlatformAdmin: false, authVersion: 0, mfaEnabledAt: null },
             roles: []
           });
         })
@@ -32,6 +32,6 @@ describe("JwtStrategy principal lookup", () => {
     const user = membershipArgs[0]?.include.user as { select?: Record<string, boolean> } | true;
     expect(user).not.toBe(true);
     const selected = Object.keys((user as { select: Record<string, boolean> }).select);
-    expect(selected.sort()).toEqual(["authVersion", "email", "isPlatformAdmin"]);
+    expect(selected.sort()).toEqual(["authVersion", "email", "isPlatformAdmin", "mfaEnabledAt"]);
   });
 });

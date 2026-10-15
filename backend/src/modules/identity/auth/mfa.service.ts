@@ -1,8 +1,9 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { requestContext, runAsSystem } from "../../../common/context/request-context.js";
 import type { AuthUser } from "../../../common/security/auth-user.js";
+import { MFA_ENROLLMENT_REQUIRED } from "../../../common/security/platform-admin.guard.js";
 import { SecretBox } from "../../../common/security/secret-box.js";
 import { base32Encode, generateTotpSecret, otpauthUri, verifyTotp } from "../../../common/security/totp.js";
 import { PrismaService } from "../../../database/prisma.service.js";
@@ -168,12 +169,15 @@ export class MfaService {
 
   /**
    * Step-up for a privileged action: the current password, plus a fresh second-factor
-   * code when the account has MFA. Both are counted by the login throttle, so a stolen access token
+   * code when the account has MFA. A platform administrator always needs the code: with no MFA enrolled the step-up is refused
+   * (403 mfa_enrollment_required) instead of falling back to the password alone. Both are counted by the login throttle, so a stolen access token
    * alone can not perform the action and can not be used to guess the secrets.
    */
   async stepUp(user: AuthUser, password: string | undefined, code: string | undefined, ipAddress?: string): Promise<void> {
     if (!password) throw new UnauthorizedException("أكّد كلمة المرور لإتمام هذا الإجراء");
     const account = await this.account(user.userId);
+    if (account.isPlatformAdmin && account.mfaEnabledAt === null)
+      throw new ForbiddenException({ code: MFA_ENROLLMENT_REQUIRED, message: "فعّل المصادقة متعددة العوامل لحسابك لإتمام هذا الإجراء" });
     const needsSecondFactor = account.mfaEnabledAt !== null;
     await this.reauthenticate(account, password, user.tenantId, ipAddress, needsSecondFactor);
     if (needsSecondFactor) {
@@ -186,6 +190,7 @@ export class MfaService {
     const account = await this.account(user.userId);
     await this.reauthenticate(account, password, user.tenantId, ipAddress, true);
     if (!account.mfaEnabledAt) throw new ConflictException("المصادقة متعددة العوامل غير مفعّلة");
+    if (account.isPlatformAdmin) throw new ConflictException("لا يمكن إيقاف المصادقة متعددة العوامل لحساب مدير النظام");
     await this.requireSecondFactor(account, user.tenantId, code, ipAddress, "bad_mfa_code_on_disable");
     await this.prisma.user.update({
       where: { id: account.id },

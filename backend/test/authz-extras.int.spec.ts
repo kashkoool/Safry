@@ -109,15 +109,16 @@ describe("authorization extras", () => {
     it("refuses without the acting admin's password, and with a wrong one; accepts with the right one", async () => {
       const tenant = await world.createTenant("w2-grant");
       const admin = await world.createUser(tenant, { roles: ["tenant-admin"], isPlatformAdmin: true });
-      const target = await world.createUser(tenant, { roles: ["traveler"] });
+      const target = await world.enrollMfa(await world.createUser(tenant, { roles: ["traveler"] }));
       const session = await world.session(admin);
       const grant = (extra: object): Promise<{ status: number }> =>
         world.api("PATCH", `/platform/users/${target.userId}`, { session: auth(session), body: { isPlatformAdmin: true, ...extra } });
       const isAdmin = async (): Promise<boolean> => (await world.prisma.user.findUniqueOrThrow({ where: { id: target.userId } })).isPlatformAdmin;
       expect((await grant({})).status).toBe(401);
       expect((await grant({ currentPassword: "Wrong-Password-123" })).status).toBe(401);
+      expect((await grant({ currentPassword: admin.password })).status).toBe(401); // a platform admin never steps up on the password alone
       expect(await isAdmin()).toBe(false);
-      expect((await grant({ currentPassword: admin.password })).status).toBe(200);
+      expect((await grant({ currentPassword: admin.password, mfaCode: await world.mfaCode(admin) })).status).toBe(200);
       expect(await isAdmin()).toBe(true);
       // Survivors: ordinary edits and a re-save of an existing admin stay step-up free.
       const fresh = await world.session(admin);
@@ -125,14 +126,12 @@ describe("authorization extras", () => {
       expect(rename.status).toBe(200);
     });
 
-    it("also needs a current MFA code when the acting admin has MFA, and never leaks the secrets into the audit row", async () => {
+    it("needs a current MFA code (platform admins always have MFA), and never leaks the secrets into the audit row", async () => {
       const tenant = await world.createTenant("w2-grant-mfa");
       const admin = await world.createUser(tenant, { roles: ["tenant-admin"], isPlatformAdmin: true });
-      const target = await world.createUser(tenant, { roles: ["traveler"] });
+      const target = await world.enrollMfa(await world.createUser(tenant, { roles: ["traveler"] }));
       const first = await world.session(admin);
-      const setup = await world.api("POST", "/auth/mfa/setup", { session: auth(first), body: { password: admin.password } });
-      const secret = setup.body.secret as string;
-      expect((await world.api("POST", "/auth/mfa/enable", { session: auth(first), body: { code: hotp(secret, totpStep()) } })).status).toBe(200);
+      const secret = admin.mfaSecret as string;
       const grant = (extra: object): Promise<{ status: number }> =>
         world.api("PATCH", `/platform/users/${target.userId}`, { session: auth(first), body: { isPlatformAdmin: true, ...extra } });
       expect((await grant({ currentPassword: admin.password })).status).toBe(401);
@@ -153,7 +152,8 @@ describe("authorization extras", () => {
       const post = (payload: object): Promise<{ status: number }> => world.api("POST", "/platform/users", { session: auth(session), body: payload });
       expect((await post(body("tenant-admin"))).status).toBe(401);
       expect((await post(body("tenant-admin", { currentPassword: "Wrong-Password-123" }))).status).toBe(401);
-      expect((await post(body("tenant-admin", { currentPassword: admin.password }))).status).toBe(201);
+      expect((await post(body("tenant-admin", { currentPassword: admin.password }))).status).toBe(401); // password alone is never enough
+      expect((await post(body("tenant-admin", { currentPassword: admin.password, mfaCode: await world.mfaCode(admin) }))).status).toBe(201);
       expect((await post(body("traveler"))).status).toBe(201); // survivor: ordinary accounts stay step-up free
     });
 
@@ -171,7 +171,7 @@ describe("authorization extras", () => {
         (await world.prisma.membershipRole.findMany({ where: { membershipId: target.membershipId }, include: { role: true } })).map((r) => r.role.code).sort();
       expect((await patch(["tenant-admin"])).status).toBe(401);
       expect(await roles()).toEqual(["traveler"]);
-      expect((await patch(["tenant-admin"], { currentPassword: admin.password })).status).toBe(200);
+      expect((await patch(["tenant-admin"], { currentPassword: admin.password, mfaCode: await world.mfaCode(admin) })).status).toBe(200);
       expect(await roles()).toEqual(["tenant-admin"]);
       // survivors: keeping the admin role (re-save) and demoting need no step-up
       expect((await patch(["tenant-admin"])).status).toBe(200);
@@ -188,7 +188,7 @@ describe("authorization extras", () => {
         world.api("POST", `/platform/users/${id}/state`, { session: auth(session), body: { action: "SUSPENDED", reason: "test", ...extra } });
       expect((await state(otherAdmin.userId)).status).toBe(401);
       expect((await world.prisma.user.findUniqueOrThrow({ where: { id: otherAdmin.userId } })).status).toBe("ACTIVE");
-      expect((await state(otherAdmin.userId, { currentPassword: admin.password })).status).toBe(201);
+      expect((await state(otherAdmin.userId, { currentPassword: admin.password, mfaCode: await world.mfaCode(admin) })).status).toBe(201);
       expect((await state(ordinary.userId)).status).toBe(201);
     });
   });
