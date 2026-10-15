@@ -16,12 +16,14 @@ DRILL_JWT_SECRET="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 DRILL_CONTAINERS=()
 DRILL_IMAGES=()
 DRILL_WORK="$(mktemp -d)"
+command -v cygpath >/dev/null 2>&1 && DRILL_WORK="$(cygpath -m "$DRILL_WORK")"   # native tools (curl.exe, docker) need the Windows form
 
 log()  { printf '[drill] %s\n' "$*"; }
 fail() { printf '[drill] FAIL: %s\n' "$*" >&2; exit 1; }
 
 drill_cleanup() {
   local rc=$?
+  [ "${DRILL_KEEP:-0}" = 1 ] && { log "DRILL_KEEP=1: leaving containers/network ($DRILL_NET) in place"; return "$rc"; }
   local c
   for c in "${DRILL_CONTAINERS[@]:-}"; do [ -n "$c" ] && docker rm -fv "$c" >/dev/null 2>&1; done
   for c in "${DRILL_IMAGES[@]:-}"; do [ -n "$c" ] && docker rmi -f "$c" >/dev/null 2>&1; done
@@ -103,7 +105,7 @@ create_runtime_role() {
 # Wait for an HTTP 200 on a URL.
 wait_http() {
   local url="$1" tries="${2:-60}" i=0
-  until curl -fsS -o /dev/null "$url" 2>/dev/null; do
+  until [ "$(curl -s -o "$DRILL_WORK/probe" -w '%{http_code}' "$url" 2>/dev/null)" = 200 ]; do
     i=$((i + 1)); [ "$i" -lt "$tries" ] || return 1; sleep 2
   done
 }

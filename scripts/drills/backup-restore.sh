@@ -23,7 +23,7 @@
 # an encrypted/off-site copy, or restore time at production data volumes (see docs/DEPLOYMENT.md, "Recovery drills").
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
+ROOT="$(cd "$HERE/../.." && { pwd -W 2>/dev/null || pwd; })"   # Windows form under Git Bash so native git/docker accept it
 # shellcheck source=scripts/drills/lib.sh
 . "$HERE/lib.sh"
 
