@@ -1,5 +1,5 @@
 import { expect, test, request as pwRequest } from "@playwright/test";
-import { apiURL, expectSignedOut, expireAccessToken, refreshCookie, secret, signIn, TENANT, useEnglish } from "./helpers";
+import { apiURL, expectSignedOut, expireAccessToken, refreshCookie, secret, signIn, signInAdmin, TENANT, useEnglish } from "./helpers";
 import { totp } from "./totp";
 
 const DEMO = () => secret("E2E_DEMO_PASSWORD");
@@ -25,7 +25,8 @@ test.describe("login per portal", () => {
   ];
   for (const item of cases) {
     test(`${item.portal} portal signs in and reaches the workspace`, async ({ page }) => {
-      await signIn(page, item.portal, item.email, item.password());
+      if (item.portal === "admin") await signInAdmin(page); // platform administrators sign in with two-factor
+      else await signIn(page, item.portal, item.email, item.password());
       await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible({ timeout: 20_000 });
       await expect(page).not.toHaveURL(/\/login\//);
     });

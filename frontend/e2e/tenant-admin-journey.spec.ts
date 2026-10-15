@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { secret, signIn, useEnglish } from "./helpers";
+import { signInAdmin, useEnglish } from "./helpers";
 
 // Real backend: the seeded administrator (tenant administrator and platform administrator of the demo workspace).
 // Every change is undone (role deleted, member re-activated, name restored); the created workspace is archived.
@@ -9,7 +9,7 @@ test.describe.configure({ mode: "serial" });
 test("workspace administration against the real API", async ({ page }) => {
   await useEnglish(page);
   const suffix = randomBytes(4).toString("hex");
-  await signIn(page, "admin", "admin@safry.local", secret("E2E_ADMIN_PASSWORD"));
+  await signInAdmin(page);
   await expect(page).toHaveURL(/\/admin\//);
   await page.goto("/workspace/overview");
 
