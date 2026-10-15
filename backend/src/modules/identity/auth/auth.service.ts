@@ -199,7 +199,7 @@ export class AuthService {
   private assertPortal(
     portal: Portal | undefined,
     user: { isPlatformAdmin: boolean },
-    membership: { providerOrganizationId: string | null; roles: Array<{ role: { code: string } }> }
+    membership: { providerOrganizationId: string | null; roles: Array<{ role: { code: string; isSystem: boolean } }> }
   ): void {
     if (!portal) {
       // Opt-in server-side enforcement: deployments that serve one portal can refuse portal-less logins.
@@ -217,7 +217,8 @@ export class AuthService {
           : !user.isPlatformAdmin &&
             !membership.providerOrganizationId &&
             !roleCodes.includes("tenant-admin") &&
-            roleCodes.includes("traveler");
+            // Travelers, and members whose roles are all tenant-defined (their pages are filtered by permission).
+            (roleCodes.includes("traveler") || (membership.roles.length > 0 && membership.roles.every(({ role }) => !role.isSystem)));
     if (!allowed) throw new UnauthorizedException("هذا الحساب غير مخوّل لبوابة الدخول المحددة");
   }
 
