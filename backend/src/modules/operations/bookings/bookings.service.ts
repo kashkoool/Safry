@@ -68,17 +68,35 @@ export class BookingsService {
     });
   }
 
+  /**
+   * What a member may see and act on, decided by permission (never by role name): the whole tenant for a tenant
+   * administrator, the bookings of the organization's services for staff holding booking.manage, and otherwise only
+   * the member's own bookings. The routes themselves are guarded by booking.read.
+   */
   private bookingScope(user: AuthUser): Prisma.BookingWhereInput {
     if (admin(user)) return { tenantId: user.tenantId };
-    if (operator(user))
+    if (this.manages(user))
       return {
         tenantId: user.tenantId,
         service: { organization: { members: { some: { id: user.membershipId } } } }
       };
-    if (user.roles.includes("traveler"))
-      return { tenantId: user.tenantId, travelerMembershipId: user.membershipId };
-    throw new ForbiddenException();
+    return this.ownScope(user);
   }
+
+  private ownScope(user: AuthUser): Prisma.BookingWhereInput {
+    return { tenantId: user.tenantId, travelerMembershipId: user.membershipId };
+  }
+
+  /** Organization staff who may manage the bookings of their organization's services. */
+  private manages(user: AuthUser): boolean {
+    return operator(user) && user.permissions.includes("booking.manage");
+  }
+
+  /** Booking for oneself needs booking.create; a tenant administrator only books when also a traveler. */
+  private canBookForSelf(user: AuthUser): boolean {
+    return user.permissions.includes("booking.create") && (!admin(user) || user.roles.includes("traveler"));
+  }
+
   /** Newest first, keyset-paged (see common/pagination.ts): `?limit=` and `?cursor=`, next cursor in `X-Next-Cursor`. */
   async listBookings(user: AuthUser, page: PageQueryDto, response: Response): Promise<unknown> {
     const rows = await this.prisma.booking.findMany({ ...keysetPage(page, this.bookingScope(user)), include: bookingInclude });
@@ -108,7 +126,7 @@ export class BookingsService {
   }
 
   async createBooking(user: AuthUser, input: CreateBookingDto, idempotencyKey?: string): Promise<unknown> {
-    if (!user.roles.includes("traveler")) throw new ForbiddenException("إنشاء الحجز متاح للمسافر");
+    if (!this.canBookForSelf(user)) throw new ForbiddenException("إنشاء الحجز متاح للمسافر");
     if (idempotencyKey !== undefined && !/^[A-Za-z0-9_-]{8,64}$/.test(idempotencyKey))
       throw new BadRequestException("Idempotency-Key must be 8-64 letters, digits, - or _");
     return this.prisma.$transaction(async (tx) => {
@@ -178,10 +196,12 @@ export class BookingsService {
   }
 
   async updateBooking(user: AuthUser, id: string, input: UpdateBookingDto): Promise<unknown> {
-    if (!admin(user) && !user.roles.includes("traveler"))
+    if (!admin(user) && !user.permissions.includes("booking.create"))
       throw new ForbiddenException("تعديل تفاصيل الحجز متاح للمسافر والمدير");
+    // Only a tenant administrator edits other people's bookings; everyone else edits their own.
+    const scope = admin(user) ? this.bookingScope(user) : this.ownScope(user);
     const result = await this.prisma.$transaction(async (tx) => {
-      const first = await tx.booking.findFirst({ where: { id, ...this.bookingScope(user) } });
+      const first = await tx.booking.findFirst({ where: { id, ...scope } });
       if (!first) throw new NotFoundException("الحجز غير موجود");
       const service = await this.lockService(tx, user, first.serviceId);
       const booking = await tx.booking.findUniqueOrThrow({ where: { id, tenantId: user.tenantId } });
@@ -227,10 +247,10 @@ export class BookingsService {
   }
 
   async updateBookingStatus(user: AuthUser, id: string, status: "CONFIRMED" | "CANCELLED"): Promise<unknown> {
-    const permission = admin(user) || operator(user) ? "booking.manage" : "booking.create";
-    if (!user.permissions.includes(permission))
+    const manager = admin(user) || this.manages(user);
+    if (!user.permissions.includes(manager ? "booking.manage" : "booking.create"))
       throw new ForbiddenException("صلاحية تغيير حالة الحجز غير متاحة لهذا الحساب");
-    if (status === "CONFIRMED" && !admin(user) && !operator(user))
+    if (status === "CONFIRMED" && !manager)
       throw new ForbiddenException("تأكيد الحجز متاح للمنشأة والمدير فقط");
     const result = await this.prisma.$transaction(async (tx) => {
       const first = await tx.booking.findFirst({ where: { id, ...this.bookingScope(user) } });

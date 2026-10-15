@@ -323,6 +323,17 @@ export class World {
     return { userId, membershipId: membership.id, email, password, tenant, organizationId: options.organizationId };
   }
 
+  /** Creates a tenant-level custom role holding exactly the given permission codes and gives it to a membership. */
+  async grantCustomRole(tenant: TestTenant, membershipId: string, permissionCodes: string[], organizationId?: string): Promise<string> {
+    const role = await this.prisma.role.create({
+      data: { tenantId: tenant.id, code: this.unique("custom"), name: "Custom", isSystem: false, ...(organizationId ? { organizationId } : {}) }
+    });
+    const permissions = await this.prisma.permission.findMany({ where: { code: { in: permissionCodes } } });
+    await this.prisma.rolePermission.createMany({ data: permissions.map((permission) => ({ roleId: role.id, permissionId: permission.id })) });
+    await this.prisma.membershipRole.create({ data: { tenantId: tenant.id, membershipId, roleId: role.id } });
+    return role.id;
+  }
+
   async createService(
     tenant: TestTenant,
     owner: TestUser,
