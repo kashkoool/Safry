@@ -176,6 +176,8 @@ export interface Booking {
   endDate: string | null;
   currency: SupportedCurrency;
   status: BookingStatus;
+  /** Set by the API when an unconfirmed pending booking timed out; it is reported as CANCELLED. */
+  expired?: boolean;
   notes?: string;
   createdAt: string;
   service: TravelService;

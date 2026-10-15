@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException
@@ -15,14 +16,18 @@ import type { CreateServiceDto } from "./dto/create-service.dto.js";
 import type { UpdateServiceDto } from "./dto/update-service.dto.js";
 import { assertCategory, validateDetails } from "./catalog.js";
 import { serviceInclude } from "./service-select.js";
-import { assertCapacity } from "../operations/bookings/booking-rules.js";
+import { ConfigService } from "@nestjs/config";
+import { bookingLimits, pendingCutoff, type BookingLimits } from "../operations/bookings/booking-limits.js";
 
 const operator = isOperator;
 const admin = isTenantAdmin;
 
 @Injectable()
 export class CatalogService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly bookingLimits: BookingLimits;
+  constructor(private readonly prisma: PrismaService, config: ConfigService) {
+    this.bookingLimits = bookingLimits(config);
+  }
 
   /** Newest first, keyset-paged (see common/pagination.ts): `?limit=` and `?cursor=`, next cursor in `X-Next-Cursor`. */
   async listServices(user: AuthUser, page: PageQueryDto, response: Response, marketplace = false): Promise<unknown> {
@@ -153,11 +158,19 @@ export class CatalogService {
       const details =
         input.details === undefined ? service.details : validateDetails(service.category, input.details);
       if (input.capacity !== undefined) {
-        const active = await tx.booking.findMany({ where: { serviceId: id, status: { not: "CANCELLED" } } });
-        const dates = active.map((item) => item.serviceDate);
-        dates.push(new Date(new Date().toISOString().slice(0, 10)));
-        for (const date of dates)
-          assertCapacity(input.capacity, active, { units: 0, serviceDate: date, endDate: null });
+        // One aggregate in SQL: the highest number of units booked on any upcoming day (peaks start on a booking's first day or today).
+        const cutoff = pendingCutoff(this.bookingLimits);
+        const [peak] = await tx.$queryRaw<Array<{ peak: number }>>`
+          WITH act AS (
+            SELECT "units", "serviceDate" AS s, COALESCE("endDate", "serviceDate" + 1) AS e FROM "bookings"
+            WHERE "serviceId" = ${id}::uuid AND "status" <> 'CANCELLED'
+              AND NOT ("status" = 'PENDING' AND "createdAt" < ${cutoff}::timestamptz)
+              AND COALESCE("endDate", "serviceDate" + 1) > CURRENT_DATE
+          ), pts AS (SELECT GREATEST(s, CURRENT_DATE) AS d FROM act UNION SELECT CURRENT_DATE)
+          SELECT COALESCE(MAX(t), 0)::int AS peak FROM (
+            SELECT SUM(act.units) AS t FROM pts JOIN act ON act.s <= pts.d AND pts.d < act.e GROUP BY pts.d
+          ) x`;
+        if ((peak?.peak ?? 0) > input.capacity) throw new ConflictException("السعة المتاحة لا تكفي في الموعد المحدد");
       }
       if (input.componentIds !== undefined)
         await this.components(tx, user, service.category, input.componentIds, id);

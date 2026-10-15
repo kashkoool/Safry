@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { MAX_MINOR_UNITS } from "../../../common/money/money.js";
 import type { ServiceCategory } from "../../../generated/prisma/enums.js";
+import { DEFAULT_BOOKING_LIMITS, dateTooFarError } from "./booking-limits.js";
 
 const day = 86400000;
 /**
@@ -15,7 +16,8 @@ export function bookingTerms(
   details: Record<string, string>,
   priceCents: bigint,
   input: { travelersCount: number; units?: number; serviceDate: string; endDate?: string },
-  today = new Date().toISOString().slice(0, 10)
+  today = new Date().toISOString().slice(0, 10),
+  maxDaysAhead = DEFAULT_BOOKING_LIMITS.maxDaysAhead
 ): { units: number; nights: number; serviceDate: Date; endDate: Date | null; totalCents: bigint } {
   const { serviceDate, endDate } = input;
   if (
@@ -25,6 +27,7 @@ export function bookingTerms(
     serviceDate < today
   )
     throw new BadRequestException("اختر تاريخاً صحيحاً من اليوم فصاعداً");
+  if (Date.parse(serviceDate) > Date.parse(today) + maxDaysAhead * day) throw dateTooFarError();
   if (category === "FLIGHT" && details.departureDate && details.departureDate !== serviceDate)
     throw new BadRequestException("تاريخ الحجز يجب أن يطابق موعد رحلة الطيران");
   if (!Number.isInteger(input.travelersCount) || input.travelersCount < 1 || input.travelersCount > MAX_TRAVELERS)
