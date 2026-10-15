@@ -39,6 +39,16 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
+      # Shared rate-limit store for the throttle specs that need a live Redis (they are skipped without TEST_REDIS_URL).
+      redis:
+        image: redis:7.4.6-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     defaults:
       run:
         working-directory: backend
@@ -72,6 +82,7 @@ jobs:
       - name: Unit, integration and route-coverage gate
         env:
           TEST_DATABASE_URL: postgresql://postgres:ci-test-only@localhost:5432/postgres
+          TEST_REDIS_URL: redis://localhost:6379
         run: pnpm test:int:all
       # The same integration suite again with the application connected as the restricted production login
       # (NOBYPASSRLS, member of safry_app), as a superuser login hides every defect that needs row-level security.
@@ -79,6 +90,7 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql://postgres:ci-test-only@localhost:5432/postgres
           TEST_APP_AS_RUNTIME: "1"
+          TEST_REDIS_URL: redis://localhost:6379
         run: pnpm exec vitest run -c vitest.int.config.ts
       # Blocking: production dependencies must stay clean except the advisories listed, with a reason and a
       # review date, in backend/audit-allowlist.json (the unreachable Prisma-peer chain). A new advisory, an expired entry

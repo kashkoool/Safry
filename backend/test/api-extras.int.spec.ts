@@ -272,7 +272,7 @@ describe("api extras", () => {
         expect(reply.status, t).toBe(400);
       }
       expect((await list(sessionA, "/services", `?cursor=${encodeURIComponent(forge({ t: "2026-10-10T00:00:00.000Z", id }))}`)).status).toBe(200);
-      for (const name of ["a b", "x".repeat(201)]) {
+      for (const name of ["a\u0000b", "x".repeat(201)]) {
         const reply = await list(adminA, "/providers", `?cursor=${encodeURIComponent(forge({ name, id }))}`);
         expect(reply.status, name.slice(0, 5)).toBe(400);
       }
