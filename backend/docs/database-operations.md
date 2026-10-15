@@ -186,6 +186,12 @@ transaction pooling is compatible. Keep `DATABASE_MIGRATE_URL` pointing at Postg
 renames a role and never touches an existing administrator. An existing account with `BOOTSTRAP_ADMIN_EMAIL` is refused unless it
 is already an ACTIVE platform administrator; to make an existing ordinary account the first tenant administrator you must set
 `BOOTSTRAP_ADOPT_EXISTING_ACCOUNT=true` after verifying who owns that address. A disabled, suspended or deleted account is always refused.
+Platform administrators must hold an enrolled second factor. `db:bootstrap` creates the first administrator with a password only,
+so that nobody is locked out: that account signs in, and until it enrols two-factor authentication (Account, Security) every platform
+route answers `403 mfa_enrollment_required`; only the `/auth/mfa/*` enrolment endpoints, `/auth/me` and sign-out work. After
+enrolment the same session is accepted at once. `admin:bootstrap` (promote an existing account) refuses an account that has no
+two-factor authentication yet. A platform administrator cannot turn their own two-factor off, and platform administration can only
+be granted to an account that has already enrolled.
 New permission codes added in a later release are added to the catalogue, but NOT to roles that already exist (grant them in the product or by migration).
 
 ## Migrations that remove things

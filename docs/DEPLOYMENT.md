@@ -56,6 +56,8 @@ docker compose --profile ops run --rm   -e BOOTSTRAP_ADMIN_EMAIL=admin@example.c
 
 Existing accounts are never modified. Do not use the demo seed on a real deployment.
 
+The first administrator is created with a password only. Sign in once and enrol two-factor authentication (Account, Security): until then every platform route answers `403 mfa_enrollment_required` and only the enrolment endpoints, `/auth/me` and sign-out work. Keep the recovery codes; a platform administrator cannot disable their own two-factor, and platform administration can only be granted to an account that already has it.
+
 Local demo only (creates known demo accounts):
 
 ```sh

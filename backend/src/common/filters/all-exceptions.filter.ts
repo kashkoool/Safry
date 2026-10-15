@@ -70,10 +70,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
             ? "Internal server error"
             : "Request failed";
 
-    const code =
-      typeof exceptionBody === "object" && exceptionBody && "code" in exceptionBody && typeof exceptionBody.code === "string"
-        ? exceptionBody.code
-        : undefined;
+    // Stable machine code (letters, digits, underscore) when the exception carries one, e.g. mfa_enrollment_required or BOOKING_EXPIRED.
+    const rawCode = typeof exceptionBody === "object" && exceptionBody && "code" in exceptionBody ? exceptionBody.code : undefined;
+    const code = typeof rawCode === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(rawCode) ? rawCode : undefined;
     response.status(status).json({
       statusCode: status,
       message,

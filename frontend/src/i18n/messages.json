@@ -493,5 +493,9 @@
   "تم تغيير كلمة مرور حسابك - سفري": "Your password was changed - Safry",
   "تم تغيير كلمة المرور": "Your password was changed",
   "تم تغيير كلمة مرور حسابك وإنهاء جميع الجلسات المفتوحة.": "Your account password was changed and all open sessions were ended.",
-  "إذا لم تكن أنت من فعل ذلك، فاطلب إعادة تعيين كلمة المرور فوراً وتواصل مع الدعم.": "If this was not you, request a password reset immediately and contact support."
+  "إذا لم تكن أنت من فعل ذلك، فاطلب إعادة تعيين كلمة المرور فوراً وتواصل مع الدعم.": "If this was not you, request a password reset immediately and contact support.",
+  "فعّل المصادقة متعددة العوامل لحسابك قبل استخدام واجهات مدير النظام": "Turn on multi-factor authentication for your account before using the platform administrator pages",
+  "فعّل المصادقة متعددة العوامل لحسابك لإتمام هذا الإجراء": "Turn on multi-factor authentication for your account to complete this action",
+  "لا يمكن إيقاف المصادقة متعددة العوامل لحساب مدير النظام": "Multi-factor authentication cannot be turned off for a platform administrator account",
+  "يجب على الحساب تفعيل المصادقة متعددة العوامل قبل منحه صلاحية مدير النظام": "The account must turn on multi-factor authentication before it can be made a platform administrator"
 }

@@ -7,6 +7,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { hash } from "argon2";
 import pg from "pg";
 import { inject } from "vitest";
+import { hotp, totpStep } from "../../dist/common/security/totp.js";
 import { PrismaClient } from "../../dist/generated/prisma/client.js";
 import { PERMISSIONS, ROLE_PERMISSIONS, SYSTEM_ROLES, type SystemRoleCode } from "../../dist/modules/identity/access/system-roles.js";
 
@@ -26,6 +27,8 @@ export interface TestUser {
   password: string;
   tenant: TestTenant;
   organizationId?: string;
+  /** TOTP secret once the fixture has enrolled MFA (platform administrators are enrolled by createUser). */
+  mfaSecret?: string;
 }
 
 export interface Session {
@@ -216,8 +219,33 @@ export class World {
     });
   }
 
+  /** A currently valid TOTP code for an enrolled fixture user; clears the replay guard so tests can ask for as many as they need. */
+  async mfaCode(user: TestUser): Promise<string> {
+    if (!user.mfaSecret) throw new Error("fixture user has no MFA secret");
+    await this.prisma.user.update({ where: { id: user.userId }, data: { mfaLastStep: null } });
+    return hotp(user.mfaSecret, totpStep());
+  }
+
+  /** Enrols MFA through the public endpoints (password-only session) and stores the secret on the fixture. */
+  async enrollMfa(user: TestUser): Promise<TestUser> {
+    const login = await this.login(user);
+    if (login.status !== 200 || !login.body.accessToken) throw new Error(`login failed: ${login.status}`);
+    const session = { accessToken: login.body.accessToken as string, tenantId: user.tenant.id };
+    const setup = await this.api("POST", "/auth/mfa/setup", { session, body: { password: user.password } });
+    const secret = setup.body.secret as string;
+    const enabled = await this.api("POST", "/auth/mfa/enable", { session, body: { code: hotp(secret, totpStep()) } });
+    if (enabled.status !== 200) throw new Error(`mfa enable failed: ${enabled.status}`);
+    user.mfaSecret = secret;
+    return user;
+  }
+
   async session(user: TestUser, extra: Record<string, unknown> = {}): Promise<Session> {
     const reply = await this.login(user, extra);
+    if (reply.status === 200 && reply.body.mfaRequired && user.mfaSecret) {
+      const verified = await this.api("POST", "/auth/mfa/verify", { body: { mfaToken: reply.body.mfaToken, code: await this.mfaCode(user) } });
+      if (verified.status !== 200 || !verified.body.accessToken) throw new Error(`mfa verify failed: ${verified.status} ${JSON.stringify(verified.body)}`);
+      return verified.body as Session;
+    }
     if (reply.status !== 200 || !reply.body.accessToken) throw new Error(`login failed: ${reply.status} ${JSON.stringify(reply.body)}`);
     return reply.body as Session;
   }
@@ -252,7 +280,7 @@ export class World {
 
   async createUser(
     tenant: TestTenant,
-    options: { roles: SystemRoleCode[]; organizationId?: string; isPlatformAdmin?: boolean; email?: string; password?: string }
+    options: { roles: SystemRoleCode[]; organizationId?: string; isPlatformAdmin?: boolean; mfa?: boolean; email?: string; password?: string }
   ): Promise<TestUser> {
     const email = options.email ?? `${this.unique("user")}@example.test`;
     const password = options.password ?? PASSWORD;
@@ -267,7 +295,10 @@ export class World {
         emailVerifiedAt: new Date()
       }
     });
-    return this.link(tenant, user.id, email, password, options);
+    const fixture = await this.link(tenant, user.id, email, password, options);
+    // Platform authority needs a second factor; enrol it unless the test is about the un-enrolled case.
+    if (options.isPlatformAdmin && options.mfa !== false) await this.enrollMfa(fixture);
+    return fixture;
   }
 
   /** Stands in for the e-mailed confirmation link for an account that registered through the API. */

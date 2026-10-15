@@ -118,6 +118,10 @@ describe("bootstrap as a non-superuser, non-BYPASSRLS owner", () => {
     const admin = new PrismaClient({ adapter: new PrismaPg({ connectionString: db.adminUrl }) });
     try {
       await admin.user.create({ data: { email, emailNormalized: email, displayName: "P", passwordHash: "x" } });
+      // An account without MFA is refused; the same script succeeds once the account has enrolled.
+      expect(() => runScript("scripts/bootstrap-platform-admin.ts", { BOOTSTRAP_ADMIN_EMAIL: email })).toThrow();
+      expect((await admin.user.findUniqueOrThrow({ where: { emailNormalized: email } })).isPlatformAdmin).toBe(false);
+      await admin.user.update({ where: { emailNormalized: email }, data: { mfaEnabledAt: new Date() } });
       runScript("scripts/bootstrap-platform-admin.ts", { BOOTSTRAP_ADMIN_EMAIL: email });
       expect((await admin.user.findUniqueOrThrow({ where: { emailNormalized: email } })).isPlatformAdmin).toBe(true);
       expect(await admin.auditEvent.count({ where: { action: "platform.admin.bootstrap" } })).toBe(1);

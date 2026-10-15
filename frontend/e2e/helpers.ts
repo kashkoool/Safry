@@ -1,4 +1,6 @@
-import { expect, type Page } from "@playwright/test";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { expect, request as pwRequest, type Page } from "@playwright/test";
+import { totp } from "./totp";
 
 export const TENANT = "safry";
 export const apiURL = process.env.E2E_API_URL ?? "http://127.0.0.1:55516";
@@ -59,4 +61,58 @@ export async function expectSignedOut(page: Page, options: { cookieCleared?: boo
   expect(stored.hint).toBeNull();
   expect(stored.activity).toBeNull();
   if (options.cookieCleared !== false) expect(await refreshCookie(page)).toBeUndefined();
+}
+
+// Platform administrators must have two-factor enrolled (otherwise every platform route answers 403
+// mfa_enrollment_required). The seeded admin is enrolled once per run through the real API; the generated secret and the
+// last used time step live only in this git-ignored file (test-results/ is cleaned at the start of each run).
+const ADMIN_MFA_FILE = "test-results/.admin-mfa.json";
+const ADMIN_EMAIL = "admin@safry.local";
+type AdminMfa = { secret: string; lastStep: number };
+const readAdminMfa = (): AdminMfa | undefined => { try { return JSON.parse(readFileSync(ADMIN_MFA_FILE, "utf8")) as AdminMfa; } catch { return undefined; } };
+const saveAdminMfa = (state: AdminMfa): void => { mkdirSync("test-results", { recursive: true }); writeFileSync(ADMIN_MFA_FILE, JSON.stringify(state)); };
+
+async function ensureAdminMfa(password: string): Promise<AdminMfa> {
+  const known = readAdminMfa();
+  if (known) return known;
+  const api = await pwRequest.newContext({ baseURL: apiURL });
+  try {
+    const login = await api.post("/api/v1/auth/login", { headers: { "x-client": "mobile" }, data: { email: ADMIN_EMAIL, password, tenantCode: TENANT } });
+    const body = (await login.json()) as { accessToken?: string; mfaRequired?: boolean; user?: { tenantId: string } };
+    if (!body.accessToken || !body.user) throw new Error(`seeded admin already has MFA but test-results/.admin-mfa.json is missing (reseed the database): HTTP ${login.status()}`);
+    const headers = { authorization: `Bearer ${body.accessToken}`, "x-tenant-id": body.user.tenantId };
+    const setup = await api.post("/api/v1/auth/mfa/setup", { headers, data: { password } });
+    const secretKey = ((await setup.json()) as { secret: string }).secret;
+    const step = Math.floor(Date.now() / 30_000);
+    const enable = await api.post("/api/v1/auth/mfa/enable", { headers, data: { code: totp(secretKey, 0) } });
+    expect(enable.status(), "enabling MFA for the seeded admin").toBe(200);
+    const state = { secret: secretKey, lastStep: step };
+    saveAdminMfa(state);
+    return state;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Signs the seeded platform administrator in through the UI, enrolling and answering two-factor as needed. */
+export async function signInAdmin(page: Page): Promise<void> {
+  const password = secret("E2E_ADMIN_PASSWORD");
+  const state = await ensureAdminMfa(password);
+  await signIn(page, "admin", ADMIN_EMAIL, password);
+  const code = page.getByLabel("Verification code");
+  await code.waitFor({ state: "visible", timeout: 15_000 });
+  // A code is single use: take a time step after the last one used (the server accepts one step either side).
+  for (let tries = 0; tries < 40; tries++) {
+    const now = Math.floor(Date.now() / 30_000);
+    const step = [now - 1, now, now + 1].find((candidate) => candidate > state.lastStep);
+    if (step !== undefined) {
+      state.lastStep = step;
+      saveAdminMfa(state);
+      await code.fill(totp(state.secret, step - now));
+      await page.getByRole("button", { name: /Verify|Sign in|Continue/ }).first().click();
+      return;
+    }
+    await page.waitForTimeout(1_000);
+  }
+  throw new Error("no unused TOTP step available");
 }

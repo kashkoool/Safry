@@ -146,6 +146,9 @@ async function main(): Promise<void> {
   const airline = await account("airline", "service-provider", "AIRLINE");
   const company = await account("umrah", "travel-company", "UMRAH_COMPANY");
   const admin = await account("admin", "tenant-admin");
+  // Platform routes need an enrolled second factor: enrol the administrator through the (guard-exempt) MFA endpoints.
+  const adminSetup = await call("/auth/mfa/setup", "POST", admin.session, { password }, 200);
+  await call("/auth/mfa/enable", "POST", admin.session, { code: hotp(adminSetup.secret as string, totpStep()) }, 200);
   const tenantAdmin = await account("tenantadmin", "tenant-admin");
   const me = await call("/auth/me", "GET", traveler.session);
   assert.equal(me.userId, traveler.session.user.userId);
