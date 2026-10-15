@@ -11,5 +11,10 @@
     "services_provider": 650,
     "booking_create_hot": 1300,
     "mixed_traveler": 3500
+  },
+  "soak": {
+    "maxP95DriftRatio": 1.5,
+    "maxRssGrowthPct": 25,
+    "maxErrorRatePct": 0.5
   }
 }
