@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import type { Response } from "express";
 import { finishPage, keysetPage, type PageQueryDto } from "../../../common/pagination.js";
 import type { AuthUser } from "../../../common/security/auth-user.js";
@@ -7,6 +8,7 @@ import { PrismaService } from "../../../database/prisma.service.js";
 import type { Prisma } from "../../../generated/prisma/client.js";
 import { serviceInclude } from "../../travel-services/service-select.js";
 import { assertCapacity, bookingTerms, inventorySelect, overlapWhere } from "./booking-rules.js";
+import { bookingLimits, expiredError, pendingCutoff, pendingLimitError, type BookingLimits } from "./booking-limits.js";
 import type { CreateBookingDto } from "./dto/create-booking.dto.js";
 import type { UpdateBookingDto } from "./dto/update-booking.dto.js";
 
@@ -20,7 +22,45 @@ const admin = isTenantAdmin;
 /** Booking Management. */
 @Injectable()
 export class BookingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly limits: BookingLimits;
+  constructor(private readonly prisma: PrismaService, config: ConfigService) {
+    this.limits = bookingLimits(config);
+  }
+
+  /** Capacity only counts CONFIRMED and non-expired PENDING bookings. */
+  private liveWhere(): Prisma.BookingWhereInput {
+    return { status: { not: "CANCELLED" }, NOT: { status: "PENDING", createdAt: { lt: pendingCutoff(this.limits) } } };
+  }
+
+  private isExpired(booking: { status: string; createdAt: Date }): boolean {
+    return booking.status === "PENDING" && booking.createdAt < pendingCutoff(this.limits);
+  }
+
+  /** Idempotent cleanup: marks expired PENDING bookings of this service or traveler CANCELLED and audits each one. */
+  private async sweepExpired(tx: Prisma.TransactionClient, user: AuthUser, where: Prisma.BookingWhereInput): Promise<void> {
+    const stale = await tx.booking.findMany({
+      where: { tenantId: user.tenantId, status: "PENDING", createdAt: { lt: pendingCutoff(this.limits) }, ...where },
+      select: { id: true },
+      take: 500
+    });
+    if (stale.length === 0) return;
+    const ids = stale.map((row) => row.id);
+    // Audit only the rows this transaction actually cancelled: a concurrent cancel or sweep may have taken some of them.
+    const cancelled: string[] = [];
+    for (const id of ids) {
+      const done = await tx.booking.updateMany({ where: { id, tenantId: user.tenantId, status: "PENDING" }, data: { status: "CANCELLED" } });
+      if (done.count > 0) cancelled.push(id);
+    }
+    if (cancelled.length > 0)
+      await tx.auditEvent.createMany({
+        data: cancelled.map((entityId) => ({ tenantId: user.tenantId, actorUserId: user.userId, action: "booking.expire", entityType: "booking", entityId }))
+      });
+  }
+
+  /** API view: an expired PENDING booking is reported as CANCELLED with `expired: true` (also before it is swept). */
+  private present<T extends { status: string; createdAt: Date }>(row: T): T & { expired?: true } {
+    return this.isExpired(row) ? { ...row, status: "CANCELLED", expired: true } : row;
+  }
 
   private async audit(tx: Prisma.TransactionClient, user: AuthUser, action: string, entityId: string): Promise<void> {
     await tx.auditEvent.create({
@@ -42,7 +82,7 @@ export class BookingsService {
   /** Newest first, keyset-paged (see common/pagination.ts): `?limit=` and `?cursor=`, next cursor in `X-Next-Cursor`. */
   async listBookings(user: AuthUser, page: PageQueryDto, response: Response): Promise<unknown> {
     const rows = await this.prisma.booking.findMany({ ...keysetPage(page, this.bookingScope(user)), include: bookingInclude });
-    return finishPage(rows, page, response);
+    return finishPage(rows.map((row) => this.present(row)), page, response);
   }
 
   private async lockService(
@@ -98,10 +138,17 @@ export class BookingsService {
         service.category,
         service.details as Record<string, string>,
         service.priceCents,
-        input
+        input,
+        undefined,
+        this.limits.maxDaysAhead
       );
+      // One create per traveler at a time, across services, so parallel requests cannot pass the cap together.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${"booking-pending:" + user.membershipId}, 0))`;
+      await this.sweepExpired(tx, user, { OR: [{ serviceId: service.id }, { travelerMembershipId: user.membershipId }] });
+      const open = await tx.booking.count({ where: { travelerMembershipId: user.membershipId, status: "PENDING" } });
+      if (open >= this.limits.maxPendingPerTraveler) throw pendingLimitError();
       const existing = await tx.booking.findMany({
-        where: { serviceId: service.id, status: { not: "CANCELLED" }, ...overlapWhere(terms) },
+        where: { serviceId: service.id, ...this.liveWhere(), ...overlapWhere(terms) },
         select: inventorySelect
       });
       assertCapacity(service.capacity, existing, terms);
@@ -133,11 +180,15 @@ export class BookingsService {
   async updateBooking(user: AuthUser, id: string, input: UpdateBookingDto): Promise<unknown> {
     if (!admin(user) && !user.roles.includes("traveler"))
       throw new ForbiddenException("تعديل تفاصيل الحجز متاح للمسافر والمدير");
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const first = await tx.booking.findFirst({ where: { id, ...this.bookingScope(user) } });
       if (!first) throw new NotFoundException("الحجز غير موجود");
       const service = await this.lockService(tx, user, first.serviceId);
       const booking = await tx.booking.findUniqueOrThrow({ where: { id, tenantId: user.tenantId } });
+      if (this.isExpired(booking)) {
+        await this.sweepExpired(tx, user, { id });
+        return "expired" as const;
+      }
       if (booking.status !== "PENDING") throw new ConflictException("يمكن تعديل الحجوزات المعلقة فقط");
       const terms = bookingTerms(
         service.category,
@@ -148,10 +199,12 @@ export class BookingsService {
           units: input.units ?? booking.units,
           serviceDate: input.serviceDate ?? booking.serviceDate.toISOString().slice(0, 10),
           endDate: input.endDate ?? booking.endDate?.toISOString().slice(0, 10)
-        }
+        },
+        undefined,
+        this.limits.maxDaysAhead
       );
       const existing = await tx.booking.findMany({
-        where: { serviceId: service.id, id: { not: id }, status: { not: "CANCELLED" }, ...overlapWhere(terms) },
+        where: { serviceId: service.id, id: { not: id }, ...this.liveWhere(), ...overlapWhere(terms) },
         select: inventorySelect
       });
       assertCapacity(service.capacity, existing, terms);
@@ -169,6 +222,8 @@ export class BookingsService {
       await this.audit(tx, user, "booking.update", id);
       return updated;
     });
+    if (result === "expired") throw expiredError();
+    return result;
   }
 
   async updateBookingStatus(user: AuthUser, id: string, status: "CONFIRMED" | "CANCELLED"): Promise<unknown> {
@@ -177,12 +232,17 @@ export class BookingsService {
       throw new ForbiddenException("صلاحية تغيير حالة الحجز غير متاحة لهذا الحساب");
     if (status === "CONFIRMED" && !admin(user) && !operator(user))
       throw new ForbiddenException("تأكيد الحجز متاح للمنشأة والمدير فقط");
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const first = await tx.booking.findFirst({ where: { id, ...this.bookingScope(user) } });
       if (!first) throw new NotFoundException("الحجز غير موجود");
       await this.lockService(tx, user, first.serviceId, status === "CONFIRMED");
       const booking = await tx.booking.findUniqueOrThrow({ where: { id, tenantId: user.tenantId }, include: bookingInclude });
-      if (booking.status === status) return booking;
+      if (status === "CONFIRMED" && this.isExpired(booking)) {
+        // The lazy cancel must commit, so the refusal is raised after the transaction.
+        await this.sweepExpired(tx, user, { serviceId: first.serviceId });
+        return "expired" as const;
+      }
+      if (booking.status === status) return this.present(booking);
       if (booking.status === "CANCELLED")
         throw new ConflictException("لا يمكن إعادة تأكيد حجز ملغي؛ أنشئ حجزاً جديداً");
       const updated = await tx.booking.update({
@@ -193,5 +253,7 @@ export class BookingsService {
       await this.audit(tx, user, `booking.${status.toLowerCase()}`, id);
       return updated;
     });
+    if (result === "expired") throw expiredError();
+    return result;
   }
 }

@@ -70,9 +70,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
             ? "Internal server error"
             : "Request failed";
 
+    const code =
+      typeof exceptionBody === "object" && exceptionBody && "code" in exceptionBody && typeof exceptionBody.code === "string"
+        ? exceptionBody.code
+        : undefined;
     response.status(status).json({
       statusCode: status,
       message,
+      ...(code ? { code } : {}),
       requestId: requestContext.getStore()?.requestId,
       timestamp: new Date().toISOString()
     });

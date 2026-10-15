@@ -14,7 +14,8 @@ function requiredString(config: Environment, key: string, minimumLength = 1): st
 const TUNABLE_INTEGERS = ["DATABASE_CONNECT_TIMEOUT_MS", "DATABASE_IDLE_TIMEOUT_MS", "DATABASE_STATEMENT_TIMEOUT_MS",
     "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS", "DATABASE_TX_MAX_WAIT_MS", "DATABASE_TX_TIMEOUT_MS", "AUTH_CACHE_TTL_MS",
     "AUTH_CACHE_MAX_ENTRIES", "RATE_LIMIT_IP_PER_MINUTE", "RATE_LIMIT_ACCOUNT_PER_MINUTE", "RATE_LIMIT_USER_PER_MINUTE",
-    "SHUTDOWN_DRAIN_MS", "SHUTDOWN_DEADLINE_MS", "HTTP_KEEP_ALIVE_TIMEOUT_MS", "HTTP_REQUEST_TIMEOUT_MS", "ACTIVITY_WRITE_INTERVAL_MS", "MAIL_TIMEOUT_MS", "AUTH_MAIL_MIN_RESPONSE_MS", "MAIL_RETRY_ATTEMPTS", "MAIL_RETRY_BASE_MS"];
+    "SHUTDOWN_DRAIN_MS", "SHUTDOWN_DEADLINE_MS", "HTTP_KEEP_ALIVE_TIMEOUT_MS", "HTTP_REQUEST_TIMEOUT_MS", "ACTIVITY_WRITE_INTERVAL_MS", "MAIL_TIMEOUT_MS", "AUTH_MAIL_MIN_RESPONSE_MS", "MAIL_RETRY_ATTEMPTS", "MAIL_RETRY_BASE_MS",
+    "BOOKING_MAX_PENDING_PER_TRAVELER", "BOOKING_MAX_DAYS_AHEAD", "BOOKING_PENDING_TTL_HOURS"];
 
 /**
  * Shannon estimate of the bits in a secret (length x per-character entropy). It catches repeated,
@@ -86,6 +87,11 @@ export function assertMailConfig(config: Environment): void {
   const attempts = config["MAIL_RETRY_ATTEMPTS"];
   if (attempts !== undefined && (!Number.isInteger(Number(attempts)) || Number(attempts) < 1 || Number(attempts) > 5))
     throw new Error("MAIL_RETRY_ATTEMPTS must be an integer from 1 (no retry) to 5");
+  for (const [key, min, max] of [["BOOKING_MAX_PENDING_PER_TRAVELER", 1, 1000], ["BOOKING_MAX_DAYS_AHEAD", 1, 1825], ["BOOKING_PENDING_TTL_HOURS", 1, 720]] as const) {
+    const raw = config[key];
+    if (raw !== undefined && (!Number.isInteger(Number(raw)) || Number(raw) < min || Number(raw) > max))
+      throw new Error(`${key} must be an integer from ${min} to ${max}`);
+  }
   const baseMs = config["MAIL_RETRY_BASE_MS"];
   if (baseMs !== undefined && (!Number.isInteger(Number(baseMs)) || Number(baseMs) > 30_000))
     throw new Error("MAIL_RETRY_BASE_MS must be an integer from 0 to 30000");
