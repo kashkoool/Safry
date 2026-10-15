@@ -13,6 +13,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "lint": "eslint src --max-warnings 0",
+    "test:unit": "vitest run",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"*.{json,html,ts,md}\"",
     "e2e": "playwright test",
     "lighthouse": "npm run build && lhci autorun"
@@ -39,6 +40,7 @@
     "prettier": "^3.9.10",
     "typescript": "6.0.3",
     "typescript-eslint": "^8.71.1",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "vitest": "5.0.3"
   }
 }
