@@ -11,7 +11,7 @@ services:
     environment:
       POSTGRES_DB: safry
       POSTGRES_USER: safry
-      POSTGRES_PASSWORD: ${ALERTS_PG_PASSWORD:?set by scripts/alerts-fire-test.sh}
+      POSTGRES_PASSWORD: ${ALERTS_PG_PASSWORD:-unused-for-down}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U safry -d safry"]
       interval: 3s
@@ -73,7 +73,7 @@ services:
     command: ["node", "/app/webhook-sink.mjs"]
     volumes:
       - ./webhook-sink.mjs:/app/webhook-sink.mjs:ro
-      - ${ALERTS_WORK_DIR:?set by scripts/alerts-fire-test.sh}/out:/out
+      - ${ALERTS_WORK_DIR:-./.tmp-fire}/out:/out
 
   alertmanager:
     container_name: safry-alerts-alertmanager

@@ -13,7 +13,6 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
 alerts="$repo/deploy/alerts"
 work="$alerts/.tmp-fire"
-export MSYS_NO_PATHCONV=1
 
 API=http://127.0.0.1:14010/api/v1
 PROM=http://127.0.0.1:19090
@@ -57,6 +56,7 @@ wait_state() { # alertname state timeout_s
   return 1
 }
 
+compose --profile ops down -v --remove-orphans >/dev/null 2>&1 || true # a leftover stack would keep an old database password
 echo "== prepare (secrets are random per run and never printed)"
 rm -rf "$work"; mkdir -p "$work/rules" "$work/secrets" "$work/out"
 chmod 777 "$work/out"
@@ -73,9 +73,9 @@ for pair in "runtime safry-alerts-api:test" "migrate safry-alerts-migrate:test";
 done
 
 echo "== start database, migrate, seed a throwaway user"
-compose up -d postgres >/dev/null 2>&1
-compose --profile ops run --rm migrate >/dev/null 2>&1
-compose --profile ops run --rm seed >/dev/null 2>&1
+compose up -d postgres >/dev/null 2>&1 || { echo "postgres failed to start"; exit 1; }
+compose --profile ops run --rm migrate >"$work/migrate.log" 2>&1 || { echo "migrate failed:"; tail -20 "$work/migrate.log"; exit 1; }
+compose --profile ops run --rm seed >"$work/seed.log" 2>&1 || { echo "seed failed:"; tail -20 "$work/seed.log"; exit 1; }
 echo "== start API, Alertmanager, webhook sink, Prometheus"
 compose up -d api webhook-sink alertmanager prometheus >/dev/null 2>&1
 
@@ -90,6 +90,7 @@ until [ "$(curl -fsS "$PROM/api/v1/query?query=up%7Bjob%3D%22safry-api%22%7D" 2>
   [ $SECONDS -lt $end ] || { echo "Prometheus never saw the API as up"; exit 1; }
   sleep 2
 done
+sleep 7 # one rule evaluation after the first scrape: ApiDown must be clear before the test starts
 echo "BASELINE alerts in Prometheus: LoginFailureSpike=$(prom_state LoginFailureSpike) DatabaseUnreachable=$(prom_state DatabaseUnreachable) ApiDown=$(prom_state ApiDown)"
 
 echo "== 1. burst of failed sign-ins"
@@ -98,7 +99,7 @@ login() { curl -s -o /dev/null -w '%{http_code}' -X POST "$API/auth/login" -H 'c
 codes=""
 for i in $(seq 1 12); do codes="$codes $(login "$ALERTS_USER_EMAIL")"; done            # throwaway user: wrong password, then locked
 for i in $(seq 1 45); do codes="$codes $(login "nobody-$i@example.test")"; done          # unknown accounts (password guessing across names)
-echo "answer codes (all 401 expected, no 429): $(echo $codes | tr ' ' '\n' | sort | uniq -c | tr '\n' ';')"
+echo "answer codes (401 = refused; 429 = the per-address login limit of 50 a minute): $(echo $codes | tr ' ' '\n' | sort | uniq -c | tr '\n' ';')"
 failures="$(curl -fsS -H "Authorization: Bearer $ALERTS_METRICS_TOKEN" "$API/metrics" | grep -E '^safry_(login_failures_total|account_lockouts_total)' | tr '\n' ';')"
 echo "API counters: $failures"
 wait_state LoginFailureSpike firing 90
