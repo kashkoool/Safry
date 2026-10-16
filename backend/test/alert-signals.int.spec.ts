@@ -24,6 +24,11 @@ describe("alert signal metrics", () => {
   }, 180_000);
   afterAll(async () => world.stop());
 
+  it("serves the Prometheus text format content type (Prometheus 3 rejects text/html)", async () => {
+    const reply = await world.api("GET", "/metrics", { headers: { authorization: `Bearer ${METRICS_TOKEN}` } });
+    expect(reply.headers["content-type"]).toMatch(/^text\/plain; version=0\.0\.4/);
+  });
+
   it("counts bad credentials, unknown accounts and the lockout; never exposes the e-mail", async () => {
     const user = await world.createUser(tenant, { roles: ["traveler"] });
     const before = await scrape();

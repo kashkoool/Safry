@@ -1,4 +1,4 @@
-import { Controller, Get, Headers, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { Controller, Get, Header, Headers, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { SkipThrottle } from "@nestjs/throttler";
 import { timingSafeEqual } from "node:crypto";
@@ -125,7 +125,9 @@ export class MetricsController {
     return { safry_platform_admin_mfa_resets_24h: this.mfaResets.value };
   }
 
+  /** Prometheus 3 refuses a scrape whose Content-Type is not the text exposition format (a bare string would be sent as text/html). */
   @Get()
+  @Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
   async scrape(@Headers("authorization") authorization?: string): Promise<string> {
     const token = this.config.get<string>("METRICS_TOKEN");
     if (!token) throw new NotFoundException();

@@ -4,7 +4,7 @@
 # Works in Git Bash on Windows and on Ubuntu. Nothing is pushed or deployed; the container is removed afterwards.
 set -euo pipefail
 
-# Pinned by tag and digest. Dependabot (docker ecosystem, /scripts/alerts) can bump both together.
+# Pinned by tag and digest; bump both together by hand (check the digest with: docker buildx imagetools inspect <tag>).
 PROM_IMAGE="${PROM_IMAGE:-prom/prometheus:v3.5.1@sha256:38c3b05c3bc744ff1b0b7b4eb82196026442845e62a1e2073795565da506d7a2}"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
