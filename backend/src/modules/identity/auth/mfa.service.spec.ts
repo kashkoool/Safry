@@ -8,8 +8,8 @@ import type { AccountSecurityService } from "./account-security.service.js";
 import { MfaService } from "./mfa.service.js";
 
 function build(account: { isPlatformAdmin: boolean; mfaEnabledAt: Date | null }): MfaService {
-  const prisma = { user: { findUnique: () => Promise.resolve({ id: "u1", status: "ACTIVE", deletedAt: null, ...account }) } };
-  const config = { get: () => undefined, getOrThrow: () => "unit-test-secret-with-more-than-32-characters" };
+  const prisma = { user: { findUnique: (): Promise<object> => Promise.resolve({ id: "u1", status: "ACTIVE", deletedAt: null, ...account }) } };
+  const config = { get: (): undefined => undefined, getOrThrow: (): string => "unit-test-secret-with-more-than-32-characters" };
   return new MfaService(prisma as unknown as PrismaService, {} as AccountSecurityService, config as unknown as ConfigService);
 }
 
