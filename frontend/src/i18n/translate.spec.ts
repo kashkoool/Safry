@@ -31,10 +31,7 @@ describe("translateText", () => {
     expect(translateText("Some text nobody registered", "ar")).toBe("Some text nobody registered");
   });
 
-  // Known bug: systemText is a plain object literal, so inherited keys such as "constructor"
-  // resolve to Object.prototype members and translateText returns undefined. it.fails keeps the suite green until fixed;
-  // when the bug is fixed this test starts passing and it.fails must be changed to it.
-  it.fails("does not return inherited Object.prototype members as translations", () => {
+  it("does not return inherited Object.prototype members as translations", () => {
     expect(translateText("constructor", "en")).toBe("constructor");
   });
 });
