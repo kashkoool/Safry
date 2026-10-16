@@ -128,7 +128,7 @@ All figures are **estimates in USD per month. Verify each in the Azure Pricing C
 
 ## 6. CI/CD pipeline (target design)
 
-Existing workflow `ci.yml` runs on every pull request and gates merges. The deploy workflow runs on `main` only.
+Existing workflow `ci.yml` runs on every pull request and gates merges. This is the target design: no deploy workflow exists yet. When one is added it should run on `main` only.
 
 ```mermaid
 graph LR

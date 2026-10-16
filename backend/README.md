@@ -4,9 +4,9 @@
 
 ## المتطلبات
 
-- Node.js 24 LTS موصى به، والحد الأدنى المدعوم 22.12
+- Node.js 22 LTS (الحد الأدنى المدعوم 22.12؛ صور Docker تستخدم Node 22)
 - pnpm 11 أو أحدث
-- PostgreSQL 18، أو قاعدة Prisma Postgres المحلية المرفقة مع Prisma دون Docker
+- PostgreSQL 17، أو قاعدة Prisma Postgres المحلية المرفقة مع Prisma دون Docker
 - Docker اختياري فقط عند الرغبة باستخدام PostgreSQL container عبر `compose.yml`
 
 ## التشغيل المحلي
@@ -25,13 +25,13 @@
 
 ## المسارات الحالية
 
-تعرّف المتحكمات اليوم 62 مساراً (عُدّت من الكود) موزعة على: الهوية والمصادقة (تسجيل، دخول، تجديد، خروج، MFA عبر API فقط)، الجهات والأعضاء، الأدوار والصلاحيات، المنشآت والأقسام والموظفين، كتالوج الخدمات وأسعار الصرف، الحجوزات، إدارة المنصة، والصحة. المرجع الدقيق والمحدّث هو Swagger على `/api/v1/docs`.
+تعرّف المتحكمات عدداً من المسارات (يتحقق منها فحص `pnpm test:routes` في CI) موزعة على: الهوية والمصادقة (تسجيل، دخول، تجديد، خروج، MFA مع واجهة ويب لتفعيله والدخول به)، الجهات والأعضاء، الأدوار والصلاحيات، المنشآت والأقسام والموظفين، كتالوج الخدمات وأسعار الصرف، الحجوزات، إدارة المنصة، والصحة. المرجع الدقيق والمحدّث هو Swagger على `/api/v1/docs`.
 
 ## English notes
 
-- Stack as declared in `package.json`: NestJS 12, Prisma 7, TypeScript 6, Vitest 5; Node >= 22.12; PostgreSQL 18 in `backend/compose.yml` (the root `docker-compose.yml` uses PostgreSQL 17).
-- Tests: `pnpm test` (66 unit cases), `pnpm test:int` (80 integration cases on a throwaway embedded PostgreSQL with row-level security forced on), `pnpm test:business` (smoke script that needs a running API and database; creates and deletes its own tenants, so point it only at a local database).
-- Authentication errors and validation messages are free-text strings (Arabic from services, English from validators); the API has no stable machine-readable error code yet.
+- Stack as declared in `package.json`: NestJS 12, Prisma 7, TypeScript 6, Vitest 5; Node >= 22.12; PostgreSQL 17 in both `backend/compose.yml` and the root `docker-compose.yml`.
+- Tests: `pnpm test` (unit tests), `pnpm test:int` (integration tests on a throwaway embedded PostgreSQL with row-level security forced on), `pnpm test:business` (smoke script that needs a running API and database; creates and deletes its own tenants, so point it only at a local database).
+- Authentication errors and validation messages are free-text strings (Arabic from services, English from validators); error responses carry a machine-readable `code` field only for a few cases (for example an expired booking or required MFA enrolment); everywhere else the message text is the only signal.
 
 ## قواعد المعمارية
 
