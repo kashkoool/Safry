@@ -44,6 +44,7 @@ import { BookingEditor, Modal, ProviderEditor, ServiceEditor } from "../componen
 import { convertedMoney, money } from "../lib/format";
 import {
   api,
+  ApiError,
   type Booking,
   type ExchangeRates,
   type Organization,
@@ -295,6 +296,8 @@ export function DashboardPage() {
       if (refresh) await reload();
       setMessage(success);
     } catch (reason) {
+      // A conflict usually means the screen is out of date (for example a booking that expired while it was open): show the current state next to the message.
+      if (refresh && reason instanceof ApiError && reason.status === 409) await reload().catch(() => undefined);
       setError(errorText(reason, pick, tr, { fallback: pick("تعذر تنفيذ العملية.", "The action could not be completed.") }));
     } finally {
       setBusy(false);
@@ -734,8 +737,11 @@ export function DashboardPage() {
                       {item.currency !== displayCurrency &&
                         <small>{pick("قيمة الحجز الأصلية:", "Original booking value:")} {tr(money(item.totalCents, item.currency))}</small>}
                       <span className={`booking-status booking-status--${item.status.toLowerCase()}`}>
-                        {tr(pick(statusLabels[item.status], bookingStatusEnglish[item.status] ?? statusLabels[item.status]))}
+                        {item.expired
+                          ? pick("انتهت المهلة", "Expired")
+                          : tr(pick(statusLabels[item.status], bookingStatusEnglish[item.status] ?? statusLabels[item.status]))}
                       </span>
+                      {item.expired && <small className="booking-row__expired">{pick("لم يُؤكَّد الحجز في الوقت المحدد فأُلغي تلقائياً.", "This request was not confirmed in time and was cancelled automatically.")}</small>}
                     </div>
                     <div className="booking-actions">
                       {(isTraveler || isAdmin) && item.status === "PENDING" && (

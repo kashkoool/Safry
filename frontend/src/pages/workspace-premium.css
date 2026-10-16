@@ -269,3 +269,4 @@ html[lang="ar"] .workspace-kicker { letter-spacing: 0; font-size: 12px; }
 /* The account entry points are links (they leave the workspace shell for /account). */
 .workspace-account-card, .profile-link { text-decoration: none; }
 .profile-link { display: inline-grid; place-items: center; }
+.premium-workspace-shell .booking-row__expired { display: block; margin-top: 4px; color: var(--muted, inherit); }
