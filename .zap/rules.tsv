@@ -2,3 +2,5 @@
 # (scripts/dast-check.mjs) fails on any alert of risk Medium or higher in the JSON report, whatever this file says, so an
 # ignored rule can never hide a Medium or High finding. Every ignored rule needs a reason. Review when ZAP is upgraded.
 10109	IGNORE	(Modern Web Application) informational only: the app is a single-page application, which the spider cannot crawl by links.
+10027	IGNORE	(Information Disclosure - Suspicious Comments) fires on words such as "TODO" or "select" inside minified third-party code in the built JavaScript bundle; there is no secret or internal note in our own source (a separate secret scan covers that). Informational only.
+10049	IGNORE	(Storable and Cacheable Content) fires on the static, content-hashed build assets (JS, CSS, fonts, images), which are meant to be cached. API responses carrying a session are sent with Cache-Control: no-store (checked by the backend http-hardening integration test), so the alert adds nothing there. Informational only.
