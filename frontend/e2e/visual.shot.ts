@@ -9,9 +9,6 @@ const account = (id: string, name: string, extra: Record<string, unknown> = {}) 
   createdAt: "2030-01-01T00:00:00.000Z", memberships: [], lockedUntil: null, emailVerifiedAt: "2030-01-01T00:00:00.000Z", ...extra
 });
 
-async function arabic(page: Page) {
-  await page.addInitScript(() => { try { window.localStorage.setItem("safry.language", "ar"); } catch { /* ignore */ } });
-}
 async function settle(page: Page) {
   await page.evaluate(() => document.fonts.ready);
   await page.addStyleTag({ content: "*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}" });
@@ -47,8 +44,7 @@ test.beforeEach(async ({ page }) => {
 for (const lang of ["en", "ar"] as const) {
   test.describe(`language ${lang}`, () => {
     test(`login page (${lang})`, async ({ page }) => {
-      await mockApi(page, traveler, () => false);
-      if (lang === "ar") await arabic(page);
+      await mockApi(page, traveler, () => false, lang);
       await page.route("**/api/v1/auth/refresh", (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ message: "Unauthorized" }) }));
       await page.goto("/login/customer");
       await settle(page);
@@ -56,8 +52,7 @@ for (const lang of ["en", "ar"] as const) {
     });
 
     test(`account profile (${lang})`, async ({ page }) => {
-      await mockApi(page, traveler, accountHandler);
-      if (lang === "ar") await arabic(page);
+      await mockApi(page, traveler, accountHandler, lang);
       await page.goto("/account/profile");
       await expect(page.locator("main h1")).toBeVisible();
       await settle(page);
@@ -65,8 +60,7 @@ for (const lang of ["en", "ar"] as const) {
     });
 
     test(`platform accounts list (${lang})`, async ({ page }) => {
-      await mockApi(page, platformAdmin, accountsHandler);
-      if (lang === "ar") await arabic(page);
+      await mockApi(page, platformAdmin, accountsHandler, lang);
       await page.goto("/admin/accounts-permissions");
       await expect(page.getByRole("table").first()).toBeVisible();
       await settle(page);

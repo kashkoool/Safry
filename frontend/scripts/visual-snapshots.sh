@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export MSYS_NO_PATHCONV=1 # Git Bash on Windows: do not rewrite the container paths
 HERE="$(pwd -W 2>/dev/null || pwd)"
-IMAGE="mcr.microsoft.com/playwright:v1.64.0-noble"
+IMAGE="mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f" # same tag and digest as visual.yml
 MODE="${1:-}"
 case "$MODE" in ""|--update) ;; *) echo "usage: $0 [--update]" >&2; exit 2;; esac
 UPDATE=""; [ "$MODE" = "--update" ] && UPDATE="--update-snapshots"

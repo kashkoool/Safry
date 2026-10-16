@@ -11,9 +11,9 @@ export function secret(name: "E2E_DEMO_PASSWORD" | "E2E_ADMIN_PASSWORD"): string
   return value;
 }
 
-/** Forces the English UI before the app loads, so selectors do not depend on the stored language. */
-export async function useEnglish(page: Page): Promise<void> {
-  await page.addInitScript(() => { try { window.localStorage.setItem("safry.language", "en"); } catch { /* ignore */ } });
+/** Forces the UI language (default English) before the app loads, so selectors do not depend on the stored language. */
+export async function useEnglish(page: Page, language: "en" | "ar" = "en"): Promise<void> {
+  await page.addInitScript((lang) => { try { window.localStorage.setItem("safry.language", lang); } catch { /* ignore */ } }, language);
 }
 
 export async function signIn(page: Page, portal: "customer" | "provider" | "admin", email: string, password: string): Promise<void> {

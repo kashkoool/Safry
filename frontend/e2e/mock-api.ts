@@ -17,8 +17,8 @@ export interface Call { method: string; path: string; search: string; body: Reco
 export type Handler = (call: Call, route: Route) => Promise<boolean> | boolean;
 
 /** Fully mocked API: a resumed cookie session for `user`, the quiet defaults the workspace shell needs, and `handler` for the rest. */
-export async function mockApi(page: Page, user: object, handler: Handler): Promise<{ calls: Call[] }> {
-  await useEnglish(page);
+export async function mockApi(page: Page, user: object, handler: Handler, language: "en" | "ar" = "en"): Promise<{ calls: Call[] }> {
+  await useEnglish(page, language);
   await seedSessionHint(page);
   const calls: Call[] = [];
   const session = { accessToken: "AT", expiresIn: 900, idleTimeoutSeconds: 900, user };

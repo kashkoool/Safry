@@ -102,7 +102,8 @@ jobs:
             curl -fsS http://127.0.0.1:3000/api/v1/health/ready && exit 0
             sleep 2
           done
-          cat "$RUNNER_TEMP/api.log"
+          # Console mail transport logs emailed links: print only a filtered tail, never the raw log.
+          tail -n 40 "$RUNNER_TEMP/api.log" | grep -viE 'mail|http[s]?://|token|password|link' || true
           exit 1
       # The production web image (nginx with the real CSP and security headers) proxies /api to host port 3000 as "api".
       - name: Build and start the web image

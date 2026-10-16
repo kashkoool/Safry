@@ -16,6 +16,10 @@ const base = (args.url ?? "http://127.0.0.1:3100").replace(/\/$/, "");
 const minutes = Number(args.minutes ?? 30);
 const rate = Number(args.rate ?? 20); // requests per second over all connections
 const windowSeconds = Number(args.window ?? 60);
+for (const [name, value] of [["--minutes", minutes], ["--rate", rate], ["--window", windowSeconds]]) {
+  if (!Number.isFinite(value) || value <= 0) { console.error(`${name} must be a positive number`); process.exit(2); }
+}
+if (args.pid !== undefined && !(Number.isInteger(Number(args.pid)) && Number(args.pid) > 0)) { console.error("--pid must be a positive integer"); process.exit(2); }
 const label = args.label ?? "soak";
 const pid = args.pid ? Number(args.pid) : null;
 const limits = JSON.parse(readFileSync(new URL("./thresholds.json", import.meta.url), "utf8")).soak;
@@ -48,8 +52,9 @@ for (let i = 0; i < count; i++) {
   run.on("response", (_c, _s, _b, time) => samples.push(time));
   const result = await run;
   samples.sort((a, b) => a - b);
-  const bad = result.non2xx + result.errors + result.timeouts;
-  const row = { window: i + 1, requests: result.requests.total, p50: pct(samples, 50), p95: pct(samples, 95), p99: pct(samples, 99), bad, rssMb: rssMb() };
+  // autocannon 8: non-2xx responses are inside requests.total; errors already include timeouts (lib/run.js), so count each once.
+  const bad = result.non2xx + result.errors;
+  const row = { window: i + 1, requests: result.requests.total + result.errors, p50: pct(samples, 50), p95: pct(samples, 95), p99: pct(samples, 99), bad, rssMb: rssMb() };
   windows.push(row);
   console.log(JSON.stringify(row));
 }
@@ -65,7 +70,7 @@ const bad = windows.reduce((s, w) => s + w.bad, 0);
 const p95Ratio = mean(first, "p95") > 0 ? mean(last, "p95") / mean(first, "p95") : 1;
 const hasRss = windows.every((w) => w.rssMb !== null);
 const rssGrowthPct = hasRss && mean(first, "rssMb") > 0 ? ((mean(last, "rssMb") - mean(first, "rssMb")) / mean(first, "rssMb")) * 100 : null;
-const errorPct = (bad / Math.max(1, total + bad)) * 100;
+const errorPct = (bad / Math.max(1, total)) * 100;
 const failures = [];
 if (p95Ratio > limits.maxP95DriftRatio) failures.push(`p95 drift x${p95Ratio.toFixed(2)} > x${limits.maxP95DriftRatio}`);
 if (rssGrowthPct !== null && rssGrowthPct > limits.maxRssGrowthPct) failures.push(`RSS growth ${rssGrowthPct.toFixed(1)}% > ${limits.maxRssGrowthPct}%`);
