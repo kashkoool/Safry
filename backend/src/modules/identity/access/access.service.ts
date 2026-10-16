@@ -135,8 +135,16 @@ export class AccessService {
     }
   }
 
-  private async tenantRole(user: AuthUser, id: string): Promise<RoleWithPermissions> {
-    const role = await this.prisma.role.findFirst({
+  /** Locks one role row until the transaction ends: nobody can change, delete or newly assign it in between. */
+  private async lockRoles(tx: Prisma.TransactionClient, ids: string[], mode: "SHARE" | "UPDATE"): Promise<void> {
+    const sorted = [...new Set(ids)].sort();
+    if (!sorted.length) return;
+    if (mode === "UPDATE") await tx.$queryRaw`SELECT "id" FROM "roles" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR UPDATE`;
+    else await tx.$queryRaw`SELECT "id" FROM "roles" WHERE "id" = ANY(${sorted}::uuid[]) ORDER BY "id" FOR SHARE`;
+  }
+
+  private async tenantRole(user: AuthUser, id: string, db: Pick<Prisma.TransactionClient, "role"> = this.prisma): Promise<RoleWithPermissions> {
+    const role = await db.role.findFirst({
       where: { id, tenantId: user.tenantId, organizationId: null },
       include: roleInclude
     });
@@ -148,9 +156,11 @@ export class AccessService {
   }
 
   async updateRole(user: AuthUser, id: string, input: UpdateRoleDto): Promise<object> {
-    const before = await this.tenantRole(user, id);
     const permissions = input.permissions === undefined ? undefined : await this.grantable(user, input.permissions);
     return this.prisma.$transaction(async (tx) => {
+      // Read the role under its lock, in the transaction that writes it.
+      await this.lockRoles(tx, [id], "UPDATE");
+      const before = await this.tenantRole(user, id, tx);
       await tx.role.update({
         where: { id, tenantId: user.tenantId },
         data: {
@@ -175,9 +185,11 @@ export class AccessService {
   }
 
   async deleteRole(user: AuthUser, id: string): Promise<void> {
-    const role = await this.tenantRole(user, id);
-    if (role._count.memberships > 0) throw new ConflictException("الدور مسند لأعضاء؛ انقلهم إلى دور آخر أولاً");
     await this.prisma.$transaction(async (tx) => {
+      // Lock first, then count: an assignment can not slip in between the check and the delete (which would cascade away).
+      await this.lockRoles(tx, [id], "UPDATE");
+      const role = await this.tenantRole(user, id, tx);
+      if (role._count.memberships > 0) throw new ConflictException("الدور مسند لأعضاء؛ انقلهم إلى دور آخر أولاً");
       await tx.role.delete({ where: { id, tenantId: user.tenantId } });
       await this.audit(tx, user, "identity.role.delete", "role", id, { code: role.code });
     });
@@ -186,7 +198,17 @@ export class AccessService {
   /** User Role Assignment: replaces the roles of one membership of the current tenant. */
   async assignRoles(user: AuthUser, membershipId: string, input: AssignRolesDto): Promise<object> {
     if (!input.roleIds.length) throw new BadRequestException("اختر دوراً واحداً على الأقل");
-    const member = await this.prisma.tenantMembership.findFirst({
+    return this.prisma.$transaction((tx) => this.assignRolesIn(tx, user, membershipId, input));
+  }
+
+  /**
+   * Roles and the membership are read under lock, in the transaction that writes: a role edited, deleted or widened by someone
+   * else meanwhile can not be judged on stale data. Lock order matches updateRole (roles first, then memberships).
+   */
+  private async assignRolesIn(tx: Prisma.TransactionClient, user: AuthUser, membershipId: string, input: AssignRolesDto): Promise<object> {
+    await this.lockRoles(tx, input.roleIds, "SHARE");
+    await tx.$queryRaw`SELECT "id" FROM "tenant_memberships" WHERE "id" = ${membershipId}::uuid FOR UPDATE`;
+    const member = await tx.tenantMembership.findFirst({
       where: { id: membershipId, tenantId: user.tenantId },
       include: {
         user: true,
@@ -204,7 +226,7 @@ export class AccessService {
     // The access being replaced must also be within the caller's own (no demoting stronger members).
     if (!withinCeiling(user, effectivePermissions(heldPermissionCodes(member), member.permissionOverrides)))
       throw new ForbiddenException("لا يمكنك تعديل أدوار عضو يملك صلاحيات تتجاوز صلاحياتك");
-    const roles = await this.prisma.role.findMany({
+    const roles = await tx.role.findMany({
       where: { id: { in: input.roleIds }, tenantId: user.tenantId },
       include: { permissions: { include: { permission: true } } }
     });
@@ -223,18 +245,16 @@ export class AccessService {
       if (!isTenantAdmin(user) && codes.some((code) => !user.permissions.includes(code)))
         throw new ForbiddenException("لا يمكنك منح دور يتجاوز صلاحياتك");
     }
-    return this.prisma.$transaction(async (tx) => {
-      await tx.membershipRole.deleteMany({ where: { membershipId } });
-      await tx.membershipRole.createMany({
-        data: roles.map((role) => ({ tenantId: user.tenantId, membershipId, roleId: role.id }))
-      });
-      await this.endSessions(tx, [membershipId]);
-      await this.audit(tx, user, "identity.membership.roles.update", "membership", membershipId, {
-        before: member.roles.map(({ role }) => role.code).sort(),
-        after: roles.map((role) => role.code).sort()
-      });
-      return { membershipId, roles: roles.map((role) => ({ id: role.id, code: role.code, name: role.name })) };
+    await tx.membershipRole.deleteMany({ where: { membershipId } });
+    await tx.membershipRole.createMany({
+      data: roles.map((role) => ({ tenantId: user.tenantId, membershipId, roleId: role.id }))
     });
+    await this.endSessions(tx, [membershipId]);
+    await this.audit(tx, user, "identity.membership.roles.update", "membership", membershipId, {
+      before: member.roles.map(({ role }) => role.code).sort(),
+      after: roles.map((role) => role.code).sort()
+    });
+    return { membershipId, roles: roles.map((role) => ({ id: role.id, code: role.code, name: role.name })) };
   }
 
   /** Permission Change Audit. */
