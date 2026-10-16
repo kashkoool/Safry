@@ -75,6 +75,13 @@ describe("migration chain on a fresh database", () => {
     for (const row of rows.filter((r) => r.indexname.endsWith("_trgm_idx"))) expect(row.indexdef, row.indexname).toMatch(/USING gin .*gin_trgm_ops/);
   });
 
+  it("has the tenant-first newest-first indexes that serve the paginated admin lists", async () => {
+    for (const table of ["bookings", "travel_services"]) {
+      const { rows } = await fresh.query<{ indexdef: string }>(`SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = $1`, [table]);
+      expect(rows.map((row) => row.indexdef).join("\n"), table).toMatch(/\("tenantId", "createdAt" DESC, id DESC\)/);
+    }
+  });
+
   it("keeps the objects the application depends on", async () => {
     const tables = await fresh.query<{ tablename: string }>(`SELECT tablename FROM pg_tables WHERE schemaname = 'public'`);
     for (const table of [

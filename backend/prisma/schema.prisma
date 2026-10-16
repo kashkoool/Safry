@@ -241,6 +241,7 @@ model TravelService {
   @@index([tenantId, status, category])
   @@index([providerMembershipId, status])
   @@index([tenantId, providerOrganizationId])
+  @@index([tenantId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "travel_services_title_trgm_idx")
   @@map("travel_services")
 }
@@ -282,6 +283,7 @@ model Booking {
 
   @@unique([travelerMembershipId, idempotencyKey], map: "bookings_traveler_idempotency_key")
   @@index([tenantId, status, createdAt])
+  @@index([tenantId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([travelerMembershipId, createdAt])
   @@index([serviceId, status])
   @@index([serviceId, serviceDate, endDate])
