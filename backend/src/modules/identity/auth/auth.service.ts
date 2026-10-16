@@ -199,7 +199,7 @@ export class AuthService {
   private assertPortal(
     portal: Portal | undefined,
     user: { isPlatformAdmin: boolean },
-    membership: { providerOrganizationId: string | null; roles: Array<{ role: { code: string } }> }
+    membership: { providerOrganizationId: string | null; roles: Array<{ role: { code: string; isSystem: boolean } }> }
   ): void {
     if (!portal) {
       // Opt-in server-side enforcement: deployments that serve one portal can refuse portal-less logins.
@@ -217,8 +217,20 @@ export class AuthService {
           : !user.isPlatformAdmin &&
             !membership.providerOrganizationId &&
             !roleCodes.includes("tenant-admin") &&
-            roleCodes.includes("traveler");
+            // Travelers, and members whose roles are all tenant-defined (their pages are filtered by permission).
+            (roleCodes.includes("traveler") || (membership.roles.length > 0 && membership.roles.every(({ role }) => !role.isSystem)));
     if (!allowed) throw new UnauthorizedException("هذا الحساب غير مخوّل لبوابة الدخول المحددة");
+  }
+
+  /** Family id of the live (not rotated, revoked or expired) session this refresh token belongs to; null otherwise. */
+  liveSessionFamily(refreshToken: string): Promise<string | null> {
+    return runAsSystem(async () => {
+      const session = await this.prisma.refreshSession.findUnique({
+        where: { tokenHash: sha256(refreshToken) },
+        select: { familyId: true, revokedAt: true, expiresAt: true }
+      });
+      return session && !session.revokedAt && session.expiresAt > new Date() ? session.familyId : null;
+    });
   }
 
   refresh(refreshToken: string, metadata: ClientMetadata): Promise<IssuedTokenPair> {
