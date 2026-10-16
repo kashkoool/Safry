@@ -62,3 +62,8 @@ export function discoverRoutes(): string[] {
   }
   return [...keys].sort();
 }
+
+/** Every controller class the compiled app registers (the same walk discoverRoutes uses). */
+export function discoverControllers(): Klass[] {
+  return collectControllers(AppModule as unknown as Klass);
+}
