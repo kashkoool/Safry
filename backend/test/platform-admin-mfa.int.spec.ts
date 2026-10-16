@@ -130,4 +130,70 @@ describe("platform administrators need MFA", () => {
     expect(reply.status).toBe(403);
     expect(reply.body?.code).toBeUndefined();
   });
+  it("granting platform administration and disabling the target's MFA in parallel never leaves an administrator without MFA", async () => {
+    const admin = await world.createUser(tenant, { roles: ["tenant-admin"], isPlatformAdmin: true });
+    const adminSession = await world.session(admin);
+    for (let round = 0; round < 8; round += 1) {
+      const target = await world.createUser(tenant, { roles: ["traveler"] });
+      await world.enrollMfa(target);
+      const targetSession = await world.session(target);
+      const grantBody = { isPlatformAdmin: true, currentPassword: admin.password, mfaCode: await world.mfaCode(admin) };
+      const disableBody = { password: target.password, code: await world.mfaCode(target) };
+      await Promise.all([
+        world.api("PATCH", `/platform/users/${target.userId}`, { session: auth(adminSession), body: grantBody }),
+        world.api("POST", "/auth/mfa/disable", { session: auth(targetSession), body: disableBody })
+      ]);
+      const row = await world.prisma.user.findUniqueOrThrow({ where: { id: target.userId } });
+      expect(row.isPlatformAdmin && row.mfaEnabledAt === null, `round ${round}: administrator without MFA`).toBe(false);
+    }
+  });
+  it("grant and MFA disable re-check the target after taking its row lock (a concurrent change made while they wait is seen)", async () => {
+    const admin = await world.createUser(tenant, { roles: ["tenant-admin"], isPlatformAdmin: true });
+    const adminSession = await world.session(admin);
+    /** Holds the target's row lock, runs `change` inside it while the request is in flight, then commits. */
+    const concurrently = async (targetId: string, change: () => object, start: () => Promise<{ status: number }>): Promise<number> => {
+      let locked!: () => void;
+      const lockTaken = new Promise<void>((resolve) => (locked = resolve));
+      let go!: () => void;
+      const proceed = new Promise<void>((resolve) => (go = resolve));
+      const holder = world.prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${targetId} FOR UPDATE`;
+          locked();
+          await proceed;
+          await tx.user.update({ where: { id: targetId }, data: change() });
+        },
+        { timeout: 30_000 }
+      );
+      await lockTaken;
+      const request = start();
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      go();
+      await holder;
+      return (await request).status;
+    };
+    // Grant: the target's MFA is switched off while the grant waits; the grant must notice and refuse.
+    const grantTarget = await world.createUser(tenant, { roles: ["traveler"] });
+    await world.enrollMfa(grantTarget);
+    const grantBody = { isPlatformAdmin: true, currentPassword: admin.password, mfaCode: await world.mfaCode(admin) };
+    const grantStatus = await concurrently(
+      grantTarget.userId,
+      () => ({ mfaEnabledAt: null, mfaSecretEnc: null }),
+      () => world.api("PATCH", `/platform/users/${grantTarget.userId}`, { session: auth(adminSession), body: grantBody })
+    );
+    expect(grantStatus).toBe(409);
+    expect((await world.prisma.user.findUniqueOrThrow({ where: { id: grantTarget.userId } })).isPlatformAdmin).toBe(false);
+    // Disable: the target is made an administrator while the disable waits; the disable must notice and refuse.
+    const disableTarget = await world.createUser(tenant, { roles: ["traveler"] });
+    await world.enrollMfa(disableTarget);
+    const disableSession = await world.session(disableTarget);
+    const disableBody = { password: disableTarget.password, code: await world.mfaCode(disableTarget) };
+    const disableStatus = await concurrently(
+      disableTarget.userId,
+      () => ({ isPlatformAdmin: true }),
+      () => world.api("POST", "/auth/mfa/disable", { session: auth(disableSession), body: disableBody })
+    );
+    expect(disableStatus).toBe(409);
+    expect((await world.prisma.user.findUniqueOrThrow({ where: { id: disableTarget.userId } })).mfaEnabledAt).not.toBeNull();
+  });
 });

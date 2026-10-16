@@ -192,9 +192,17 @@ export class MfaService {
     if (!account.mfaEnabledAt) throw new ConflictException("المصادقة متعددة العوامل غير مفعّلة");
     if (account.isPlatformAdmin) throw new ConflictException("لا يمكن إيقاف المصادقة متعددة العوامل لحساب مدير النظام");
     await this.requireSecondFactor(account, user.tenantId, code, ipAddress, "bad_mfa_code_on_disable");
-    await this.prisma.user.update({
-      where: { id: account.id },
-      data: { mfaSecretEnc: null, mfaEnabledAt: null, mfaLastStep: null, mfaRecoveryHashes: [], mfaChallengeHash: null, mfaRecoveryRegenerationRequired: false }
+    await this.prisma.$transaction(async (tx) => {
+      // Same row lock as granting platform administration: re-check under the lock so an account granted that role
+      // a moment ago can not lose its second factor.
+      await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${account.id} FOR UPDATE`;
+      const current = await tx.user.findUnique({ where: { id: account.id }, select: { isPlatformAdmin: true, mfaEnabledAt: true } });
+      if (current?.isPlatformAdmin) throw new ConflictException("لا يمكن إيقاف المصادقة متعددة العوامل لحساب مدير النظام");
+      if (!current?.mfaEnabledAt) throw new ConflictException("المصادقة متعددة العوامل غير مفعّلة");
+      await tx.user.update({
+        where: { id: account.id },
+        data: { mfaSecretEnc: null, mfaEnabledAt: null, mfaLastStep: null, mfaRecoveryHashes: [], mfaChallengeHash: null, mfaRecoveryRegenerationRequired: false }
+      });
     });
     // Sessions of the identity in every tenant, not only the current one (RLS).
     await runAsSystem(() => this.security.endOtherSessions(account.id, user.sessionId));

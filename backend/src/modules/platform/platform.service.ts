@@ -295,6 +295,9 @@ export class PlatformService {
     try {
       const updated = await this.prisma.$transaction(async (tx) => {
         await this.lockAdmin(tx, actor);
+        // Lock the target before reading it, so the check below and the write cannot interleave with a concurrent
+        // MFA disable (which takes the same row lock). Lock order: administrators first, then the target.
+        await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${id} FOR UPDATE`;
         const old = await tx.user.findUnique({ where: { id } });
         if (!old) throw new NotFoundException();
         if (old.deletedAt) throw new ConflictException("استعد الحساب المحذوف أولاً");
