@@ -31,3 +31,6 @@ playwright-report/
 
 # Cloudflare Origin Certificate and key for the tls profile
 deploy/caddy/certs/
+
+# ZAP local report
+.zap-report/

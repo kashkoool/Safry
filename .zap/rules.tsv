@@ -1,0 +1,4 @@
+# ZAP baseline rules (tab separated: rule id, action, comment). IGNORE hides the rule in ZAP's own summary; the gate
+# (scripts/dast-check.mjs) fails on any alert of risk Medium or higher in the JSON report, whatever this file says, so an
+# ignored rule can never hide a Medium or High finding. Every ignored rule needs a reason. Review when ZAP is upgraded.
+10109	IGNORE	(Modern Web Application) informational only: the app is a single-page application, which the spider cannot crawl by links.
