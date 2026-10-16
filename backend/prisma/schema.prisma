@@ -406,9 +406,12 @@ model LoginThrottle {
   blockedUntil    DateTime? @db.Timestamptz(3)
   /// Set on the (e-mail, address) row after a successful sign-in: that address is exempt from the account-wide block.
   trustedUntil    DateTime? @db.Timestamptz(3)
+  /// Set on (e-mail, address) rows: the key of that e-mail's account-wide row, so an unlock can reach every address of the e-mail.
+  accountKey      String?   @db.Char(64)
   updatedAt       DateTime  @default(now()) @db.Timestamptz(3)
 
   @@index([updatedAt])
+  @@index([accountKey])
   @@map("login_throttles")
 }
 
