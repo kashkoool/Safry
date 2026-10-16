@@ -317,7 +317,8 @@ export class PlatformService {
           },
           select: accountSelect
         });
-        if (input.isPlatformAdmin !== undefined && input.isPlatformAdmin !== old.isPlatformAdmin)
+        // A new sign-in address or a changed authority ends every existing session of the account.
+        if (addressChanged || (input.isPlatformAdmin !== undefined && input.isPlatformAdmin !== old.isPlatformAdmin))
           await this.revoke(tx, id);
         await this.audit(tx, actor, "platform.account.update", id, {
           before: {
