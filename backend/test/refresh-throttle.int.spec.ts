@@ -53,6 +53,9 @@ describe("refresh throttling", () => {
       if (reply.status === 200) a = reply.body.refreshToken as string;
     }
     expect(statuses).toEqual([200, 200, 200, 200, 200, 429, 429]);
+    const limited = await refresh(w, a);
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers["retry-after"])).toBeGreaterThan(0);
     expect((await refresh(w, b)).status).toBe(200);
   });
 

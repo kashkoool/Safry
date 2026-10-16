@@ -53,6 +53,8 @@ export interface Reply {
   body: Json;
   /** Raw Set-Cookie header values. */
   cookies: string[];
+  /** Response headers (lower-case names). */
+  headers: Record<string, string>;
 }
 
 export interface RequestOptions {
@@ -210,7 +212,7 @@ export class World {
     } catch {
       body = { text } as Json; // non-JSON answers (Prometheus text)
     }
-    return { status: response.status, body, cookies: response.headers.getSetCookie() };
+    return { status: response.status, body, cookies: response.headers.getSetCookie(), headers: Object.fromEntries(response.headers.entries()) };
   }
 
   login(user: TestUser, extra: Record<string, unknown> = {}, password = user.password): Promise<Reply> {
@@ -329,6 +331,8 @@ export class World {
       data: { tenantId: tenant.id, code: this.unique("custom"), name: "Custom", isSystem: false, ...(organizationId ? { organizationId } : {}) }
     });
     const permissions = await this.prisma.permission.findMany({ where: { code: { in: permissionCodes } } });
+    const missing = permissionCodes.filter((code) => !permissions.some((permission) => permission.code === code));
+    if (missing.length > 0) throw new Error(`unknown permission codes: ${missing.join(", ")}`);
     await this.prisma.rolePermission.createMany({ data: permissions.map((permission) => ({ roleId: role.id, permissionId: permission.id })) });
     await this.prisma.membershipRole.create({ data: { tenantId: tenant.id, membershipId, roleId: role.id } });
     return role.id;

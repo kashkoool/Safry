@@ -42,7 +42,7 @@ database login lockout (progressive, never blocks the owner's own address).
 `POST /auth/refresh` (every page reload makes one) is limited per session, not only per address, so people behind one
 shared address do not sign each other out. A refresh token that belongs to a live session is counted against that session
 (family id, which survives rotation; the token itself is never stored or logged): `RATE_LIMIT_REFRESH_SESSION_PER_MINUTE`,
-default 30. A missing, unknown, expired or already used token is counted against the client address:
+default 30. A missing or unknown token, an already used (rotated or revoked) token, or one whose stored expiry has passed is counted against the client address (a session that only timed out from inactivity is still counted per session, then refused):
 `RATE_LIMIT_REFRESH_INVALID_PER_MINUTE`, default 20. All refresh calls also count toward the general per-address ceiling
 `RATE_LIMIT_IP_PER_MINUTE` (default 300).
 
