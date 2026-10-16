@@ -127,6 +127,22 @@ describe("staging gets production-grade defaults unless it explicitly opts out",
     expect(() => validateEnvironment({ ...valid, NODE_ENV: "staging", ALLOW_NON_PRODUCTION_DEFAULTS: "yes" })).toThrow("true or false");
   });
 
+  it("refuses the loose mode on a public https host unless a second flag acknowledges it", () => {
+    const loose = { ...valid, NODE_ENV: "staging", MAIL_TRANSPORT: "console", ALLOW_NON_PRODUCTION_DEFAULTS: "true" };
+    expect(() => validateEnvironment({ ...loose, APP_BASE_URL: "https://staging.example.com" })).toThrow("ALLOW_NON_PRODUCTION_ON_PUBLIC_HOST");
+    expect(() => validateEnvironment({ ...loose, CORS_ORIGINS: "http://localhost:3001,https://app.example.com" })).toThrow("ALLOW_NON_PRODUCTION_ON_PUBLIC_HOST");
+    expect(() => validateEnvironment({ ...loose, APP_BASE_URL: "https://staging.example.com", ALLOW_NON_PRODUCTION_ON_PUBLIC_HOST: "false" })).toThrow("public host");
+    expect(() => validateEnvironment({ ...loose, APP_BASE_URL: "https://staging.example.com", ALLOW_NON_PRODUCTION_ON_PUBLIC_HOST: "true" })).not.toThrow();
+  });
+
+  it("keeps the loose mode working for local hosts and plain http, and does not touch strict staging", () => {
+    const loose = { ...valid, NODE_ENV: "staging", MAIL_TRANSPORT: "console", ALLOW_NON_PRODUCTION_DEFAULTS: "true" };
+    for (const base of ["http://localhost:3001", "https://localhost:3001", "https://127.0.0.1:8443", "https://app.localhost", "http://web:8080"])
+      expect(() => validateEnvironment({ ...loose, APP_BASE_URL: base })).not.toThrow();
+    expect(() => validateEnvironment({ ...loose, CORS_ORIGINS: "http://127.0.0.1:8080" })).not.toThrow();
+    expect(() => validateEnvironment({ ...valid, ...mfaKey, ...stagingMail, NODE_ENV: "staging" })).not.toThrow();
+  });
+
   it("rejects NODE_ENV values it does not know, so a typo can not select development defaults", () => {
     for (const value of ["prod", "Production", "stage", ""]) expect(() => validateEnvironment({ ...valid, NODE_ENV: value })).toThrow("NODE_ENV must be one of");
   });

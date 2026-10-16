@@ -101,6 +101,10 @@ jobs:
       - name: check-env.sh self-test
         working-directory: .
         run: sh scripts/check-env.test.sh
+      # The DAST gate must keep failing on a Medium alert.
+      - name: dast-check self-test
+        working-directory: .
+        run: node --test scripts/dast-check.test.mjs
 
   frontend:
     name: Frontend (lint, typecheck, build, i18n)
