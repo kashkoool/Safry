@@ -70,15 +70,17 @@ Use this only when a platform administrator has lost BOTH the authenticator devi
 **Procedure** (one-off container from the `migrate` image, same owner login as the bootstrap above):
 
 ```sh
-docker compose --profile ops run --rm migrate node node_modules/tsx/dist/cli.mjs scripts/reset-platform-admin-mfa.ts --email admin@example.com --reason "TICKET-123" --confirm
+docker compose --profile ops run --rm migrate node node_modules/tsx/dist/cli.mjs scripts/reset-platform-admin-mfa.ts --email admin@example.com --reason "TICKET-123" --operator "<your name>" --approver "<second person>" --confirm
 ```
 
-Without a container: `pnpm --dir backend admin:reset-mfa -- --email <address> --reason <text> --confirm` with `DATABASE_MIGRATE_URL` set. `--email`, `--reason` and `--confirm` are all required.
+Without a container: `pnpm --dir backend admin:reset-mfa -- --email <address> --reason <text> --operator <name> --approver <name> --confirm` with `DATABASE_MIGRATE_URL` set. All of `--email`, `--reason`, `--operator`, `--approver` and `--confirm` are required; operator and approver names go into the audit event.
 
-In one database transaction the script locks the account row, ends every refresh session of the account in every tenant, clears the authenticator secret, the recovery codes, the replay marker and any pending login challenge, and writes an audit event `platform.admin.mfa_reset` (entity: the user; metadata: your reason, whether MFA was set, how many sessions ended, `channel: operator-script`). The password and the platform administrator flag are not changed. It prints no secret, only the number of sessions ended. Any failure rolls everything back.
+Order: (1) confirm the identity out of band, (2) run the script, (3) the administrator completes the normal e-mail password reset ("Forgot password"), (4) signs in with the new password, (5) re-enrols MFA.
+
+In one database transaction the script locks the account row, ends every refresh session of the account in every tenant, clears the authenticator secret, the recovery codes, the replay marker and any pending login challenge, invalidates the current password (so anyone who merely knows it can not sign in and enrol their own authenticator) and any unused reset links, and writes an audit event `platform.admin.mfa_reset` (entity: the user; metadata: your reason, whether MFA was set, how many sessions ended, `channel: operator-script`). The platform administrator flag is not changed. It prints no secret, only the number of sessions ended. Any failure rolls everything back.
 
 **What happens next**
-- The administrator signs in with the password only. Every platform route answers `403 mfa_enrollment_required`; only the enrolment endpoints, `/auth/me` and sign-out work, exactly as for a new administrator.
+- The administrator requests a password reset from the sign-in page and sets a new password from the e-mailed link (the old password no longer works), then signs in. Every platform route answers `403 mfa_enrollment_required`; only the enrolment endpoints, `/auth/me` and sign-out work, exactly as for a new administrator.
 - They enrol a new authenticator (Account, Security) and store the new recovery codes. The next sign-in asks for the code again.
 - If the administrator is also locked out by failed sign-ins, wait for the lockout (`LOGIN_LOCKOUT_MINUTES`) or have another platform administrator unlock the account.
 
