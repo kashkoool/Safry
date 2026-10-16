@@ -726,6 +726,9 @@ async function main(): Promise<void> {
     "POST /auth/login-throttle/unlock", "POST /auth/mfa/recovery-codes", "GET /users/me/invitations",
     "POST /users/me/invitations/{membershipId}/accept", "POST /users/me/invitations/{membershipId}/decline"
   ]);
+  const documentedKeys = new Set(documented.map(route => `${route.method} ${route.path}`));
+  const staleExemptions = [...coveredByIntegrationSuites].filter(key => !documentedKeys.has(key));
+  assert.equal(staleExemptions.length, 0, `Stale integration-suite exemptions: ${JSON.stringify(staleExemptions)}`);
   const uncovered = documented.filter(route => !exercised.has(`${route.method} ${route.path}`) && !coveredByIntegrationSuites.has(`${route.method} ${route.path}`));
   console.log(`ROUTE COVERAGE: ${exercised.size}/${documented.length}; uncovered: ${JSON.stringify(uncovered)}`);
   assert.equal(uncovered.length, 0, "Some API operations have not been exercised");

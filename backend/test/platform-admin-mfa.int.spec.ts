@@ -158,7 +158,7 @@ describe("platform administrators need MFA", () => {
       const proceed = new Promise<void>((resolve) => (go = resolve));
       const holder = world.prisma.$transaction(
         async (tx) => {
-          await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${targetId} FOR UPDATE`;
+          await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${targetId}::uuid FOR UPDATE`;
           locked();
           await proceed;
           await tx.user.update({ where: { id: targetId }, data: change() });
