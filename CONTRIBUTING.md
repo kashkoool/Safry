@@ -3,7 +3,7 @@
 ## Branching
 
 - `main` is protected and always releasable. Work on a short-lived branch: `feat/<topic>`, `fix/<topic>`, `chore/<topic>`.
-- Open a pull request into `main`. CI (lint, typecheck, tests, build, secret scan, CodeQL) must be green and the owner must approve.
+- Open a pull request into `main`. The required checks listed in [docs/CI.md](docs/CI.md) must pass (backend, frontend, migrate image, secret scan, E2E, image scan, Lighthouse and the others marked required there). CodeQL and the other non-required workflows run when their triggers match (see the trigger table in docs/CI.md); look at their results, but they do not block the merge. No approval count is enforced by branch protection, and linear history is required.
 
 ## Commits
 
@@ -13,7 +13,7 @@
 
 ## Running checks locally
 
-Requires Node 22 and pnpm 11. Each of `backend/` and `frontend/` has its own lockfile.
+Requires Node 22.12 or newer (`engines` in `backend/package.json`) and pnpm 11 (the version CI uses). Each of `backend/` and `frontend/` has its own lockfile.
 
 ```bash
 cd backend
