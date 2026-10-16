@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError } from "./api";
+import { ApiError, safeErrorCode } from "./api";
 import { errorText, retryAfterOf } from "./errors";
 
 const pick = (arabic: string, english: string) => `${arabic}|${english}`;
@@ -39,5 +39,17 @@ describe("errorText", () => {
   });
   it("passes unknown 4xx text through the translator", () => {
     expect(errorText(new ApiError(404, "Not here"), pick, tr)).toBe("tr:Not here");
+  });
+});
+
+describe("safeErrorCode", () => {
+  it("keeps lower case and upper case machine codes", () => {
+    expect(safeErrorCode("mfa_enrollment_required")).toBe("mfa_enrollment_required");
+    expect(safeErrorCode("BOOKING_EXPIRED")).toBe("BOOKING_EXPIRED");
+    expect(safeErrorCode("Booking_Pending_Limit2")).toBe("Booking_Pending_Limit2");
+  });
+  it("drops anything that is not a plain code", () => {
+    for (const bad of [undefined, null, 42, "", "1ABC", "has space", "a-b", "<script>", "x".repeat(65), "الرمز"]) expect(safeErrorCode(bad)).toBeUndefined();
+    expect(safeErrorCode("x".repeat(64))).toBe("x".repeat(64));
   });
 });

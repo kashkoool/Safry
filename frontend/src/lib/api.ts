@@ -467,9 +467,14 @@ async function send(path: string, init: RequestInit, allowRefresh: boolean): Pro
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     const wait = response.status === 429 ? parseRetryAfter(response.headers.get("retry-after")) : undefined;
-    throw new ApiError(response.status, safeMessage(response.status, body), wait, typeof body.code === "string" && /^[a-z][a-z_]{0,63}$/.test(body.code) ? body.code : undefined);
+    throw new ApiError(response.status, safeMessage(response.status, body), wait, safeErrorCode(body.code));
   }
   return response;
+}
+
+/** Machine code of an error response: letters, digits and underscore only (lower case such as mfa_enrollment_required or upper case such as BOOKING_EXPIRED), at most 64 characters; anything else is dropped. */
+export function safeErrorCode(code: unknown): string | undefined {
+  return typeof code === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(code) ? code : undefined;
 }
 
 export async function request<T>(path: string, init: RequestInit = {}, allowRefresh = true): Promise<T> {
