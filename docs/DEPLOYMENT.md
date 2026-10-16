@@ -265,6 +265,15 @@ provider outage therefore loses that message; the user simply asks again (the pe
 - Restore into a new, empty database with `backend/scripts/backup/restore.sh`, then rehearse it on a
   schedule (`restore-test.sh`). RPO/RTO targets are still to be decided.
 
+### Recovery drills
+
+Two runnable drills live in `scripts/drills/` (Docker only; run weekly and on migration or Dockerfile changes by `.github/workflows/recovery-drills.yml`, details in [CI.md](CI.md)):
+
+- `bash scripts/drills/backup-restore.sh` backs up a migrated and seeded database, restores it into a new server and verifies data, row-level security, partitions, roles and `migrate status`, and prints the restore time.
+- `bash scripts/drills/rollback.sh [previous-git-ref]` starts the previous release's API image against the schema of the current release and runs login plus list calls. Run it before every release that contains migrations.
+
+Not proven by either: the managed cloud backup service, point-in-time restore, cross-region restore, restore time at production size. Repeat the restore on the real provider once it exists (see [INFRASTRUCTURE.md](INFRASTRUCTURE.md), section 7).
+
 ## 7. Local development
 
 `backend/compose.yml` runs only PostgreSQL for development, published on `127.0.0.1:${POSTGRES_PORT:-5432}`.
