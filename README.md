@@ -6,7 +6,7 @@
 
 Safry is a bilingual (Arabic/English, RTL/LTR) travel-services marketplace platform: a NestJS 12 modular monolith (`backend/`, Prisma 7, PostgreSQL) and a React 19 + Vite single-page app (`frontend/`). The full operating guide below is in Arabic; this section is the English entry point and does not replace it.
 
-**This is an early local/development version, not a production-ready or commercially complete platform.** There is no payment, no e-mail verification or invitation flow, no public-registration abuse protection, and many planned product requirements are not implemented (see the status table).
+**This is an early local/development version, not a production-ready or commercially complete platform.** There is no payment integration and no public-registration abuse protection. Password change/reset, e-mail verification (sent through Resend) and membership invitations do exist, see [backend/docs/auth-email-flows.md](backend/docs/auth-email-flows.md). Many planned product requirements are not implemented (see the status table).
 
 ### Quick start (local)
 
@@ -55,16 +55,17 @@ Nothing migrates or seeds at API start: migrations are the one-off `migrate` job
 ### Tests
 
 ```bash
-pnpm --dir backend test          # unit: 110 cases (+ 2 skipped) in 16 spec files (vitest output)
-pnpm --dir backend test:int      # integration: 242 cases in 19 spec files on a throwaway PostgreSQL with RLS forced on
-pnpm --dir backend test:routes   # route gate: fails when any of the 71 registered routes was not exercised (run after test:int)
+pnpm --dir backend test          # backend unit tests (vitest)
+pnpm --dir backend test:int      # integration tests on a throwaway PostgreSQL with RLS forced on (embedded; set TEST_DATABASE_URL to use your own server, see backend/test/README.md)
+pnpm --dir backend test:routes   # route gate: fails when any registered route was not exercised by the integration suite (run after test:int)
+pnpm --dir frontend test:unit     # frontend unit tests (vitest)
 pnpm --dir frontend e2e          # Playwright browser tests (see frontend/README.md); the mocked-API specs need no backend
 pnpm --dir backend test:business # smoke script against a RUNNING API and its database (not part of the automated suites)
 pnpm --dir backend lint && pnpm --dir backend typecheck
 pnpm --dir frontend lint && pnpm --dir frontend build
 ```
 
-The frontend has Playwright end-to-end tests (`frontend/e2e`): real-API journeys plus mocked-API specs for the token-refresh race, administrator step-up, booking idempotency and the sessions screen; it has no unit tests. The integration suite does not yet cover provider/organization/catalog routes, exchange rates or rate limiting. The tenant-isolation spec tests exactly this: RLS on every table with a tenant key, fail-closed behaviour without a tenant scope, hidden bookings/services of another tenant, cross-tenant booking and role/status changes refused, forged `x-tenant-id` ignored, and the platform-administrator guard. "Tenant isolation is tested" means that list and nothing more.
+The frontend has Playwright end-to-end tests (`frontend/e2e`): real-API journeys plus mocked-API specs for the token-refresh race, administrator step-up, booking idempotency and the sessions screen; it also has a small set of Vitest unit tests (`pnpm --dir frontend test:unit`, run in CI). The tenant-isolation spec tests exactly this: RLS on every table with a tenant key, fail-closed behaviour without a tenant scope, hidden bookings/services of another tenant, cross-tenant booking and role/status changes refused, forged `x-tenant-id` ignored, and the platform-administrator guard. "Tenant isolation is tested" means that list and nothing more.
 
 ### Implementation status
 
@@ -72,7 +73,7 @@ Module-level status, checked against `backend/src/modules`. "Implemented" means 
 
 | Area | Status | Notes |
 |---|---|---|
-| Identity and access (`identity`) | Partly implemented | Login, refresh, sessions, lockout, roles, permissions, tenants and RLS isolation exist. MFA (TOTP): sign-in with a code works in the web UI; enrolment (setup/enable/disable) is **API only**. The web UI has a sessions screen, sends an `Idempotency-Key` on booking creation and asks for the current password (and MFA code) when granting platform administration (step-up). No password recovery or change-password endpoint, no e-mail verification, no SSO. Tenant `settings` are stored but nothing applies them. |
+| Identity and access (`identity`) | Partly implemented | Login, refresh, sessions, lockout, roles, permissions, tenants and RLS isolation exist. MFA (TOTP): sign-in with a code works in the web UI; enrolment (setup/enable/disable, recovery codes) is available in the web UI under Account > Security. The web UI has a sessions screen, sends an `Idempotency-Key` on booking creation and asks for the current password (and MFA code) when granting platform administration (step-up). Password change, forgot/reset and e-mail verification exist (see [backend/docs/auth-email-flows.md](backend/docs/auth-email-flows.md)); no SSO. Tenant `settings` are stored but nothing applies them. |
 | Entities (`entities`) | Minimal | Provider organizations, departments, staff and roles only. No branches, traveler profile, trip supervisor or documents. |
 | CRM | Not started | No module exists in `backend/src/modules`. |
 | Travel services (`travel-services`) | Partly implemented | One generic service catalog with a category column; marketplace listing; display-only currency conversion. |
@@ -221,15 +222,16 @@ pnpm --dir backend test:business
 
 - **عزل الجهات:** كل طلب مرتبط بجهة الرمز الموثّق فقط (وليس بترويسة `x-tenant-id`). الحماية على طبقتين: تقييد الاستعلامات في التطبيق، وسياسات Row-Level Security في PostgreSQL (الهجرة `0010`). المُختبَر آلياً: RLS على كل جدول له مفتاح جهة، والفشل المغلق دون جهة، وإخفاء حجوزات وخدمات جهة أخرى، ورفض الحجز وإسناد الأدوار وتغيير الحالة عبر الجهات، وتجاهل `x-tenant-id` المزوّر، وحارس مدير المنصة. مسارات `/providers` و`/organizations` عبر الجهات غير مغطاة بعد باختبار تكامل..
 - **قفل الحساب:** بعد `LOGIN_MAX_ATTEMPTS` محاولات فاشلة (الافتراضي 5) يُقفل الحساب `LOGIN_LOCKOUT_MINUTES` دقيقة (الافتراضي 15).
-- **المصادقة متعددة العوامل (TOTP) — واجهة API فقط حالياً:** `/auth/mfa/setup` ثم `/auth/mfa/enable`؛ عند التفعيل يعيد `/auth/login` تحدّياً `mfaRequired` يُكمَل عبر `/auth/mfa/verify`. أكواد الاسترداد تظهر مرة واحدة فقط. **الواجهة الأمامية تدعم إدخال رمز التحقق عند الدخول، أما التفعيل والتعطيل فعبر API فقط**، فالحساب الذي يفعّلها لا يستطيع الدخول من الواجهة.
+- **المصادقة متعددة العوامل (TOTP):** `/auth/mfa/setup` ثم `/auth/mfa/enable`؛ عند التفعيل يعيد `/auth/login` تحدّياً `mfaRequired` يُكمَل عبر `/auth/mfa/verify`. أكواد الاسترداد تظهر مرة واحدة فقط. **الواجهة الأمامية تدعم إدخال رمز التحقق عند الدخول، كما يمكن التفعيل والتعطيل من الحساب > الأمان (Account > Security)، إضافة إلى API.** تغيير كلمة المرور ونسيانها وإعادة تعيينها والتحقق من البريد متوفرة، انظر [backend/docs/auth-email-flows.md](backend/docs/auth-email-flows.md).
 - **البريد نفسه في أكثر من جهة:** هوية واحدة وعضوية لكل جهة. التسجيل في جهة ثانية يتطلب كلمة مرور الحساب الحالي.
 - **قاعدة البيانات المحلية (`prisma dev`)** لا تدعم الكتابة بدور مقيّد، لذلك تعطّل الطبقة الثانية (RLS) تلقائياً فيها مع بقاء طبقة التطبيق. اضبط `DATABASE_RLS=on` في أي بيئة PostgreSQL حقيقية (هو الافتراضي خارج `development`).
 
 ```powershell
-pnpm --dir backend test           # اختبارات الوحدة (66 حالة)
-pnpm --dir backend test:int       # اختبارات التكامل (80 حالة) على PostgreSQL حقيقي مضمّن (يشغّل nest build أولاً)
+pnpm --dir backend test           # اختبارات الوحدة للـ Backend (بلا أعداد ثابتة)
+pnpm --dir backend test:int       # اختبارات التكامل على PostgreSQL حقيقي مضمّن (يشغّل nest build أولاً)
 pnpm --dir backend test:business  # اختبار الأعمال على خادم يعمل (SMOKE_API_BASE لتغيير العنوان)
 pnpm --dir backend typecheck
+pnpm --dir frontend test:unit     # اختبارات الوحدة للواجهة الأمامية (Vitest، تعمل في CI)
 ```
 
 ## التشغيل بـ Docker (على أي جهاز)
