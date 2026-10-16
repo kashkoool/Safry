@@ -196,7 +196,7 @@ On the web the refresh token is an HttpOnly cookie, never in a response body or 
 | Property | Value |
 |---|---|
 | Name | `__Secure-safry_rt` in production, `safry_rt` otherwise |
-| Flags | `HttpOnly; SameSite=Strict; Secure` (Secure only when `NODE_ENV=production`), no `Domain` (host-only) |
+| Flags | `HttpOnly; SameSite=Strict; Secure` (Secure when `NODE_ENV` is `production` or `staging`), no `Domain` (host-only) |
 | Path | `/api/v1/auth` (not `__Host-`: that prefix needs `Path=/`, which would send the cookie to every API route) |
 | Lifetime | `Max-Age` = remaining absolute session lifetime (`SESSION_ABSOLUTE_TIMEOUT_HOURS`, default 24 h); idle timeout 15 min is enforced server-side |
 | CSRF | `/auth/refresh` and `/auth/logout` need `X-Requested-With: XMLHttpRequest`; a present `Origin` must be a `CORS_ORIGINS` entry (whole string: scheme, host, port) or the request's own origin: scheme, `Host` and port (403 otherwise). The scheme comes from `X-Forwarded-Proto` only when `TRUST_PROXY` is set |
@@ -219,7 +219,8 @@ Operational consequences:
 | `WEB_BIND`, `WEB_PORT` | no | default `127.0.0.1:3001` |
 | `TRUST_PROXY` | no | default `1`; see section 4 |
 | `CORS_ORIGINS` | no | empty = same-origin only; otherwise exact `https://` origins (credentials are allowed for exactly these); `*` is rejected |
-| `SWAGGER_ENABLED` | no | default `false` in production |
+| `SWAGGER_ENABLED` | no | default `false` in production and staging |
+| `NODE_ENV` | fixed | `production`; `staging` gets the same strict rules (https, Secure cookies, real mail, dedicated MFA key, TLS to the database, no API docs, no localhost CORS). Only a local test stack may relax staging with `ALLOW_NON_PRODUCTION_DEFAULTS=true` (console mail, open docs, localhost CORS); the flag is refused with any other `NODE_ENV`. Other values are rejected at start |
 | `RESEND_API_KEY`, `MAIL_FROM`, `APP_BASE_URL` | yes | transactional e-mail, see section 5a; `MAIL_TRANSPORT` is fixed to `resend` by compose |
 | `SITE_ADDRESS`, `HTTP_PORT`, `HTTPS_PORT`, `HTTP_BIND` | tls profile | public host name and published ports |
 | `BACKUP_INTERVAL_SECONDS`, `BACKUP_KEEP_DAYS` | backup profile | default daily, keep 14 days |

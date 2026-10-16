@@ -8,6 +8,7 @@ import { currentScope, type DbScope } from "../common/context/request-context.js
 import type * as runtime from "@prisma/client/runtime/client";
 import { PrismaClient, type Prisma } from "../generated/prisma/client.js";
 import { TENANT_KEY, confineToTenant } from "./tenant-scope.js";
+import { productionLike } from "../config/environment.js";
 
 /** True while the current async chain runs inside a transaction whose RLS context is already set. */
 const insideScopedTransaction = new AsyncLocalStorage<{ dirty: InvalidationTarget[] }>();
@@ -85,7 +86,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnAppli
     // "auto" is on everywhere except the embedded Prisma dev engine, which crashes on writes made under a restricted role.
     this.detectEmbeddedEngine = mode === "auto" && config.get<string>("NODE_ENV") === "development";
     this.appRole = config.get<string>("DATABASE_APP_ROLE", "safry_app");
-    this.production = config.get<string>("NODE_ENV") === "production";
+    this.production = productionLike(config);
     if (!ROLE_NAME.test(this.appRole)) throw new Error("DATABASE_APP_ROLE is invalid");
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const base = this;

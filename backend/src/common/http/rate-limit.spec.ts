@@ -1,9 +1,10 @@
 import { createServer, type Server } from "node:net";
 import { Redis } from "ioredis";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { Logger } from "@nestjs/common";
 import { trustProxySetting } from "../../app.setup.js";
 import { ThrottlerStorageService } from "@nestjs/throttler";
-import { FailoverThrottlerStorage, REDIS_OPTIONS, RedisThrottlerStorage, accountOf, accountTracker, rateLimitState, resetRateLimitState } from "./rate-limit.js";
+import { FailoverThrottlerStorage, REDIS_OPTIONS, createThrottlerStorage, RedisThrottlerStorage, accountOf, accountTracker, rateLimitState, resetRateLimitState } from "./rate-limit.js";
 
 describe("trustProxySetting", () => {
   it("maps the environment value to an Express setting", () => {
@@ -124,5 +125,26 @@ describe("accountTracker", () => {
     const b = accountTracker({ body: { email: "victim@example.test" }, ip: "198.51.100.2" } as never);
     expect(a).not.toBe(b);
     expect(a).toBe(accountTracker({ body: { email: " victim@example.test " }, ip: "198.51.100.1" } as never));
+  });
+});
+
+describe("createThrottlerStorage without Redis", () => {
+  const config = (values: Record<string, string>): never => ({ get: (key: string) => values[key] }) as never;
+  const logged = (nodeEnv: string, extra: Record<string, string> = {}): string[] => {
+    const error = vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    createThrottlerStorage(config({ NODE_ENV: nodeEnv, ...extra }));
+    const messages = error.mock.calls.map((call) => String(call[0]));
+    error.mockRestore();
+    return messages;
+  };
+
+  it("reports loudly (error level) that limits are per process in production and in staging", () => {
+    for (const env of ["production", "staging"]) expect(logged(env).join()).toContain("RATE_LIMIT_REDIS_URL is not set");
+  });
+
+  it("stays quiet in development, tests and an explicitly relaxed staging", () => {
+    expect(logged("development")).toEqual([]);
+    expect(logged("test")).toEqual([]);
+    expect(logged("staging", { ALLOW_NON_PRODUCTION_DEFAULTS: "true" })).toEqual([]);
   });
 });

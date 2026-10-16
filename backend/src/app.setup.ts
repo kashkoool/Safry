@@ -6,12 +6,15 @@ import type { Express } from "express";
 import compression from "compression";
 import type { NextFunction, Request, Response } from "express";
 import helmet from "helmet";
+import { productionLike } from "./config/environment.js";
 
 /** Shared HTTP configuration for the server entry point and the integration tests. */
 export function configureApp(app: INestApplication): void {
   const config = app.get(ConfigService);
   const prefix = config.get<string>("API_PREFIX", "api/v1");
-  const production = config.get<string>("NODE_ENV") === "production";
+  const production = productionLike(config);
+  if (config.get<string>("NODE_ENV") === "staging" && !production)
+    new Logger("Config").warn("NODE_ENV=staging with ALLOW_NON_PRODUCTION_DEFAULTS=true: development defaults are active (console mail, open API docs, localhost CORS, non-Secure cookies). Never use this on an internet-facing or production-data environment.");
 
   configureTrustProxy(app, config.get<string>("TRUST_PROXY"));
   app.use(helmet());

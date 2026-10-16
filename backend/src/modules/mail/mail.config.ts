@@ -2,6 +2,7 @@ import type { ConfigService } from "@nestjs/config";
 import { ConsoleTransport } from "./console.transport.js";
 import { ResendTransport } from "./resend.transport.js";
 import { DEFAULT_MAIL_RETRY, type MailRetryPolicy, type MailTransport } from "./mail.types.js";
+import { productionLike } from "../../config/environment.js";
 
 export type MailTransportName = "resend" | "console";
 
@@ -9,7 +10,7 @@ export type MailTransportName = "resend" | "console";
 export function mailTransportName(config: { get<T = string>(key: string): T | undefined }): MailTransportName {
   const explicit = config.get<string>("MAIL_TRANSPORT");
   if (explicit === "resend" || explicit === "console") return explicit;
-  return config.get<string>("NODE_ENV") === "production" ? "resend" : "console";
+  return productionLike(config) ? "resend" : "console";
 }
 
 export function createMailTransport(config: ConfigService): MailTransport {
