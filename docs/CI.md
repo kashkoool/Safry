@@ -33,7 +33,7 @@ are planned upgrades.
 
 | Check | Command |
 |---|---|
-| Backend | `cd backend && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm lint && pnpm build && pnpm typecheck`; tests: `pnpm test:int` starts its own embedded PostgreSQL (fine on Linux/macOS, flaky on Windows); `TEST_DATABASE_URL=<postgres url> pnpm test:int:all` runs build, unit, integration and the route gate against a throwaway PostgreSQL 17 you provide (never a real database), as CI does |
+| Backend | `cd backend && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm lint && pnpm build && pnpm typecheck`; tests: `pnpm test:int` starts its own embedded PostgreSQL (UTF-8 encoding and the C locale, which avoids the Windows code-page failure); `TEST_DATABASE_URL=<postgres url> pnpm test:int:all` runs build, unit, integration and the route gate against a throwaway PostgreSQL 17 you provide (never a real database), as CI does |
 | Frontend | `cd frontend && pnpm install --frozen-lockfile && pnpm lint && pnpm build && pnpm check:i18n` |
 | Migrate image | `docker build --target migrate -t safry-migrate:ci backend`, then run it as in `ci.yml` |
 | Secret scan | `gitleaks git --no-banner .` |

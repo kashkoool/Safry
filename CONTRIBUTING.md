@@ -3,7 +3,7 @@
 ## Branching
 
 - `main` is protected and always releasable. Work on a short-lived branch: `feat/<topic>`, `fix/<topic>`, `chore/<topic>`.
-- Open a pull request into `main`. The required checks listed in [docs/CI.md](docs/CI.md) must pass (backend, frontend, migrate image, secret scan, E2E, image scan, Lighthouse and the others marked required there). CodeQL and the other non-required workflows also run on pull requests; look at their results, but they do not block the merge. No approval count is enforced by branch protection, and linear history is required.
+- Open a pull request into `main`. The required checks listed in [docs/CI.md](docs/CI.md) must pass (backend, frontend, migrate image, secret scan, E2E, image scan, Lighthouse and the others marked required there). CodeQL and the other non-required workflows run when their triggers match (see the trigger table in docs/CI.md); look at their results, but they do not block the merge. No approval count is enforced by branch protection, and linear history is required.
 
 ## Commits
 

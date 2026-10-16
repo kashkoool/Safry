@@ -83,7 +83,7 @@ Module-level status, checked against `backend/src/modules`. "Implemented" means 
 
 ### Known limitations
 
-The ones that most affect a reader of this README: MFA enrolment has no UI, tenant configuration is not enforced, money is stored as 32-bit minor units with one cap for every currency, server error messages are free-text Arabic translated on the client by exact string match, and "today" in the booking rules is the server's UTC date.
+The ones that most affect a reader of this README: tenant configuration is not enforced, money is stored as 32-bit minor units with one cap for every currency, server error messages are free-text Arabic translated on the client by exact string match, and "today" in the booking rules is the server's UTC date.
 
 ---
 
