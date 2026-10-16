@@ -131,7 +131,7 @@ function isLocalOrigin(url: URL): boolean {
  */
 export function assertLooseModeNotPublic(config: Environment): void {
   if (config["ALLOW_NON_PRODUCTION_ON_PUBLIC_HOST"] === "true") return;
-  const named = [config["APP_BASE_URL"], ...String(config["CORS_ORIGINS"] ?? "").split(",")]
+  const named = [config["APP_BASE_URL"], ...(typeof config["CORS_ORIGINS"] === "string" ? config["CORS_ORIGINS"] : "").split(",")]
     .map((value) => (typeof value === "string" ? value.trim() : ""))
     .filter((value) => value !== "");
   for (const value of named) {
