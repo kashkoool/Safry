@@ -119,6 +119,35 @@ export function assertMailConfig(config: Environment): void {
   }
 }
 
+/** Hosts the loose staging mode may serve without a second flag: this machine, a `.localhost` name or a single-label compose name. */
+function isLocalOrigin(url: URL): boolean {
+  return isInternalHost(url.hostname) || url.hostname.endsWith(".localhost");
+}
+
+/**
+ * ALLOW_NON_PRODUCTION_DEFAULTS=true switches off the production safety rules (console mail, open API docs, localhost CORS, non-Secure
+ * cookies). If APP_BASE_URL or CORS_ORIGINS names a non-local https host the stack is probably reachable from the internet, so the loose
+ * mode needs a second, explicit acknowledgement; otherwise a flag left on by accident can not silently weaken a public host.
+ */
+export function assertLooseModeNotPublic(config: Environment): void {
+  if (config["ALLOW_NON_PRODUCTION_ON_PUBLIC_HOST"] === "true") return;
+  const named = [config["APP_BASE_URL"], ...String(config["CORS_ORIGINS"] ?? "").split(",")]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter((value) => value !== "");
+  for (const value of named) {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      continue; // malformed values are rejected by their own checks
+    }
+    if (url.protocol === "https:" && !isLocalOrigin(url))
+      throw new Error(
+        `ALLOW_NON_PRODUCTION_DEFAULTS=true with the public host ${url.host} is refused: the loose mode turns off production safety rules. Remove the flag, or set ALLOW_NON_PRODUCTION_ON_PUBLIC_HOST=true if this stack really is a throwaway test environment`
+      );
+  }
+}
+
 export function validateEnvironment(config: Environment): Environment {
   const databaseUrl = requiredString(config, "DATABASE_URL");
   const nodeEnv = config["NODE_ENV"];
@@ -129,6 +158,7 @@ export function validateEnvironment(config: Environment): Environment {
     throw new Error("ALLOW_NON_PRODUCTION_DEFAULTS must be true or false");
   if (allowNonProduction === "true" && nodeEnv !== "staging")
     throw new Error("ALLOW_NON_PRODUCTION_DEFAULTS=true is only valid with NODE_ENV=staging");
+  if (allowNonProduction === "true") assertLooseModeNotPublic(config);
   const productionGrade = isProductionLike(nodeEnv, allowNonProduction);
   if (productionGrade && config["DATABASE_ALLOW_PLAINTEXT"] !== "true") assertDatabaseTls(databaseUrl);
   const jwtSecret = requiredSecret(config, "JWT_ACCESS_SECRET");
