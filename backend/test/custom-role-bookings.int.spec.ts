@@ -99,9 +99,19 @@ describe("bookings for custom roles", () => {
     expect((await status(session, rivalBooking, "CONFIRMED")).status).toBe(403);
   });
 
-  it("booking.read without booking.manage inside an organization sees only its own bookings", async () => {
+  it("organization staff with booking.read but without booking.manage see the organization's bookings, never confirm, and never see another organization's", async () => {
     const { session } = await custom(["booking.read"], orgId);
-    expect(await list(session)).toEqual({ status: 200, ids: [] });
+    const seen = await list(session);
+    expect(seen.status).toBe(200);
+    expect(seen.ids).toContain(travelerBooking);
+    expect(seen.ids).not.toContain(rivalBooking);
+    const fresh = (await book(traveler, ownServiceId)).body.id as string;
+    expect((await status(session, fresh, "CONFIRMED")).status).toBe(403);
+    expect((await status(session, fresh, "CANCELLED")).status).toBe(403);
+    const { session: rivalStaff } = await custom(["booking.read"], rival.organizationId);
+    const theirs = await list(rivalStaff);
+    expect(theirs.ids).toContain(rivalBooking);
+    expect(theirs.ids).not.toContain(travelerBooking);
   });
 
   it("a custom role in another tenant never sees this tenant's bookings", async () => {
@@ -117,7 +127,7 @@ describe("bookings for custom roles", () => {
   it("system roles are unchanged", async () => {
     const mine = await list(traveler);
     expect(mine.status).toBe(200);
-    expect(mine.ids.sort()).toEqual([travelerBooking, rivalBooking].sort());
+    expect(mine.ids).toEqual(expect.arrayContaining([travelerBooking, rivalBooking]));
     const own = await list(providerSession);
     expect(own.ids).toContain(travelerBooking);
     expect(own.ids).not.toContain(rivalBooking);

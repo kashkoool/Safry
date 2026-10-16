@@ -70,12 +70,12 @@ export class BookingsService {
 
   /**
    * What a member may see and act on, decided by permission (never by role name): the whole tenant for a tenant
-   * administrator, the bookings of the organization's services for staff holding booking.manage, and otherwise only
+   * administrator, the bookings of the organization's services for organization staff (changing a status needs booking.manage), and otherwise only
    * the member's own bookings. The routes themselves are guarded by booking.read.
    */
   private bookingScope(user: AuthUser): Prisma.BookingWhereInput {
     if (admin(user)) return { tenantId: user.tenantId };
-    if (this.manages(user))
+    if (operator(user))
       return {
         tenantId: user.tenantId,
         service: { organization: { members: { some: { id: user.membershipId } } } }
@@ -253,7 +253,7 @@ export class BookingsService {
     if (status === "CONFIRMED" && !manager)
       throw new ForbiddenException("تأكيد الحجز متاح للمنشأة والمدير فقط");
     const result = await this.prisma.$transaction(async (tx) => {
-      const first = await tx.booking.findFirst({ where: { id, ...this.bookingScope(user) } });
+      const first = await tx.booking.findFirst({ where: { id, ...(manager ? this.bookingScope(user) : this.ownScope(user)) } });
       if (!first) throw new NotFoundException("الحجز غير موجود");
       await this.lockService(tx, user, first.serviceId, status === "CONFIRMED");
       const booking = await tx.booking.findUniqueOrThrow({ where: { id, tenantId: user.tenantId }, include: bookingInclude });
