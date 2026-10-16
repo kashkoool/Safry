@@ -28,6 +28,7 @@ import { AcceptedDto, ForgotPasswordDto, ResendVerificationDto, ResetPasswordDto
 import { CredentialService } from "./credential.service.js";
 import { AccountSecurityService } from "./account-security.service.js";
 import { MfaService, type MfaStatus } from "./mfa.service.js";
+import { RefreshRateLimit } from "./refresh-rate-limit.js";
 
 const NATIVE_CLIENT_HEADER = ApiHeader({
   name: "X-Client",
@@ -50,6 +51,7 @@ export class AuthController {
     private readonly mfa: MfaService,
     private readonly security: AccountSecurityService,
     private readonly credentials: CredentialService,
+    private readonly refreshLimit: RefreshRateLimit,
     config: ConfigService
   ) {
     this.production = config.get<string>("NODE_ENV") === "production";
@@ -124,7 +126,6 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(200)
   @NATIVE_CLIENT_HEADER
   @CSRF_HEADER_DOC
@@ -138,6 +139,7 @@ export class AuthController {
   ): Promise<TokenPair | NativeTokenPair> {
     this.guardBrowser(req, true);
     const token = this.presentedToken(req, input);
+    await this.refreshLimit.check(res, ipAddress, token ? await this.authService.liveSessionFamily(token) : null);
     if (!token) throw new UnauthorizedException("Refresh token is invalid or expired");
     return this.deliver(req, res, await this.authService.refresh(token, { userAgent, ipAddress }));
   }

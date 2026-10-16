@@ -5,6 +5,7 @@ import { AccessController } from "./access/access.controller.js";
 import { AccessService } from "./access/access.service.js";
 import { AccountSecurityService } from "./auth/account-security.service.js";
 import { AuthController } from "./auth/auth.controller.js";
+import { RefreshRateLimit } from "./auth/refresh-rate-limit.js";
 import { AuthService } from "./auth/auth.service.js";
 import { CredentialService } from "./auth/credential.service.js";
 import { JwtStrategy } from "./auth/jwt.strategy.js";
@@ -28,6 +29,7 @@ import { UsersService } from "./users/users.service.js";
   controllers: [AuthController, UsersController, AccessController, TenantController, PlatformTenantsController],
   providers: [
     AuthService,
+    RefreshRateLimit,
     CredentialService,
     AccountSecurityService,
     MfaService,
