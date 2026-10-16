@@ -8,7 +8,7 @@ import { SecretBox } from "../../../common/security/secret-box.js";
 import { base32Encode, generateTotpSecret, otpauthUri, verifyTotp } from "../../../common/security/totp.js";
 import { PrismaService } from "../../../database/prisma.service.js";
 import { AccountSecurityService } from "./account-security.service.js";
-import type { User } from "../../../generated/prisma/client.js";
+import type { Prisma, User } from "../../../generated/prisma/client.js";
 import { verifyPassword } from "../../../common/security/password.js";
 
 const RECOVERY_CODE_COUNT = 8;
@@ -88,8 +88,13 @@ export class MfaService {
       : [];
   }
 
-  private async audit(user: AuthUser, action: string): Promise<void> {
-    await this.prisma.auditEvent.create({
+  /** Runs the steps of one MFA change as a single unit: the account change, the session cut-off and the audit event commit together or not at all. */
+  private unit<T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+    return runAsSystem(() => this.prisma.$transaction(work));
+  }
+
+  private async audit(user: AuthUser, action: string, db: Pick<Prisma.TransactionClient, "auditEvent"> = this.prisma): Promise<void> {
+    await db.auditEvent.create({
       data: {
         tenantId: user.tenantId,
         actorUserId: user.userId,
@@ -116,11 +121,13 @@ export class MfaService {
     await this.reauthenticate(account, password, user.tenantId, ipAddress);
     if (account.mfaEnabledAt) throw new ConflictException("المصادقة متعددة العوامل مفعّلة بالفعل");
     const secret = generateTotpSecret();
-    await this.prisma.user.update({
-      where: { id: account.id },
-      data: { mfaSecretEnc: this.box.seal(secret), mfaLastStep: null, mfaRecoveryHashes: [] }
+    await this.unit(async (tx) => {
+      await tx.user.update({
+        where: { id: account.id },
+        data: { mfaSecretEnc: this.box.seal(secret), mfaLastStep: null, mfaRecoveryHashes: [] }
+      });
+      await this.audit(user, "identity.mfa.setup", tx);
     });
-    await this.audit(user, "identity.mfa.setup");
     return { secret, otpauthUri: otpauthUri(secret, account.email) };
   }
 
@@ -131,19 +138,21 @@ export class MfaService {
     const step = verifyTotp(this.box.open(account.mfaSecretEnc), code);
     if (step === null) throw new BadRequestException("رمز التحقق غير صحيح");
     const recoveryCodes = this.newRecoveryCodes();
-    await this.prisma.user.update({
-      where: { id: account.id },
-      data: {
-        mfaEnabledAt: new Date(),
-        mfaLastStep: step,
-        mfaRecoveryHashes: recoveryCodes.map((code) => this.recoveryHash(account.id, code)),
-        mfaRecoveryRegenerationRequired: false
-      }
+    await this.unit(async (tx) => {
+      await tx.user.update({
+        where: { id: account.id },
+        data: {
+          mfaEnabledAt: new Date(),
+          mfaLastStep: step,
+          mfaRecoveryHashes: recoveryCodes.map((code) => this.recoveryHash(account.id, code)),
+          mfaRecoveryRegenerationRequired: false
+        }
+      });
+      // A session opened before the second factor existed must not outlive its enablement.
+      // Sessions of the identity in every tenant, not only the current one (system scope bypasses RLS).
+      await this.security.endOtherSessions(account.id, user.sessionId, tx);
+      await this.audit(user, "identity.mfa.enable", tx);
     });
-    // A session opened before the second factor existed must not outlive its enablement.
-    // Sessions of the identity in every tenant, not only the current one (RLS).
-    await runAsSystem(() => this.security.endOtherSessions(account.id, user.sessionId));
-    await this.audit(user, "identity.mfa.enable");
     return { recoveryCodes };
   }
 
@@ -192,7 +201,7 @@ export class MfaService {
     if (!account.mfaEnabledAt) throw new ConflictException("المصادقة متعددة العوامل غير مفعّلة");
     if (account.isPlatformAdmin) throw new ConflictException("لا يمكن إيقاف المصادقة متعددة العوامل لحساب مدير النظام");
     await this.requireSecondFactor(account, user.tenantId, code, ipAddress, "bad_mfa_code_on_disable");
-    await this.prisma.$transaction(async (tx) => {
+    await this.unit(async (tx) => {
       // Same row lock as granting platform administration: re-check under the lock so an account granted that role
       // a moment ago can not lose its second factor.
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${account.id}::uuid FOR UPDATE`;
@@ -203,10 +212,9 @@ export class MfaService {
         where: { id: account.id },
         data: { mfaSecretEnc: null, mfaEnabledAt: null, mfaLastStep: null, mfaRecoveryHashes: [], mfaChallengeHash: null, mfaRecoveryRegenerationRequired: false }
       });
+      await this.security.endOtherSessions(account.id, user.sessionId, tx);
+      await this.audit(user, "identity.mfa.disable", tx);
     });
-    // Sessions of the identity in every tenant, not only the current one (RLS).
-    await runAsSystem(() => this.security.endOtherSessions(account.id, user.sessionId));
-    await this.audit(user, "identity.mfa.disable");
   }
 
   /**
@@ -220,14 +228,16 @@ export class MfaService {
     if (!account.mfaEnabledAt) throw new ConflictException("المصادقة متعددة العوامل غير مفعّلة");
     await this.requireSecondFactor(account, user.tenantId, code, ipAddress, "bad_mfa_code_on_recovery_regeneration", false);
     const recoveryCodes = this.newRecoveryCodes();
-    await this.prisma.user.update({
-      where: { id: account.id },
-      data: {
-        mfaRecoveryHashes: recoveryCodes.map((item) => this.recoveryHash(account.id, item)),
-        mfaRecoveryRegenerationRequired: false
-      }
+    await this.unit(async (tx) => {
+      await tx.user.update({
+        where: { id: account.id },
+        data: {
+          mfaRecoveryHashes: recoveryCodes.map((item) => this.recoveryHash(account.id, item)),
+          mfaRecoveryRegenerationRequired: false
+        }
+      });
+      await this.audit(user, "identity.mfa.recovery_codes_regenerated", tx);
     });
-    await this.audit(user, "identity.mfa.recovery_codes_regenerated");
     return { recoveryCodes };
   }
 

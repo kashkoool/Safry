@@ -4,6 +4,7 @@ import { ThrottlerStorage, ThrottlerStorageService } from "@nestjs/throttler";
 import { Redis } from "ioredis";
 import type { Request } from "express";
 import type { AuthUser } from "../security/auth-user.js";
+import { productionLike } from "../../config/environment.js";
 
 /** Atomic fixed-window counter with an optional block period, shared by every replica through Redis. */
 const INCREMENT_SCRIPT = `
@@ -98,8 +99,8 @@ export function createThrottlerStorage(config: ConfigService): ThrottlerStorage 
     redis.on("error", (error: Error) => logger.error(`Redis rate-limit store error: ${error.message}`));
     return new FailoverThrottlerStorage(new RedisThrottlerStorage(redis), new ThrottlerStorageService());
   }
-  if (config.get<string>("NODE_ENV") === "production")
-    logger.warn(
+  if (productionLike(config))
+    logger.error(
       "RATE_LIMIT_REDIS_URL is not set: rate limits are kept in process memory. With N replicas the effective limits are N times higher and reset on every restart. Set RATE_LIMIT_REDIS_URL before running more than one replica."
     );
   return new ThrottlerStorageService();

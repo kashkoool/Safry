@@ -58,6 +58,46 @@ Existing accounts are never modified. Do not use the demo seed on a real deploym
 
 The first administrator is created with a password only. Sign in once and enrol two-factor authentication (Account, Security): until then every platform route answers `403 mfa_enrollment_required` and only the enrolment endpoints, `/auth/me` and sign-out work. Keep the recovery codes; a platform administrator cannot disable their own two-factor, and platform administration can only be granted to an account that already has it.
 
+### Lost authenticator and recovery codes (platform administrator)
+
+Use this only when a platform administrator has lost BOTH the authenticator device and every recovery code. If a recovery code or a second platform administrator is available, use those first (a recovery code signs in; the account can then regenerate codes under Account, Security). A platform administrator cannot disable their own two-factor, so there is no self-service path for this case.
+
+**Who and when**
+- An operator with the database owner login (`DATABASE_MIGRATE_URL`), acting on a request from the account holder. Work in pairs: one person runs the script, a second person (another platform administrator or the owner) approves the request.
+- Verify the requester out of band before you start (a call or video call to a number you already had, or a ticket from a known channel). A password alone is not proof: the case to defend against is someone who has the password.
+- The target must be an ACTIVE platform administrator. The script refuses any other account.
+
+**Procedure** (one-off container from the `migrate` image, same owner login as the bootstrap above):
+
+```sh
+docker compose --profile ops run --rm migrate node node_modules/tsx/dist/cli.mjs scripts/reset-platform-admin-mfa.ts --email admin@example.com --reason "TICKET-123" --operator "<your name>" --approver "<second person>" --confirm
+```
+
+Without a container: `pnpm --dir backend admin:reset-mfa -- --email <address> --reason <text> --operator <name> --approver <name> --confirm` with `DATABASE_MIGRATE_URL` set. All of `--email`, `--reason`, `--operator`, `--approver` and `--confirm` are required; operator and approver names go into the audit event.
+
+Order: (1) confirm the identity out of band, (2) run the script, (3) the administrator completes the normal e-mail password reset ("Forgot password"), (4) signs in with the new password, (5) re-enrols MFA.
+
+In one database transaction the script locks the account row, ends every refresh session of the account in every tenant, clears the authenticator secret, the recovery codes, the replay marker and any pending login challenge, invalidates the current password (so anyone who merely knows it can not sign in and enrol their own authenticator) and any unused reset links, and writes an audit event `platform.admin.mfa_reset` (entity: the user; metadata: your reason, whether MFA was set, how many sessions ended, `channel: operator-script`). The platform administrator flag is not changed. It prints no secret, only the number of sessions ended. Any failure rolls everything back.
+
+**What happens next**
+- The administrator requests a password reset from the sign-in page and sets a new password from the e-mailed link (the old password no longer works), then signs in. Every platform route answers `403 mfa_enrollment_required`; only the enrolment endpoints, `/auth/me` and sign-out work, exactly as for a new administrator.
+- They enrol a new authenticator (Account, Security) and store the new recovery codes. The next sign-in asks for the code again.
+- If the administrator is also locked out by failed sign-ins, wait for the lockout (`LOGIN_LOCKOUT_MINUTES`) or have another platform administrator unlock the account.
+
+**Verify**
+- The script printed "MFA reset" and a session count.
+- `SELECT action, "entityId", "occurredAt", metadata FROM audit_events WHERE action = 'platform.admin.mfa_reset' ORDER BY "occurredAt" DESC LIMIT 5;` shows your event.
+- After the administrator enrols, `GET /auth/mfa` reports `enabled: true` and platform routes answer 200.
+
+**Record** in your ticketing system: the request, who verified the identity and how, who approved, the operator, the time and the ticket reference. Keep it as long as audit events. Review `platform.admin.mfa_reset` events periodically: each one must match a ticket.
+
+**Do not**
+- Edit the `users` table by hand; the script also ends sessions and writes the audit event in the same transaction.
+- Act on a request that arrived only through the account's own e-mail or a phone number you did not already have on file.
+- Hand the administrator a password or a code; they enrol their own device.
+- Reuse one ticket for several accounts.
+- Leave the owner database login on a workstation afterwards.
+
 Local demo only (creates known demo accounts):
 
 ```sh
@@ -158,7 +198,7 @@ On the web the refresh token is an HttpOnly cookie, never in a response body or 
 | Property | Value |
 |---|---|
 | Name | `__Secure-safry_rt` in production, `safry_rt` otherwise |
-| Flags | `HttpOnly; SameSite=Strict; Secure` (Secure only when `NODE_ENV=production`), no `Domain` (host-only) |
+| Flags | `HttpOnly; SameSite=Strict; Secure` (Secure when `NODE_ENV` is `production` or `staging`), no `Domain` (host-only) |
 | Path | `/api/v1/auth` (not `__Host-`: that prefix needs `Path=/`, which would send the cookie to every API route) |
 | Lifetime | `Max-Age` = remaining absolute session lifetime (`SESSION_ABSOLUTE_TIMEOUT_HOURS`, default 24 h); idle timeout 15 min is enforced server-side |
 | CSRF | `/auth/refresh` and `/auth/logout` need `X-Requested-With: XMLHttpRequest`; a present `Origin` must be a `CORS_ORIGINS` entry (whole string: scheme, host, port) or the request's own origin: scheme, `Host` and port (403 otherwise). The scheme comes from `X-Forwarded-Proto` only when `TRUST_PROXY` is set |
@@ -181,7 +221,8 @@ Operational consequences:
 | `WEB_BIND`, `WEB_PORT` | no | default `127.0.0.1:3001` |
 | `TRUST_PROXY` | no | default `1`; see section 4 |
 | `CORS_ORIGINS` | no | empty = same-origin only; otherwise exact `https://` origins (credentials are allowed for exactly these); `*` is rejected |
-| `SWAGGER_ENABLED` | no | default `false` in production |
+| `SWAGGER_ENABLED` | no | default `false` in production and staging |
+| `NODE_ENV` | fixed | `production`; `staging` gets the same strict rules (https, Secure cookies, real mail, dedicated MFA key, TLS to the database, no API docs, no localhost CORS). Only a local test stack may relax staging with `ALLOW_NON_PRODUCTION_DEFAULTS=true` (console mail, open docs, localhost CORS); the flag is refused with any other `NODE_ENV`. Other values are rejected at start |
 | `RESEND_API_KEY`, `MAIL_FROM`, `APP_BASE_URL` | yes | transactional e-mail, see section 5a; `MAIL_TRANSPORT` is fixed to `resend` by compose |
 | `SITE_ADDRESS`, `HTTP_PORT`, `HTTPS_PORT`, `HTTP_BIND` | tls profile | public host name and published ports |
 | `BACKUP_INTERVAL_SECONDS`, `BACKUP_KEEP_DAYS` | backup profile | default daily, keep 14 days |

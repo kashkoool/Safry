@@ -44,6 +44,21 @@ function requiredSecret(config: Environment, key: string): string {
 
 const NODE_ENVIRONMENTS = ["development", "test", "staging", "production"];
 
+/**
+ * Production-grade safety defaults (https, Secure cookies, real mail transport, dedicated MFA key, no API docs, no localhost CORS,
+ * TLS to the database) apply to production AND to staging, because a staging copy is routinely loaded with production data and
+ * exposed to the internet. A staging environment that deliberately runs with development defaults (a local test stack with console
+ * mail) must say so: ALLOW_NON_PRODUCTION_DEFAULTS=true, valid only with NODE_ENV=staging.
+ */
+export function isProductionLike(nodeEnv: unknown, allowNonProduction: unknown): boolean {
+  return nodeEnv === "production" || (nodeEnv === "staging" && allowNonProduction !== "true");
+}
+
+/** The same decision from a ConfigService (or any key reader). */
+export function productionLike(config: { get(key: string): unknown }): boolean {
+  return isProductionLike(config.get("NODE_ENV"), config.get("ALLOW_NON_PRODUCTION_DEFAULTS"));
+}
+
 /** Hosts that are the machine itself or a single-label name on a private network (a compose service such as `postgres`). */
 function isInternalHost(host: string): boolean {
   return host === "localhost" || host === "::1" || host === "[::1]" || /^127\./.test(host) || (!host.includes(".") && !host.includes(":"));
@@ -67,11 +82,11 @@ const MAIL_FROM = /^(?:[^<>\r\n]{1,100} <[^<>\s@]+@[^<>\s@]+\.[^<>\s@]+>|[^<>\s@
 
 /** Transactional e-mail settings: resend needs a real key and sender, production never uses the console transport. */
 export function assertMailConfig(config: Environment): void {
-  const production = config["NODE_ENV"] === "production";
+  const production = isProductionLike(config["NODE_ENV"], config["ALLOW_NON_PRODUCTION_DEFAULTS"]);
   const transport = config["MAIL_TRANSPORT"] ?? (production ? "resend" : "console");
   if (transport !== "resend" && transport !== "console") throw new Error("MAIL_TRANSPORT must be resend or console");
   if (production && transport === "console")
-    throw new Error("MAIL_TRANSPORT=console is not allowed in production (the e-mailed link is a credential); use resend");
+    throw new Error("MAIL_TRANSPORT=console is not allowed in production or staging (the e-mailed link is a credential); use resend, or set ALLOW_NON_PRODUCTION_DEFAULTS=true on a local staging stack");
   const base = config["APP_BASE_URL"];
   if (base !== undefined || production) {
     const value = requiredString(config, "APP_BASE_URL");
@@ -109,11 +124,17 @@ export function validateEnvironment(config: Environment): Environment {
   const nodeEnv = config["NODE_ENV"];
   if (nodeEnv !== undefined && (typeof nodeEnv !== "string" || !NODE_ENVIRONMENTS.includes(nodeEnv)))
     throw new Error(`NODE_ENV must be one of ${NODE_ENVIRONMENTS.join(", ")}`);
-  if (config["NODE_ENV"] === "production" && config["DATABASE_ALLOW_PLAINTEXT"] !== "true") assertDatabaseTls(databaseUrl);
+  const allowNonProduction = config["ALLOW_NON_PRODUCTION_DEFAULTS"];
+  if (allowNonProduction !== undefined && allowNonProduction !== "true" && allowNonProduction !== "false")
+    throw new Error("ALLOW_NON_PRODUCTION_DEFAULTS must be true or false");
+  if (allowNonProduction === "true" && nodeEnv !== "staging")
+    throw new Error("ALLOW_NON_PRODUCTION_DEFAULTS=true is only valid with NODE_ENV=staging");
+  const productionGrade = isProductionLike(nodeEnv, allowNonProduction);
+  if (productionGrade && config["DATABASE_ALLOW_PLAINTEXT"] !== "true") assertDatabaseTls(databaseUrl);
   const jwtSecret = requiredSecret(config, "JWT_ACCESS_SECRET");
   // The TOTP seed key must not depend on the JWT secret: production needs a dedicated key.
-  if (config["MFA_ENCRYPTION_KEY"] !== undefined || config["NODE_ENV"] === "production") {
-    if (config["MFA_ENCRYPTION_KEY"] === undefined) throw new Error("MFA_ENCRYPTION_KEY is required in production");
+  if (config["MFA_ENCRYPTION_KEY"] !== undefined || productionGrade) {
+    if (config["MFA_ENCRYPTION_KEY"] === undefined) throw new Error("MFA_ENCRYPTION_KEY is required in production and staging");
     if (requiredSecret(config, "MFA_ENCRYPTION_KEY") === jwtSecret) throw new Error("MFA_ENCRYPTION_KEY must differ from JWT_ACCESS_SECRET");
   }
 

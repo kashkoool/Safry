@@ -28,6 +28,7 @@ import { AcceptedDto, ForgotPasswordDto, ResendVerificationDto, ResetPasswordDto
 import { CredentialService } from "./credential.service.js";
 import { AccountSecurityService } from "./account-security.service.js";
 import { MfaService, type MfaStatus } from "./mfa.service.js";
+import { productionLike } from "../../../config/environment.js";
 import { RefreshRateLimit } from "./refresh-rate-limit.js";
 
 const NATIVE_CLIENT_HEADER = ApiHeader({
@@ -54,7 +55,7 @@ export class AuthController {
     private readonly refreshLimit: RefreshRateLimit,
     config: ConfigService
   ) {
-    this.production = config.get<string>("NODE_ENV") === "production";
+    this.production = productionLike(config);
     this.corsOrigins = config.get<string>("CORS_ORIGINS");
     this.cookie = cookieSettings(config.get<string>("API_PREFIX", "api/v1"), this.production);
   }

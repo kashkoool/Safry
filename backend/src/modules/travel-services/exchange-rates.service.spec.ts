@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ServiceUnavailableException } from "@nestjs/common";
+import { Logger, ServiceUnavailableException } from "@nestjs/common";
 import { plainToInstance } from "class-transformer";
 import { validateSync } from "class-validator";
 import { ExchangeRatesService } from "./exchange-rates.service.js";
 import { CreateServiceDto } from "./dto/create-service.dto.js";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("ExchangeRatesService", () => {
   it("accepts only the six configured service currencies", () => {
@@ -67,6 +70,28 @@ describe("ExchangeRatesService", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it("logs a failed refresh once per outage, marks the answer stale, and reports the recovery", async () => {
+      const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+      const info = vi.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(feed()) }));
+      const service = new ExchangeRatesService();
+      expect((await service.latest()).stale).toBe(false);
+      const internals = service as unknown as { expiresAt: number; retryAt: number };
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(timeout()));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        internals.expiresAt = 0;
+        internals.retryAt = 0;
+        expect((await service.latest()).stale).toBe(true);
+      }
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toMatch(/exchange rate/i);
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(feed()) }));
+      internals.expiresAt = 0;
+      internals.retryAt = 0;
+      expect((await service.latest()).stale).toBe(false);
+      expect(info).toHaveBeenCalledTimes(1);
+    });
+
     it("serves the last good snapshot for up to 24 h when a refresh fails, and refuses older data", async () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(feed()) }));
       const service = new ExchangeRatesService();
@@ -74,7 +99,7 @@ describe("ExchangeRatesService", () => {
       const internals = service as unknown as { expiresAt: number; retryAt: number; snapshot: { fetchedAt: string } };
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(timeout()));
       internals.expiresAt = 0;
-      expect(await service.latest()).toBe(good);
+      expect(await service.latest()).toMatchObject({ fetchedAt: good.fetchedAt, rates: good.rates, stale: true });
       internals.expiresAt = 0;
       internals.retryAt = 0;
       internals.snapshot.fetchedAt = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();

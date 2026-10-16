@@ -1,4 +1,4 @@
-import { Injectable, ServiceUnavailableException } from "@nestjs/common";
+import { Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { supportedCurrencies, type SupportedCurrency } from "./currencies.js";
 
 type RateRow = { date: string; base: string; quote: string; rate: number };
@@ -21,6 +21,8 @@ type Snapshot = {
   base: "USD";
   source: string;
   fetchedAt: string;
+  /** True when these are the last good rates served because the refresh failed; `fetchedAt` says how old they are. */
+  stale: boolean;
   rates: Record<SupportedCurrency, { rate: number; date: string }>;
 };
 
@@ -31,6 +33,9 @@ export class ExchangeRatesService {
   private pending: Promise<Snapshot> | null = null;
   /** After a failed fetch do not retry on every request: each retry would hold a request for the full timeout. */
   private retryAt = 0;
+  private readonly logger = new Logger(ExchangeRatesService.name);
+  /** The current outage has been logged; reset by the next successful refresh. */
+  private outageLogged = false;
 
   async latest(): Promise<Snapshot> {
     if (this.snapshot && Date.now() < this.expiresAt) return this.snapshot;
@@ -38,8 +43,15 @@ export class ExchangeRatesService {
     if (!this.pending) this.pending = this.refresh().finally(() => { this.pending = null; });
     try {
       return await this.pending;
-    } catch {
+    } catch (error) {
       this.retryAt = Date.now() + RETRY_BACKOFF_MS;
+      if (!this.outageLogged) {
+        this.outageLogged = true;
+        const reason = error instanceof Error ? error.message : "unknown error";
+        this.logger.warn(
+          `Exchange rate refresh failed (${reason}); ${this.snapshot ? `serving the rates fetched at ${this.snapshot.fetchedAt} until they are 24 h old` : "no rates available"}`
+        );
+      }
       return this.fallback();
     }
   }
@@ -47,7 +59,7 @@ export class ExchangeRatesService {
   private fallback(): Snapshot {
     // A short network outage must not quietly turn an old rate into a current price.
     if (this.snapshot && Date.now() - Date.parse(this.snapshot.fetchedAt) < FALLBACK_MAX_AGE_MS)
-      return this.snapshot;
+      return { ...this.snapshot, stale: true };
     throw new ServiceUnavailableException("أسعار الصرف غير متاحة حالياً؛ يرجى عرض السعر الأصلي فقط");
   }
 
@@ -71,8 +83,12 @@ export class ExchangeRatesService {
     }
     if (supportedCurrencies.some((code) => !rates[code])) throw new Error("Missing supported currency rate");
     const snapshot: Snapshot = { base: "USD", source: "Frankfurter (official-source blended reference rates)",
-      fetchedAt: new Date().toISOString(), rates };
+      fetchedAt: new Date().toISOString(), stale: false, rates };
     this.snapshot = snapshot;
+    if (this.outageLogged) {
+      this.outageLogged = false;
+      this.logger.log("Exchange rate refresh recovered");
+    }
     this.expiresAt = Date.now() + SNAPSHOT_TTL_MS;
     return snapshot;
   }

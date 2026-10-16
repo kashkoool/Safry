@@ -20,6 +20,7 @@
     "test:business": "tsx scripts/business-smoke.ts",
     "demo:managers": "tsx scripts/grant-demo-managers.ts",
     "admin:bootstrap": "tsx scripts/bootstrap-platform-admin.ts",
+    "admin:reset-mfa": "tsx scripts/reset-platform-admin-mfa.ts",
     "prisma:generate": "prisma generate",
     "prisma:format": "prisma format",
     "db:migrate": "prisma migrate dev",

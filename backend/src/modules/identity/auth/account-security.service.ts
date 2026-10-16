@@ -218,8 +218,8 @@ export class AccountSecurityService {
   }
 
   /** Ends every session of the user except `keepSessionId` (after a credential or MFA change). */
-  async endOtherSessions(userId: string, keepSessionId: string | undefined): Promise<void> {
-    await revokeActiveSessions(this.prisma, { userId, ...(keepSessionId ? { id: { not: keepSessionId } } : {}) });
+  async endOtherSessions(userId: string, keepSessionId: string | undefined, db: Parameters<typeof revokeActiveSessions>[0] = this.prisma): Promise<void> {
+    await revokeActiveSessions(db, { userId, ...(keepSessionId ? { id: { not: keepSessionId } } : {}) });
   }
 
   /** Drops counters nobody touched for a day (at most every ten minutes per process); trusted addresses are kept. */

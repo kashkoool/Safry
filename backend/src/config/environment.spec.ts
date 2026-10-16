@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateEnvironment } from "./environment.js";
+import { isProductionLike, validateEnvironment } from "./environment.js";
 
 const valid = {
   DATABASE_URL: "postgresql://safry:password@localhost:5432/safry",
@@ -95,5 +95,39 @@ describe("validateEnvironment", () => {
     expect(validateEnvironment({ ...valid, MAIL_RETRY_ATTEMPTS: "1", MAIL_RETRY_BASE_MS: "0" })).toMatchObject({ MAIL_RETRY_ATTEMPTS: 1, MAIL_RETRY_BASE_MS: 0 });
     for (const attempts of ["0", "6", "x", "1.5"]) expect(() => validateEnvironment({ ...valid, MAIL_RETRY_ATTEMPTS: attempts })).toThrow("MAIL_RETRY_ATTEMPTS");
     for (const base of ["-1", "30001", "x"]) expect(() => validateEnvironment({ ...valid, MAIL_RETRY_BASE_MS: base })).toThrow("MAIL_RETRY_BASE_MS");
+  });
+});
+
+describe("staging gets production-grade defaults unless it explicitly opts out", () => {
+  const stagingMail = { MAIL_TRANSPORT: "resend", RESEND_API_KEY: "re_abcdabcdabcdabcdabcdabcdabcd", MAIL_FROM: "Safry <no-reply@mail.safry.test>", APP_BASE_URL: "https://staging.safry.test" };
+  const mfaKey = { MFA_ENCRYPTION_KEY: "unit-test-mfa-key-not-the-jwt-secret-0123456789" };
+
+  it("decides production-likeness in one place", () => {
+    expect(isProductionLike("production", undefined)).toBe(true);
+    expect(isProductionLike("production", "true")).toBe(true);
+    expect(isProductionLike("staging", undefined)).toBe(true);
+    expect(isProductionLike("staging", "false")).toBe(true);
+    expect(isProductionLike("staging", "true")).toBe(false);
+    expect(isProductionLike("development", undefined)).toBe(false);
+    expect(isProductionLike("test", undefined)).toBe(false);
+    expect(isProductionLike(undefined, undefined)).toBe(false);
+  });
+
+  it("refuses console mail, a missing MFA key and a plaintext remote database on staging", () => {
+    expect(() => validateEnvironment({ ...valid, ...mfaKey, NODE_ENV: "staging", MAIL_TRANSPORT: "console" })).toThrow("MAIL_TRANSPORT=console");
+    expect(() => validateEnvironment({ ...valid, ...stagingMail, NODE_ENV: "staging" })).toThrow("MFA_ENCRYPTION_KEY is required");
+    expect(() => validateEnvironment({ ...valid, ...mfaKey, ...stagingMail, NODE_ENV: "staging", DATABASE_URL: "postgresql://u:p@db.example.com:5432/safry" })).toThrow("sslmode");
+    expect(() => validateEnvironment({ ...valid, ...mfaKey, ...stagingMail, NODE_ENV: "staging" })).not.toThrow();
+  });
+
+  it("allows development defaults on staging only with the explicit opt-in, and never in production", () => {
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "staging", MAIL_TRANSPORT: "console", ALLOW_NON_PRODUCTION_DEFAULTS: "true" })).not.toThrow();
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "production", ...mfaKey, ...stagingMail, ALLOW_NON_PRODUCTION_DEFAULTS: "true" })).toThrow("only valid with NODE_ENV=staging");
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "development", ALLOW_NON_PRODUCTION_DEFAULTS: "true" })).toThrow("only valid with NODE_ENV=staging");
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "staging", ALLOW_NON_PRODUCTION_DEFAULTS: "yes" })).toThrow("true or false");
+  });
+
+  it("rejects NODE_ENV values it does not know, so a typo can not select development defaults", () => {
+    for (const value of ["prod", "Production", "stage", ""]) expect(() => validateEnvironment({ ...valid, NODE_ENV: value })).toThrow("NODE_ENV must be one of");
   });
 });
