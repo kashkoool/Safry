@@ -2,9 +2,29 @@ import { Controller, Get, Headers, Injectable, NotFoundException, UnauthorizedEx
 import { ConfigService } from "@nestjs/config";
 import { SkipThrottle } from "@nestjs/throttler";
 import { timingSafeEqual } from "node:crypto";
+import { PrismaService } from "../../database/prisma.service.js";
+import { runAsSystem } from "../context/request-context.js";
 import { AuthPrincipalCache } from "../cache/auth-principal-cache.js";
 import { rateLimitState } from "./rate-limit.js";
 import { Public } from "../security/public.decorator.js";
+
+export type LoginFailureReason = "bad_credentials" | "locked" | "mfa_failed" | "portal_denied";
+export type MailOutcome = "sent" | "failed";
+export type ReadinessFailureReason = "database" | "draining";
+
+/**
+ * Event counters. The label values are fixed enums, so the series set is closed: never an e-mail, address, user id or
+ * tenant. Every series is rendered from the start (at 0) so rate() and increase() see the first event.
+ */
+const EVENT_SERIES: Record<string, { help: string; label?: string; values?: readonly string[] }> = {
+  safry_login_failures_total: { help: "Failed sign-ins by coarse reason", label: "reason", values: ["bad_credentials", "locked", "mfa_failed", "portal_denied"] },
+  safry_account_lockouts_total: { help: "Sign-in blocks started on an account" },
+  safry_refresh_reuse_detected_total: { help: "Refresh tokens presented again after rotation (session family revoked)" },
+  safry_platform_admin_signins_total: { help: "Completed sign-ins of platform administrators" },
+  safry_mail_delivery_total: { help: "Detached mail deliveries by final outcome", label: "outcome", values: ["sent", "failed"] },
+  safry_readiness_failures_total: { help: "Readiness probes answered 503", label: "reason", values: ["database", "draining"] },
+  safry_rate_limited_total: { help: "HTTP 429 answers by route group", label: "group", values: ["auth", "api"] }
+};
 
 const BUCKETS_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10_000];
 
@@ -14,9 +34,23 @@ export class MetricsService {
   private readonly counts = new Map<string, number>();
   private readonly buckets = new Map<string, number[]>();
   private readonly sums = new Map<string, number>();
+  private readonly events = new Map<string, number>();
+
+  private bump(name: string, value?: string): void {
+    const key = value === undefined ? name : `${name}|${value}`;
+    this.events.set(key, (this.events.get(key) ?? 0) + 1);
+  }
+
+  loginFailure(reason: LoginFailureReason): void { this.bump("safry_login_failures_total", reason); }
+  accountLockout(): void { this.bump("safry_account_lockouts_total"); }
+  refreshReuse(): void { this.bump("safry_refresh_reuse_detected_total"); }
+  platformAdminSignIn(): void { this.bump("safry_platform_admin_signins_total"); }
+  mailOutcome(outcome: MailOutcome): void { this.bump("safry_mail_delivery_total", outcome); }
+  readinessFailure(reason: ReadinessFailureReason): void { this.bump("safry_readiness_failures_total", reason); }
 
   /** Route templates only (never raw URLs): the label set stays bounded and carries no ids or query strings. */
   observe(method: string, route: string, status: number, durationMs: number): void {
+    if (status === 429) this.bump("safry_rate_limited_total", route.includes("/auth/") ? "auth" : "api");
     const statusClass = `${Math.floor(status / 100)}xx`;
     const key = `${method}|${route}|${statusClass}`;
     this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
@@ -43,6 +77,11 @@ export class MetricsService {
       lines.push(`safry_http_request_duration_ms_sum{${labels}} ${this.sums.get(key)!.toFixed(1)}`);
       lines.push(`safry_http_request_duration_ms_count{${labels}} ${count}`);
     }
+    for (const [name, spec] of Object.entries(EVENT_SERIES)) {
+      lines.push(`# HELP ${name} ${spec.help}`, `# TYPE ${name} counter`);
+      if (!spec.label) lines.push(`${name} ${this.events.get(name) ?? 0}`);
+      else for (const value of spec.values!) lines.push(`${name}{${spec.label}="${value}"} ${this.events.get(`${name}|${value}`) ?? 0}`);
+    }
     for (const [name, value] of Object.entries(extra)) lines.push(`${name} ${value}`);
     const memory = process.memoryUsage();
     lines.push(`safry_process_resident_memory_bytes ${memory.rss}`, `safry_process_heap_used_bytes ${memory.heapUsed}`);
@@ -61,11 +100,33 @@ export class MetricsController {
   constructor(
     private readonly metrics: MetricsService,
     private readonly config: ConfigService,
-    private readonly principals: AuthPrincipalCache
+    private readonly principals: AuthPrincipalCache,
+    private readonly prisma: PrismaService
   ) {}
 
+  private mfaResets = { at: 0, value: 0 };
+
+  /**
+   * Break-glass MFA resets run in a separate operator process (backend/scripts/reset-platform-admin-mfa.ts), so no in-process
+   * counter can see them. They are read from the audit trail instead (last 24 h, cached 60 s). On a database error the series is
+   * omitted: the readiness alerts cover that outage and the reset alert must not fire on a guess.
+   */
+  private async recentMfaResets(): Promise<Record<string, number>> {
+    const now = Date.now();
+    if (now - this.mfaResets.at > 60_000) {
+      try {
+        const since = new Date(now - 24 * 3_600_000);
+        const value = await runAsSystem(() => this.prisma.auditEvent.count({ where: { action: "platform.admin.mfa_reset", occurredAt: { gte: since } } }));
+        this.mfaResets = { at: now, value };
+      } catch {
+        return {};
+      }
+    }
+    return { safry_platform_admin_mfa_resets_24h: this.mfaResets.value };
+  }
+
   @Get()
-  scrape(@Headers("authorization") authorization?: string): string {
+  async scrape(@Headers("authorization") authorization?: string): Promise<string> {
     const token = this.config.get<string>("METRICS_TOKEN");
     if (!token) throw new NotFoundException();
     const given = Buffer.from(authorization?.replace(/^Bearer /i, "") ?? "");
@@ -78,7 +139,8 @@ export class MetricsController {
       safry_auth_cache_entries: cache.size,
       safry_auth_cache_invalidations_total: cache.invalidations,
       safry_rate_limit_degraded: rateLimitState.degraded ? 1 : 0,
-      safry_rate_limit_fallback_total: rateLimitState.fallbackTotal
+      safry_rate_limit_fallback_total: rateLimitState.fallbackTotal,
+      ...(await this.recentMfaResets())
     });
   }
 }
