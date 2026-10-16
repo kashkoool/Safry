@@ -24,6 +24,7 @@ Every workflow lives in `.github/workflows/`. Actions are pinned by full commit 
 | `visual.yml` | Visual regression | PRs touching `frontend/src`; manual | no | Playwright screenshots of key pages (English and Arabic) in the pinned Playwright image |
 | `soak.yml` | Soak test | manual only | no | 30 minutes at 20 requests/s against the real API; fails on p95 drift, memory growth or errors |
 | `recovery-drills.yml` | Backup and restore drill; Rollback drill | PR touching migrations, Dockerfile or `scripts/drills`; weekly; manual | no | Throwaway-Docker recovery drills, see "Recovery drills" below |
+| `alerts.yml` | Alert rules (promtool) | PR touching `deploy/alerts`, `scripts/alerts-test.sh` or the metrics code; manual | no | Checks and unit-tests the Prometheus alert rules in the pinned official image; see [ALERTING.md](ALERTING.md) |
 | `scorecard.yml` | Scorecard analysis | push, weekly | no | OpenSSF Scorecard results to code scanning |
 
 Dependabot (`.github/dependabot.yml`) opens weekly minor and patch updates. Major versions are never proposed automatically: they
@@ -41,6 +42,7 @@ are planned upgrades.
 | Image scan | `docker build --target runtime -t safry-api:scan backend` (also `--target migrate`, and `docker build -t safry-web:scan frontend`), then `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.75.0 image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /ignore/.trivyignore safry-api:scan` (mount `.trivyignore` at `/ignore`) |
 | Lighthouse | `cd frontend && pnpm lighthouse` (set `CHROME_PATH` if Chrome is not found) |
 | Load test | `backend/test/load/README.md`: seed a throwaway database (reduced size through the `LOAD_*` variables), start the API with `backend/test/load/start-api.sh`, `node run.mjs --duration 12 --label ci`, then `node check.mjs --label ci` |
+| Alert rules | `bash scripts/alerts-test.sh` (rule tests); `bash scripts/alerts-fire-test.sh` (full local stack, proves the alerts fire; see [ALERTING.md](ALERTING.md)) |
 | Recovery drills | `bash scripts/drills/backup-restore.sh` and `bash scripts/drills/rollback.sh [previous-git-ref]` (docker, bash, git and curl only; Git Bash works) |
 
 ## Extra test types (not required checks)
