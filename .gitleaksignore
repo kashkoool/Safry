@@ -1,2 +1,5 @@
 # Dummy MFA key used only as a unit-test fixture (not a secret); introduced in an early commit, history is not rewritten.
 754573be1892bc111191bef7f0993d8dbc8f794e:backend/src/config/environment.spec.ts:generic-api-key:62
+
+# Dummy password-reset fragment token used only as a unit-test fixture (not a secret); introduced in an early commit of the test branch, history is not rewritten.
+25e992db3c4378dd1001500c8845020c2cc0e1a8:frontend/src/lib/credentials.test.ts:generic-api-key:39

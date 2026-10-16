@@ -1,0 +1,47 @@
+name: Recovery drills
+
+# Backup/restore and rollback drills against throwaway Docker containers (no cloud, no secrets; every password is generated
+# per run). See docs/CI.md and docs/DEPLOYMENT.md ("Recovery drills") for what each drill proves and what it does not.
+on:
+  pull_request:
+    paths:
+      - "backend/prisma/**"
+      - "backend/Dockerfile"
+      - "backend/scripts/db/**"
+      - "scripts/drills/**"
+      - ".github/workflows/recovery-drills.yml"
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recovery-drills-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backup-restore:
+    name: Backup and restore drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Backup, restore into a fresh server, verify
+        run: bash scripts/drills/backup-restore.sh
+
+  rollback:
+    name: Rollback drill (previous API on the new schema)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the previous release is read from git (merge-base with origin/main, or HEAD~1 on main).
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Previous API image against the current schema
+        run: bash scripts/drills/rollback.sh

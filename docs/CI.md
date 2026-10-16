@@ -23,6 +23,7 @@ Every workflow lives in `.github/workflows/`. Actions are pinned by full commit 
 | `e2e-browsers.yml` | Cross-browser E2E | weekly and manual | no | The mocked Playwright specs in Firefox and WebKit |
 | `visual.yml` | Visual regression | PRs touching `frontend/src`; manual | no | Playwright screenshots of key pages (English and Arabic) in the pinned Playwright image |
 | `soak.yml` | Soak test | manual only | no | 30 minutes at 20 requests/s against the real API; fails on p95 drift, memory growth or errors |
+| `recovery-drills.yml` | Backup and restore drill; Rollback drill | PR touching migrations, Dockerfile or `scripts/drills`; weekly; manual | no | Throwaway-Docker recovery drills, see "Recovery drills" below |
 | `scorecard.yml` | Scorecard analysis | push, weekly | no | OpenSSF Scorecard results to code scanning |
 
 Dependabot (`.github/dependabot.yml`) opens weekly minor and patch updates. Major versions are never proposed automatically: they
@@ -40,6 +41,7 @@ are planned upgrades.
 | Image scan | `docker build --target runtime -t safry-api:scan backend` (also `--target migrate`, and `docker build -t safry-web:scan frontend`), then `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.75.0 image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /ignore/.trivyignore safry-api:scan` (mount `.trivyignore` at `/ignore`) |
 | Lighthouse | `cd frontend && pnpm lighthouse` (set `CHROME_PATH` if Chrome is not found) |
 | Load test | `backend/test/load/README.md`: seed a throwaway database (reduced size through the `LOAD_*` variables), start the API with `start-api.sh`, `node run.mjs --duration 12 --label ci`, then `node check.mjs --label ci` |
+| Recovery drills | `bash scripts/drills/backup-restore.sh` and `bash scripts/drills/rollback.sh [previous-git-ref]` (docker, bash, git and curl only; Git Bash works) |
 
 ## Extra test types (not required checks)
 
@@ -65,3 +67,14 @@ Dependabot only opens pull requests. Nothing is merged automatically except the 
 | **Security-advisory pull requests** (label `security`) that are a **patch or minor** update and are **not** a Docker image or GitHub Action | Merged automatically by `dependabot-security-auto-merge.yml`, but only after every required check passes. A failing check keeps the pull request open. |
 
 Rules for whoever merges by hand: open the pull request, read which packages and versions change, and check for a major version, a Dockerfile `FROM` line, or a runtime or database version change. A passing CI run alone is not a review. A test (`backend/src/dockerfile.spec.ts`) fails the build when the Node version in the Dockerfiles, `engines` or `@types/node` drifts from the version CI uses.
+
+## Recovery drills
+
+Both drills use only throwaway Docker containers (`safry-drill-*`, removed on exit, `DRILL_KEEP=1` keeps them for debugging) and per-run generated passwords. They are not required checks.
+
+| Drill | Proves | Does not prove |
+|---|---|---|
+| `scripts/drills/backup-restore.sh` | Migrate + seed two tenants, `pg_dump` (custom format) and roles, restore into a brand-new PostgreSQL server with `pg_restore --exit-on-error`. Then: row count of every table (each audit partition included), indexes, constraints and whether validated, enabled and forced row-level security, policies, `audit_events` partitions, role attributes, grants, functions and applied migrations are identical; the restricted runtime login sees only its own tenant (and nothing without a tenant); `prisma migrate status` says up to date. Prints the restore time. A tampered restore fails the drill (checked by dropping a policy and a FORCE flag after restore). | The managed cloud backup service, point-in-time restore, cross-region restore, off-site or encrypted copies, restore time at production data volume (the printed time is for a small dataset) |
+| `scripts/drills/rollback.sh [ref]` | The previous release's API image (built from `ref`, default: merge-base with `origin/main`, or `HEAD~1` on main) starts and serves `/health/ready`, login, `GET /services` and `GET /bookings` against a database that already has this release's migrations applied. Lists the new migrations; on failure names them and the ones with contract-style statements. `STRICT=1` also fails on those statements even when the smoke path passes. The header of the script classifies today's migrations as expand-only or contract-style. | Rollback in the real hosting (image tag redeploy), every write path of the previous release, data that the seed does not contain |
+
+The workflow checks out the full history for the rollback drill (`fetch-depth: 0`); a shallow clone cannot resolve the previous release.
