@@ -41,3 +41,10 @@ The CI workflow (`.github/workflows/load-test.yml`) uses 2 tenants, ~600 users a
 `node check.mjs --label ci` then fails (exit 1) when any scenario has an error-response rate above 0.5 % or a p99 above its limit in
 `thresholds.json`. The limits are about 3x the "after" p99 in the table above (rounded up; at least 250 ms for the health checks), because
 shared CI runners are slower than the machine that produced it. Tighten them when the measured numbers on the runner are stable.
+
+## Soak
+
+`node soak.mjs --url http://127.0.0.1:3100 --minutes 30 --rate 20 --pid <API process id>` holds a constant low rate (mixed traveler requests) and
+prints one JSON line per minute (p50, p95, p99, bad responses, API resident memory). Verdict (limits in `thresholds.json`, block `soak`): fails when
+p95 of the last third of the run is more than 1.5x the first third (after a 3-minute warm-up), memory grew by more than 25 %, the error rate is above 0.5 %,
+or a window completed no request. Result: `.data/soak-<label>.json`. CI: `.github/workflows/soak.yml` (manual only).
