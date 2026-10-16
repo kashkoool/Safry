@@ -139,12 +139,21 @@ export class MfaService {
     if (step === null) throw new BadRequestException("رمز التحقق غير صحيح");
     const recoveryCodes = this.newRecoveryCodes();
     await this.unit(async (tx) => {
+      // Lock the row and decide again on what is stored now: two enable calls that both passed the checks above must not both
+      // finish (the second would replace the recovery codes the first one already handed out), and a setup restarted in between
+      // changed the secret the code has to match.
+      await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${account.id}::uuid FOR UPDATE`;
+      const current = await tx.user.findUnique({ where: { id: account.id }, select: { mfaEnabledAt: true, mfaSecretEnc: true } });
+      if (current?.mfaEnabledAt) throw new ConflictException("المصادقة متعددة العوامل مفعّلة بالفعل");
+      if (!current?.mfaSecretEnc) throw new BadRequestException("ابدأ إعداد المصادقة أولاً");
+      const lockedStep = verifyTotp(this.box.open(current.mfaSecretEnc), code);
+      if (lockedStep === null) throw new BadRequestException("رمز التحقق غير صحيح");
       await tx.user.update({
         where: { id: account.id },
         data: {
           mfaEnabledAt: new Date(),
-          mfaLastStep: step,
-          mfaRecoveryHashes: recoveryCodes.map((code) => this.recoveryHash(account.id, code)),
+          mfaLastStep: lockedStep,
+          mfaRecoveryHashes: recoveryCodes.map((item) => this.recoveryHash(account.id, item)),
           mfaRecoveryRegenerationRequired: false
         }
       });
@@ -229,6 +238,10 @@ export class MfaService {
     await this.requireSecondFactor(account, user.tenantId, code, ipAddress, "bad_mfa_code_on_recovery_regeneration", false);
     const recoveryCodes = this.newRecoveryCodes();
     await this.unit(async (tx) => {
+      // Same lock and re-check as enable/disable: MFA may have been switched off since the code check.
+      await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id" = ${account.id}::uuid FOR UPDATE`;
+      const current = await tx.user.findUnique({ where: { id: account.id }, select: { mfaEnabledAt: true } });
+      if (!current?.mfaEnabledAt) throw new ConflictException("المصادقة متعددة العوامل غير مفعّلة");
       await tx.user.update({
         where: { id: account.id },
         data: {

@@ -223,7 +223,7 @@ Operational consequences:
 | `TRUST_PROXY` | no | default `1`; see section 4 |
 | `CORS_ORIGINS` | no | empty = same-origin only; otherwise exact `https://` origins (credentials are allowed for exactly these); `*` is rejected |
 | `SWAGGER_ENABLED` | no | default `false` in production and staging |
-| `NODE_ENV` | fixed | `production`; `staging` gets the same strict rules (https, Secure cookies, real mail, dedicated MFA key, TLS to the database, no API docs, no localhost CORS). Only a local test stack may relax staging with `ALLOW_NON_PRODUCTION_DEFAULTS=true` (console mail, open docs, localhost CORS); the flag is refused with any other `NODE_ENV`. Other values are rejected at start |
+| `NODE_ENV` | fixed | `production`; `staging` gets the same strict rules (https, Secure cookies, real mail, dedicated MFA key, TLS to the database, no API docs, no localhost CORS). Only a local test stack may relax staging with `ALLOW_NON_PRODUCTION_DEFAULTS=true` (console mail, open docs, localhost CORS); the flag is refused with any other `NODE_ENV`. The flag is also refused when `APP_BASE_URL` or `CORS_ORIGINS` names a public https host, unless `ALLOW_NON_PRODUCTION_ON_PUBLIC_HOST=true` is set as well, so the loose mode cannot stay on for an internet-facing host by accident. Other values are rejected at start |
 | `RESEND_API_KEY`, `MAIL_FROM`, `APP_BASE_URL` | yes | transactional e-mail, see section 5a; `MAIL_TRANSPORT` is fixed to `resend` by compose |
 | `SITE_ADDRESS`, `HTTP_PORT`, `HTTPS_PORT`, `HTTP_BIND` | tls profile | public host name and published ports |
 | `BACKUP_INTERVAL_SECONDS`, `BACKUP_KEEP_DAYS` | backup profile | default daily, keep 14 days |
