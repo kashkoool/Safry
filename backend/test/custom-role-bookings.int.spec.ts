@@ -16,6 +16,7 @@ describe("bookings for custom roles", () => {
   let ownServiceId: string;
   let rivalServiceId: string;
   let travelerBooking: string;
+  const extraTravelerBookings: string[] = [];
   let rivalBooking: string;
 
   const auth = (s: Pick<Session, "accessToken" | "user">): { accessToken: string; tenantId: string } => ({ accessToken: s.accessToken, tenantId: s.user.tenantId });
@@ -106,6 +107,7 @@ describe("bookings for custom roles", () => {
     expect(seen.ids).toContain(travelerBooking);
     expect(seen.ids).not.toContain(rivalBooking);
     const fresh = (await book(traveler, ownServiceId)).body.id as string;
+    extraTravelerBookings.push(fresh);
     expect((await status(session, fresh, "CONFIRMED")).status).toBe(403);
     expect((await status(session, fresh, "CANCELLED")).status).toBe(403);
     const { session: rivalStaff } = await custom(["booking.read"], rival.organizationId);
@@ -127,7 +129,7 @@ describe("bookings for custom roles", () => {
   it("system roles are unchanged", async () => {
     const mine = await list(traveler);
     expect(mine.status).toBe(200);
-    expect(mine.ids).toEqual(expect.arrayContaining([travelerBooking, rivalBooking]));
+    expect([...mine.ids].sort()).toEqual([travelerBooking, rivalBooking, ...extraTravelerBookings].sort());
     const own = await list(providerSession);
     expect(own.ids).toContain(travelerBooking);
     expect(own.ids).not.toContain(rivalBooking);
