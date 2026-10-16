@@ -299,12 +299,12 @@ provider outage therefore loses that message; the user simply asks again (the pe
 
 - Preferred in production: the provider's managed PostgreSQL with automated backups and PITR, in the
   same jurisdiction as the data (open decision).
-- Self-hosted: `docker compose --profile backup up -d backup` runs `backup.sh` every
+- Self-hosted: `docker compose --profile backup up -d backup` runs `backend/scripts/backup/backup.sh` every
   `BACKUP_INTERVAL_SECONDS` into the `safry_backups` volume and turns `unhealthy` when no dump is newer
   than two intervals (alert on it). Copy the dumps off the host (encrypted object storage in-region);
   a dump on the same disk as the database is not a backup.
 - Restore into a new, empty database with `backend/scripts/backup/restore.sh`, then rehearse it on a
-  schedule (`restore-test.sh`). RPO/RTO targets are still to be decided.
+  schedule (`backend/scripts/backup/restore-test.sh`). RPO/RTO targets are still to be decided.
 
 ### Recovery drills
 

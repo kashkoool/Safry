@@ -33,14 +33,14 @@ are planned upgrades.
 
 | Check | Command |
 |---|---|
-| Backend | `cd backend && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm lint && pnpm build && pnpm typecheck`; tests: `TEST_DATABASE_URL=<postgres url> pnpm test:int:all` (a throwaway PostgreSQL 17, never a real database) |
+| Backend | `cd backend && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm lint && pnpm build && pnpm typecheck`; tests: `pnpm test:int` starts its own embedded PostgreSQL (UTF-8 encoding and the C locale, which avoids the Windows code-page failure); `TEST_DATABASE_URL=<postgres url> pnpm test:int:all` runs build, unit, integration and the route gate against a throwaway PostgreSQL 17 you provide (never a real database), as CI does |
 | Frontend | `cd frontend && pnpm install --frozen-lockfile && pnpm lint && pnpm build && pnpm check:i18n` |
 | Migrate image | `docker build --target migrate -t safry-migrate:ci backend`, then run it as in `ci.yml` |
 | Secret scan | `gitleaks git --no-banner .` |
 | E2E | Follow "Browser end-to-end tests" in [frontend/README.md](../frontend/README.md) and the compose variant in [DEPLOYMENT.md](DEPLOYMENT.md); the CI job builds the API, migrates, creates the runtime login (`backend/scripts/db/create-runtime-role.sql`), seeds with generated passwords, starts the API on port 3000, runs the `frontend` image with `--add-host api:host-gateway`, then `E2E_NO_SERVER=1 pnpm e2e` |
 | Image scan | `docker build --target runtime -t safry-api:scan backend` (also `--target migrate`, and `docker build -t safry-web:scan frontend`), then `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.75.0 image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --ignorefile /ignore/.trivyignore safry-api:scan` (mount `.trivyignore` at `/ignore`) |
 | Lighthouse | `cd frontend && pnpm lighthouse` (set `CHROME_PATH` if Chrome is not found) |
-| Load test | `backend/test/load/README.md`: seed a throwaway database (reduced size through the `LOAD_*` variables), start the API with `start-api.sh`, `node run.mjs --duration 12 --label ci`, then `node check.mjs --label ci` |
+| Load test | `backend/test/load/README.md`: seed a throwaway database (reduced size through the `LOAD_*` variables), start the API with `backend/test/load/start-api.sh`, `node run.mjs --duration 12 --label ci`, then `node check.mjs --label ci` |
 | Recovery drills | `bash scripts/drills/backup-restore.sh` and `bash scripts/drills/rollback.sh [previous-git-ref]` (docker, bash, git and curl only; Git Bash works) |
 
 ## Extra test types (not required checks)
