@@ -155,7 +155,9 @@ export function ServiceEditor({
                 setOrgId(e.target.value);
                 const org = organizations.find((item) => item.id === e.target.value);
                 if (!org) return; // the list changed between render and event: keep the form as it is
-                setCategory(metadata.providerDefinitions[org.type].categories[0]);
+                const firstCategory = metadata.providerDefinitions[org.type].categories[0];
+                if (!firstCategory) return;
+                setCategory(firstCategory);
                 setDetails({});
                 setDetailsEn({});
                 setComponentIds([]);

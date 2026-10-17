@@ -220,7 +220,7 @@ export function PlatformAdminPage() {
         {sections.map(([slug, key, label]) => (
           <Link key={slug} to={`/admin/${slug}`} className={section === key ? "active" : ""}
             aria-current={section === key ? "page" : undefined} onClick={choose}>
-            {tr(pick(label, ({ "accounts-permissions": "Accounts and permissions", providers: "Companies and providers", services: "All services", allreservations: "All bookings", tenants: "Workspaces", audit: "Audit log", sessions: "Login sessions" } as Record<string, string>)[slug]))}
+            {tr(pick(label, ({ "accounts-permissions": "Accounts and permissions", providers: "Companies and providers", services: "All services", allreservations: "All bookings", tenants: "Workspaces", audit: "Audit log", sessions: "Login sessions" } as Record<string, string>)[slug] ?? label))}
           </Link>
         ))}
       </nav>
