@@ -1,7 +1,7 @@
 import { ForbiddenException, Logger, UnauthorizedException, type ArgumentsHost } from "@nestjs/common";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AllExceptionsFilter, describeDatabaseError } from "./all-exceptions.filter.js";
-import { ServiceBusyException } from "./service-busy.exception.js";
+import { ServiceBusyException, retryAfterWithJitter } from "./service-busy.exception.js";
 
 
 function run(
@@ -130,7 +130,24 @@ describe("AllExceptionsFilter overload answers", () => {
   it("sets Retry-After for a refused hash queue too", () => {
     const { status, headers } = runWithHeaders(new ServiceBusyException());
     expect(status).toBe(503);
-    expect(headers["Retry-After"]).toBe("2");
+    expect(["2", "3", "4"]).toContain(headers["Retry-After"]);
+  });
+
+  it("spreads Retry-After over base..base+2 whole seconds", () => {
+    expect(retryAfterWithJitter(2, () => 0)).toBe(2);
+    expect(retryAfterWithJitter(2, () => 0.5)).toBe(3);
+    expect(retryAfterWithJitter(2, () => 0.999)).toBe(4);
+    const seen = new Set(Array.from({ length: 200 }, () => retryAfterWithJitter(2)));
+    expect([...seen].sort()).toEqual([2, 3, 4]);
+  });
+
+  it("logs the error class (not the message) of a mapped pool timeout that carries no database code", () => {
+    const warn = vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const raised = new Error("timeout exceeded when trying to connect");
+    expect(runWithHeaders(raised).status).toBe(503);
+    const line = String(warn.mock.calls[0]?.[0]);
+    expect(line).toContain("Error (message withheld)");
+    expect(line).not.toContain("timeout exceeded");
   });
 
   it("sets no Retry-After on other statuses", () => {
