@@ -1,3 +1,4 @@
+import { MetricsService } from "../../../common/http/metrics.js";
 import { WriteThrottle } from "../../../common/cache/write-throttle.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
@@ -70,7 +71,8 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly security: AccountSecurityService,
-    private readonly mfa: MfaService
+    private readonly mfa: MfaService,
+    private readonly metrics: MetricsService
   ) {}
 
   private get idleMs(): number {
@@ -123,7 +125,9 @@ export class AuthService {
     }
     this.assertPortal(input.portal, user, membership);
     if (user.mfaEnabledAt) return this.challenge(user.id, membership, input.portal);
-    return this.issueTokenPair(user.id, user.email, membership, metadata, "identity.login", user.authVersion);
+    const pair = await this.issueTokenPair(user.id, user.email, membership, metadata, "identity.login", user.authVersion);
+    if (user.isPlatformAdmin) this.metrics.platformAdminSignIn();
+    return pair;
   }
 
   /** second step of login when the account has MFA enabled. */
@@ -169,7 +173,9 @@ export class AuthService {
     }
     await this.security.succeed(user.emailNormalized, metadata.ipAddress);
     this.assertPortal(claims.portal, user, membership);
-    return this.issueTokenPair(user.id, user.email, membership, metadata, "identity.login.mfa", user.authVersion);
+    const pair = await this.issueTokenPair(user.id, user.email, membership, metadata, "identity.login.mfa", user.authVersion);
+    if (user.isPlatformAdmin) this.metrics.platformAdminSignIn();
+    return pair;
   }
 
   private mfaSecret(): string {
@@ -203,8 +209,10 @@ export class AuthService {
   ): void {
     if (!portal) {
       // Opt-in server-side enforcement: deployments that serve one portal can refuse portal-less logins.
-      if (this.config.get<string>("LOGIN_PORTAL_REQUIRED") === "true")
+      if (this.config.get<string>("LOGIN_PORTAL_REQUIRED") === "true") {
+        this.metrics.loginFailure("portal_denied");
         throw new UnauthorizedException("هذا الحساب غير مخوّل لبوابة الدخول المحددة");
+      }
       return;
     }
     const roleCodes = membership.roles.map(({ role }) => role.code);
@@ -219,7 +227,10 @@ export class AuthService {
             !roleCodes.includes("tenant-admin") &&
             // Travelers, and members whose roles are all tenant-defined (their pages are filtered by permission).
             (roleCodes.includes("traveler") || (membership.roles.length > 0 && membership.roles.every(({ role }) => !role.isSystem)));
-    if (!allowed) throw new UnauthorizedException("هذا الحساب غير مخوّل لبوابة الدخول المحددة");
+    if (!allowed) {
+      this.metrics.loginFailure("portal_denied");
+      throw new UnauthorizedException("هذا الحساب غير مخوّل لبوابة الدخول المحددة");
+    }
   }
 
   /** Family id of the live (not rotated, revoked or expired) session this refresh token belongs to; null otherwise. */
@@ -265,6 +276,7 @@ export class AuthService {
           where: { familyId: current.familyId, revokedAt: null },
           data: { revokedAt: now }
         });
+        if (revoked.count > 0) this.metrics.refreshReuse();
         if (revoked.count > 0)
           await tx.auditEvent.create({
             data: {

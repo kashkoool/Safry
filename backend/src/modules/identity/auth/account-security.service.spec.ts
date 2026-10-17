@@ -1,3 +1,4 @@
+import { MetricsService } from "../../../common/http/metrics.js";
 import { ConfigService } from "@nestjs/config";
 import { describe, expect, it } from "vitest";
 import type { PrismaService } from "../../../database/prisma.service.js";
@@ -105,5 +106,28 @@ describe("AccountSecurityService throttle", () => {
     // The account-wide row plus the 21 (e-mail, address) rows created above.
     expect(await service.unlock("E@x.test")).toBe(22);
     expect((await service.begin("e@x.test", "203.0.113.9")).allowed).toBe(true);
+  });
+});
+
+describe("AccountSecurityService failure metrics", () => {
+  const withMetrics = (): { service: AccountSecurityService; metrics: MetricsService } => {
+    const metrics = new MetricsService();
+    const prisma = { auditEvent: { createMany: (): Promise<unknown> => Promise.resolve({}) } } as unknown as PrismaService;
+    const config = { get: (_key: string, fallback: number) => fallback } as unknown as ConfigService;
+    return { service: new AccountSecurityService(prisma, config, metrics), metrics };
+  };
+
+  it("counts failures by coarse reason and a lockout only when a known account gets blocked", async () => {
+    const { service, metrics } = withMetrics();
+    await service.recordFailure({ userId: "u1", ipAddress: "203.0.113.9", reason: "bad_password" });
+    await service.recordFailure({ userId: undefined, ipAddress: "203.0.113.9", reason: "unknown_account" });
+    await service.recordFailure({ userId: "u1", ipAddress: "203.0.113.9", reason: "throttled" });
+    await service.recordFailure({ userId: "u1", ipAddress: "203.0.113.9", reason: "bad_mfa_code", blocked: true });
+    await service.recordFailure({ userId: undefined, ipAddress: "203.0.113.9", reason: "unknown_account", blocked: true });
+    const text = metrics.render({});
+    expect(text).toContain('safry_login_failures_total{reason="bad_credentials"} 3');
+    expect(text).toContain('safry_login_failures_total{reason="locked"} 1');
+    expect(text).toContain('safry_login_failures_total{reason="mfa_failed"} 1');
+    expect(text).toContain("safry_account_lockouts_total 1");
   });
 });

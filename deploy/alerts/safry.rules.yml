@@ -1,0 +1,217 @@
+# Safry alert rules (Prometheus format, provider neutral).
+# Plain-language guide, first actions and the Azure Monitor mapping: docs/ALERTING.md.
+# Tested with: scripts/alerts-test.sh (promtool unit tests in safry.rules.test.yml).
+#
+# Scrape job name expected: "safry-api". The API serves /metrics only when METRICS_TOKEN is set and the caller sends it as a bearer token.
+# Severity: "page" = wake a human now; "ticket" = look during working hours.
+# Every threshold below is a starting point for a small product: tune it from real traffic (see "How to tune" in docs/ALERTING.md).
+# Metric names come from backend/src/common/http/metrics.ts. Route labels are templates (no ids); status is a class (2xx, 4xx, 5xx).
+
+groups:
+  - name: safry-availability
+    rules:
+      - alert: ApiDown
+        # The scrape failed for 2 minutes, or the target is not configured at all (absent).
+        # Tune: raise "for" if the platform restarts instances slowly.
+        expr: up{job="safry-api"} == 0 or absent(up{job="safry-api"})
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Safry API cannot be scraped"
+          description: "Prometheus has not been able to read /metrics from the API for 2 minutes. The API may be down, unreachable, or the scrape token may be wrong (a rejected token also shows as down)."
+          first_action: "Open the platform health page for the API; check the container or app is running and the last deploy; then check /api/v1/health/live from outside. If /metrics answers 401, the scraper token is missing or does not match (for example after a rotation)."
+          runbook: "docs/ALERTING.md#apidown"
+
+      - alert: DatabaseUnreachable
+        # /health/ready answers 503 "database" whenever SELECT 1 fails or takes over 2 seconds. Orchestrators probe it every few seconds,
+        # so the counter keeps rising during an outage. Tune: raise "for" if brief failovers are normal.
+        expr: sum(increase(safry_readiness_failures_total{reason="database"}[2m])) > 0
+        for: 3m
+        labels:
+          severity: page
+        annotations:
+          summary: "The API cannot reach its database"
+          description: "Readiness has failed because of the database for 3 minutes. Users cannot sign in or book; the API stays up but answers errors."
+          first_action: "Check the database server status and connections in the cloud console; check for a failover, full storage, or a changed password or firewall rule. Do not restart the API first: it only waits for the database."
+          runbook: "docs/ALERTING.md#databaseunreachable"
+
+      - alert: ReadinessDown
+        # Any readiness failure (database, or a replica stuck draining) that lasts. Short drains during a deploy are normal and stay below "for".
+        # When DatabaseUnreachable also fires, route only that one (see inhibit_rules in deploy/alerts/alertmanager.dev.yml).
+        expr: sum(increase(safry_readiness_failures_total[2m])) > 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "The API reports not ready"
+          description: "The readiness probe has been failing for 5 minutes (database problem or an instance stuck shutting down). Traffic may be failing."
+          first_action: "Call /api/v1/health/ready on one instance to see which part is failing, then follow the database or deploy steps."
+          runbook: "docs/ALERTING.md#readinessdown"
+
+      - alert: High5xxRate
+        # More than 5% server errors over 5 minutes, only when there is real traffic (above 0.1 request per second).
+        # Tune: lower the ratio for a stricter service; lower the traffic floor if your site is very quiet.
+        expr: |
+          (
+            sum(rate(safry_http_requests_total{status="5xx", route!~".*/(health/.*|metrics)"}[5m]))
+            /
+            sum(rate(safry_http_requests_total{route!~".*/(health/.*|metrics)"}[5m]))
+          ) > 0.05
+          and
+          sum(rate(safry_http_requests_total{route!~".*/(health/.*|metrics)"}[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "More than 5% of requests are failing with server errors"
+          description: "For 10 minutes, over 5% of API requests ended in a 5xx error. Users are seeing failures."
+          first_action: "Open the API logs for the last 15 minutes and group errors by route; check whether the last deploy or a database slowdown matches the start time."
+          runbook: "docs/ALERTING.md#high5xxrate"
+
+      - alert: HighLatencyP95
+        # 95th percentile over 1 second for 10 minutes (histogram in milliseconds; the largest bucket is 10 s).
+        # Tune: pick the p95 you see on a normal day and set the threshold at about 3 times that.
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(safry_http_request_duration_ms_bucket{route!~".*/(health/.*|metrics)"}[5m]))
+          ) > 1000
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The API is slow (p95 above 1 second)"
+          description: "The slowest 5% of requests take more than 1 second, sustained for 10 minutes."
+          first_action: "Check database CPU and connections, then the slowest routes in the API logs (durationMs); look for a heavy report or a missing index."
+          runbook: "docs/ALERTING.md#highlatencyp95"
+
+      - alert: RateLimitStoreDegraded
+        # Redis for shared rate limits is down: limits still work per instance, but weaker with several instances.
+        expr: max(safry_rate_limit_degraded) == 1
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Shared rate-limit store is down; limits are per instance"
+          description: "The API fell back to in-process rate limits for 10 minutes. Protection against brute force is weaker while more than one instance runs."
+          first_action: "Check the Redis service used by RATE_LIMIT_REDIS_URL and its network rules."
+          runbook: "docs/ALERTING.md#ratelimitstoredegraded"
+
+  - name: safry-security
+    rules:
+      - alert: LoginFailureSpike
+        # Credential stuffing or brute force: at least 30 failed sign-ins in 10 minutes AND failures are over half of all sign-in attempts,
+        # sustained for 5 minutes. The ratio avoids paging on a busy day with a few typos; the count avoids paging on one failed login at night.
+        # Tune: 30 -> your normal daily peak of failures times 3; 0.5 -> lower for a stricter rule. Success = HTTP 2xx on the login route.
+        expr: |
+          (sum(increase(safry_login_failures_total[10m])) >= 30)
+          and
+          (
+            sum(increase(safry_login_failures_total[10m]))
+            /
+            (
+              sum(increase(safry_login_failures_total[10m]))
+              + (sum(increase(safry_http_requests_total{route=~".*/auth/login", status="2xx"}[10m])) or vector(0))
+            )
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "Many failed sign-ins: possible password guessing"
+          description: "At least 30 sign-ins failed in 10 minutes and failures are over half of all attempts, for 5 minutes. This looks like credential stuffing or brute force."
+          first_action: "Look at the failed-login audit events by address and reason; if one address range dominates, block it at the edge (Cloudflare or WAF rule). Check lockouts and 429s. Do not unlock accounts in bulk."
+          runbook: "docs/ALERTING.md#loginfailurespike"
+
+      - alert: LockoutSpike
+        # Many accounts being locked means someone is guessing passwords across accounts. Tune: raise 10 for a large user base.
+        expr: sum(increase(safry_account_lockouts_total[10m])) >= 10
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Many accounts were locked after failed sign-ins"
+          description: "At least 10 sign-in blocks started in 10 minutes. Real users rarely lock themselves out this often."
+          first_action: "Check which reasons dominate the failed logins and whether the addresses are shared; support may get calls from locked real users."
+          runbook: "docs/ALERTING.md#lockoutspike"
+
+      - alert: RateLimit429Spike
+        # More than 100 requests refused by the rate limiter in 10 minutes, per route group (auth routes vs the rest).
+        # Tune: raise if a legitimate office or partner shares one address.
+        expr: sum by (group) (increase(safry_rate_limited_total[10m])) > 100
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The rate limiter is rejecting many requests ({{ $labels.group }} routes)"
+          description: "More than 100 requests were refused with HTTP 429 in 10 minutes for the {{ $labels.group }} routes. Either an attack is being absorbed or a real client is misbehaving."
+          first_action: "Find the busiest client address in the edge or API logs; block it if hostile, or fix the client if it is a partner or our own front end."
+          runbook: "docs/ALERTING.md#ratelimit429spike"
+
+      - alert: RefreshReuseDetected
+        # Any reuse of an already-rotated refresh token after the short grace window: a copied or stolen session token. The whole session family is revoked.
+        # Severity ticket; raise to page if you serve high-value accounts.
+        expr: sum(increase(safry_refresh_reuse_detected_total[10m])) > 0
+        labels:
+          severity: ticket
+        annotations:
+          summary: "A refresh token was replayed (possible session theft)"
+          description: "A session token that had already been used was presented again. The session family was revoked automatically; the user has been signed out."
+          first_action: "Find the session-reuse audit events (user, address, time). Ask the user to change their password if the address is not theirs."
+          runbook: "docs/ALERTING.md#refreshreusedetected"
+
+      - alert: PlatformAdminSignIn
+        # Informational: every platform-administrator sign-in. Route to a ticket or chat channel, not to a phone.
+        expr: sum(increase(safry_platform_admin_signins_total[10m])) > 0
+        labels:
+          severity: ticket
+        annotations:
+          summary: "A platform administrator signed in"
+          description: "A platform-administrator account completed a sign-in in the last 10 minutes."
+          first_action: "Nothing if expected. If nobody on the admin list signed in, treat it as account takeover: revoke sessions and rotate the password."
+          runbook: "docs/ALERTING.md#platformadminsignin"
+
+      - alert: PlatformAdminSignInOffHours
+        # Same signal outside working hours; hour() is UTC. Adjust 6 and 20 to your team day (Cairo is UTC+2 or +3).
+        expr: sum(increase(safry_platform_admin_signins_total[10m])) > 0 and on() (hour() < 6 or hour() >= 20)
+        labels:
+          severity: page
+        annotations:
+          summary: "A platform administrator signed in outside working hours"
+          description: "A platform-administrator sign-in happened between 20:00 and 06:00 UTC."
+          first_action: "Confirm with the admin team right away. If nobody signed in, revoke the admin sessions and rotate the password."
+          runbook: "docs/ALERTING.md#platformadminsigninoffhours"
+
+      - alert: MfaResetPerformed
+        # The break-glass script (backend/scripts/reset-platform-admin-mfa.ts) writes an audit event; the API reports the count of the last 24 hours.
+        # It stays firing for 24 hours after a reset by design: acknowledge it, it clears itself.
+        expr: max(safry_platform_admin_mfa_resets_24h) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: "A platform administrator second factor was reset (break-glass)"
+          description: "The emergency script removed an administrator MFA in the last 24 hours."
+          first_action: "Confirm there is a ticket with the operator and approver names for it (they are in the audit event). If there is none, treat it as an incident."
+          runbook: "docs/ALERTING.md#mfaresetperformed"
+
+  - name: safry-mail
+    rules:
+      - alert: MailFailureRate
+        # At least 3 mails permanently failed in 30 minutes and they are over a quarter of all mail. Mail carries password resets and verification links.
+        # Tune: raise 3 if you send a lot of mail.
+        expr: |
+          (sum(increase(safry_mail_delivery_total{outcome="failed"}[30m])) >= 3)
+          and
+          (
+            sum(increase(safry_mail_delivery_total{outcome="failed"}[30m]))
+            /
+            sum(increase(safry_mail_delivery_total[30m]))
+          ) > 0.25
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Outgoing e-mail is failing"
+          description: "Password-reset and verification mails are not being delivered (at least 3 failures in 30 minutes, over 25% of attempts)."
+          first_action: "Check the mail provider status page and the API key; look at the API log lines 'mail ... not delivered' for the provider answer."
+          runbook: "docs/ALERTING.md#mailfailurerate"

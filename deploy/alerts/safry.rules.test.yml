@@ -1,0 +1,483 @@
+# promtool unit tests for safry.rules.yml. Run: bash scripts/alerts-test.sh
+# Every alert has one case where it must fire and at least one where it must stay silent.
+# Series are simulated once per minute; "0+10x30" means: start at 0, add 10 per minute, 30 times (a counter).
+# When you change an annotation in safry.rules.yml, copy the new text here too (promtool compares annotations exactly).
+rule_files:
+- safry.rules.yml
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  name: ApiDown fires when the scrape fails for 2 minutes
+  input_series:
+  - series: up{job="safry-api", instance="a"}
+    values: 1 1 1 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: ApiDown
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: ApiDown
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        job: safry-api
+        instance: a
+      exp_annotations:
+        summary: Safry API cannot be scraped
+        description: Prometheus has not been able to read /metrics from the API for 2 minutes. The API may be down, unreachable, or the scrape token may be wrong (a rejected token also shows as down).
+        first_action: Open the platform health page for the API; check the container or app is running and the last deploy; then check /api/v1/health/live from outside. If /metrics answers 401, the scraper token is missing or does not match (for example after a rotation).
+        runbook: docs/ALERTING.md#apidown
+- interval: 1m
+  name: ApiDown stays silent while the API is up
+  input_series:
+  - series: up{job="safry-api", instance="a"}
+    values: 1x10
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: ApiDown
+    exp_alerts: []
+- interval: 1m
+  name: ApiDown fires when no scrape target exists at all (absent)
+  input_series:
+  - series: up{job="other", instance="x"}
+    values: 1x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: ApiDown
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        job: safry-api
+      exp_annotations:
+        summary: Safry API cannot be scraped
+        description: Prometheus has not been able to read /metrics from the API for 2 minutes. The API may be down, unreachable, or the scrape token may be wrong (a rejected token also shows as down).
+        first_action: Open the platform health page for the API; check the container or app is running and the last deploy; then check /api/v1/health/live from outside. If /metrics answers 401, the scraper token is missing or does not match (for example after a rotation).
+        runbook: docs/ALERTING.md#apidown
+- interval: 1m
+  name: DatabaseUnreachable fires after 3 minutes of database readiness failures
+  input_series:
+  - series: safry_readiness_failures_total{reason="database", job="safry-api"}
+    values: 0 0 0 0+6x12
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: DatabaseUnreachable
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: DatabaseUnreachable
+    exp_alerts:
+    - exp_labels:
+        severity: page
+      exp_annotations:
+        summary: The API cannot reach its database
+        description: Readiness has failed because of the database for 3 minutes. Users cannot sign in or book; the API stays up but answers errors.
+        first_action: 'Check the database server status and connections in the cloud console; check for a failover, full storage, or a changed password or firewall rule. Do not restart the API first: it only waits for the database.'
+        runbook: docs/ALERTING.md#databaseunreachable
+- interval: 1m
+  name: DatabaseUnreachable ignores a 2 minute blip
+  input_series:
+  - series: safry_readiness_failures_total{reason="database", job="safry-api"}
+    values: 0 0 0 6 6 6 6 6 6 6 6 6
+  alert_rule_test:
+  - eval_time: 11m
+    alertname: DatabaseUnreachable
+    exp_alerts: []
+- interval: 1m
+  name: ReadinessDown fires for an instance stuck draining
+  input_series:
+  - series: safry_readiness_failures_total{reason="draining", instance="stuck"}
+    values: 0 0 0 0+5x15
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: ReadinessDown
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: ReadinessDown
+    exp_alerts:
+    - exp_labels:
+        severity: page
+      exp_annotations:
+        summary: The API reports not ready
+        description: The readiness probe has been failing for 5 minutes (database problem or an instance stuck shutting down). Traffic may be failing.
+        first_action: Call /api/v1/health/ready on one instance to see which part is failing, then follow the database or deploy steps.
+        runbook: docs/ALERTING.md#readinessdown
+- interval: 1m
+  name: ReadinessDown ignores a short drain during a deploy
+  input_series:
+  - series: safry_readiness_failures_total{reason="draining", instance="deploy"}
+    values: 0 0 5 5 5 5 5 5 5 5 5 5 5 5 5 5
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: ReadinessDown
+    exp_alerts: []
+- interval: 1m
+  name: High5xxRate fires at 20 percent server errors with traffic
+  input_series:
+  - series: safry_http_requests_total{route="/api/v1/bookings", status="2xx", method="GET"}
+    values: 0+80x30
+  - series: safry_http_requests_total{route="/api/v1/bookings", status="5xx", method="GET"}
+    values: 0+20x30
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: High5xxRate
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: High5xxRate
+    exp_alerts:
+    - exp_labels:
+        severity: page
+      exp_annotations:
+        summary: More than 5% of requests are failing with server errors
+        description: For 10 minutes, over 5% of API requests ended in a 5xx error. Users are seeing failures.
+        first_action: Open the API logs for the last 15 minutes and group errors by route; check whether the last deploy or a database slowdown matches the start time.
+        runbook: docs/ALERTING.md#high5xxrate
+- interval: 1m
+  name: High5xxRate is silent at 1 percent server errors
+  input_series:
+  - series: safry_http_requests_total{route="/api/v1/bookings", status="2xx", method="GET"}
+    values: 0+99x30
+  - series: safry_http_requests_total{route="/api/v1/bookings", status="5xx", method="GET"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: High5xxRate
+    exp_alerts: []
+- interval: 1m
+  name: High5xxRate ignores a failing health route
+  input_series:
+  - series: safry_http_requests_total{route="/api/v1/health/ready", status="5xx", method="GET"}
+    values: 0+100x30
+  - series: safry_http_requests_total{route="/api/v1/bookings", status="2xx", method="GET"}
+    values: 0+100x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: High5xxRate
+    exp_alerts: []
+- interval: 1m
+  name: High5xxRate is silent at very low traffic even with 50 percent errors
+  input_series:
+  - series: safry_http_requests_total{route="/api/v1/bookings", status="2xx", method="GET"}
+    values: 0+1x30
+  - series: safry_http_requests_total{route="/api/v1/bookings", status="5xx", method="GET"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: High5xxRate
+    exp_alerts: []
+- interval: 1m
+  name: HighLatencyP95 fires when requests take between 1 and 2.5 seconds
+  input_series:
+  - series: safry_http_request_duration_ms_bucket{route="/api/v1/slow", le="1000", status="2xx", method="GET"}
+    values: 0+0x30
+  - series: safry_http_request_duration_ms_bucket{route="/api/v1/slow", le="2500", status="2xx", method="GET"}
+    values: 0+60x30
+  - series: safry_http_request_duration_ms_bucket{route="/api/v1/slow", le="+Inf", status="2xx", method="GET"}
+    values: 0+60x30
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: HighLatencyP95
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: HighLatencyP95
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: The API is slow (p95 above 1 second)
+        description: The slowest 5% of requests take more than 1 second, sustained for 10 minutes.
+        first_action: Check database CPU and connections, then the slowest routes in the API logs (durationMs); look for a heavy report or a missing index.
+        runbook: docs/ALERTING.md#highlatencyp95
+- interval: 1m
+  name: HighLatencyP95 is silent when requests are fast
+  input_series:
+  - series: safry_http_request_duration_ms_bucket{route="/api/v1/fast", le="1000", status="2xx", method="GET"}
+    values: 0+600x30
+  - series: safry_http_request_duration_ms_bucket{route="/api/v1/fast", le="+Inf", status="2xx", method="GET"}
+    values: 0+600x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: HighLatencyP95
+    exp_alerts: []
+- interval: 1m
+  name: RateLimitStoreDegraded fires after 10 minutes of fallback
+  input_series:
+  - series: safry_rate_limit_degraded
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: RateLimitStoreDegraded
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: RateLimitStoreDegraded
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Shared rate-limit store is down; limits are per instance
+        description: The API fell back to in-process rate limits for 10 minutes. Protection against brute force is weaker while more than one instance runs.
+        first_action: Check the Redis service used by RATE_LIMIT_REDIS_URL and its network rules.
+        runbook: docs/ALERTING.md#ratelimitstoredegraded
+- interval: 1m
+  name: RateLimitStoreDegraded is silent when the shared store is healthy
+  input_series:
+  - series: safry_rate_limit_degraded
+    values: '0x30'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: RateLimitStoreDegraded
+    exp_alerts: []
+- interval: 1m
+  name: LoginFailureSpike fires on 100 failures in 10 minutes against few successes
+  input_series:
+  - series: safry_login_failures_total{reason="bad_credentials"}
+    values: 0+10x30
+  - series: safry_http_requests_total{route="/api/v1/auth/login", status="2xx", method="POST"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: LoginFailureSpike
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: LoginFailureSpike
+    exp_alerts:
+    - exp_labels:
+        severity: page
+      exp_annotations:
+        summary: 'Many failed sign-ins: possible password guessing'
+        description: At least 30 sign-ins failed in 10 minutes and failures are over half of all attempts, for 5 minutes. This looks like credential stuffing or brute force.
+        first_action: Look at the failed-login audit events by address and reason; if one address range dominates, block it at the edge (Cloudflare or WAF rule). Check lockouts and 429s. Do not unlock accounts in bulk.
+        runbook: docs/ALERTING.md#loginfailurespike
+- interval: 1m
+  name: LoginFailureSpike is silent when failures are a small share of a busy login day
+  input_series:
+  - series: safry_login_failures_total{reason="bad_credentials"}
+    values: 0+10x30
+  - series: safry_http_requests_total{route="/api/v1/auth/login", status="2xx", method="POST"}
+    values: 0+100x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: LoginFailureSpike
+    exp_alerts: []
+- interval: 1m
+  name: LoginFailureSpike is silent below 30 failures even when every attempt failed
+  input_series:
+  - series: safry_login_failures_total{reason="bad_credentials"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: LoginFailureSpike
+    exp_alerts: []
+- interval: 1m
+  name: LockoutSpike fires on 20 lockouts in 10 minutes
+  input_series:
+  - series: safry_account_lockouts_total
+    values: 0+2x30
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: LockoutSpike
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: LockoutSpike
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Many accounts were locked after failed sign-ins
+        description: At least 10 sign-in blocks started in 10 minutes. Real users rarely lock themselves out this often.
+        first_action: Check which reasons dominate the failed logins and whether the addresses are shared; support may get calls from locked real users.
+        runbook: docs/ALERTING.md#lockoutspike
+- interval: 1m
+  name: LockoutSpike is silent for a couple of real users locking themselves out
+  input_series:
+  - series: safry_account_lockouts_total
+    values: 0 0 1 1 1 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: LockoutSpike
+    exp_alerts: []
+- interval: 1m
+  name: RateLimit429Spike fires for the auth group only
+  input_series:
+  - series: safry_rate_limited_total{group="auth"}
+    values: 0+20x30
+  - series: safry_rate_limited_total{group="api"}
+    values: 0+2x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: RateLimit429Spike
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        group: auth
+      exp_annotations:
+        summary: The rate limiter is rejecting many requests (auth routes)
+        description: More than 100 requests were refused with HTTP 429 in 10 minutes for the auth routes. Either an attack is being absorbed or a real client is misbehaving.
+        first_action: Find the busiest client address in the edge or API logs; block it if hostile, or fix the client if it is a partner or our own front end.
+        runbook: docs/ALERTING.md#ratelimit429spike
+- interval: 1m
+  name: RateLimit429Spike is silent at 20 rejections in 10 minutes
+  input_series:
+  - series: safry_rate_limited_total{group="api"}
+    values: 0+2x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: RateLimit429Spike
+    exp_alerts: []
+- interval: 1m
+  name: RefreshReuseDetected fires on a single replay
+  input_series:
+  - series: safry_refresh_reuse_detected_total
+    values: 0 0 0 1 1 1 1 1 1 1 1 1 1 1
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: RefreshReuseDetected
+    exp_alerts: []
+  - eval_time: 4m
+    alertname: RefreshReuseDetected
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: A refresh token was replayed (possible session theft)
+        description: A session token that had already been used was presented again. The session family was revoked automatically; the user has been signed out.
+        first_action: Find the session-reuse audit events (user, address, time). Ask the user to change their password if the address is not theirs.
+        runbook: docs/ALERTING.md#refreshreusedetected
+  - eval_time: 20m
+    alertname: RefreshReuseDetected
+    exp_alerts: []
+- interval: 1m
+  name: RefreshReuseDetected is silent with no replay
+  input_series:
+  - series: safry_refresh_reuse_detected_total
+    values: '0x20'
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: RefreshReuseDetected
+    exp_alerts: []
+- interval: 1m
+  name: PlatformAdminSignIn fires after a sign-in; off-hours variant fires at 00:04 UTC
+  input_series:
+  - series: safry_platform_admin_signins_total
+    values: 0 0 0 1 1 1 1 1
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: PlatformAdminSignIn
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: A platform administrator signed in
+        description: A platform-administrator account completed a sign-in in the last 10 minutes.
+        first_action: 'Nothing if expected. If nobody on the admin list signed in, treat it as account takeover: revoke sessions and rotate the password.'
+        runbook: docs/ALERTING.md#platformadminsignin
+  - eval_time: 4m
+    alertname: PlatformAdminSignInOffHours
+    exp_alerts:
+    - exp_labels:
+        severity: page
+      exp_annotations:
+        summary: A platform administrator signed in outside working hours
+        description: A platform-administrator sign-in happened between 20:00 and 06:00 UTC.
+        first_action: Confirm with the admin team right away. If nobody signed in, revoke the admin sessions and rotate the password.
+        runbook: docs/ALERTING.md#platformadminsigninoffhours
+- interval: 1m
+  name: PlatformAdminSignIn at 10:01 UTC raises the ticket but not the off-hours page
+  input_series:
+  - series: safry_platform_admin_signins_total
+    values: _x598 0 1 1 1
+  alert_rule_test:
+  - eval_time: 601m
+    alertname: PlatformAdminSignIn
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: A platform administrator signed in
+        description: A platform-administrator account completed a sign-in in the last 10 minutes.
+        first_action: 'Nothing if expected. If nobody on the admin list signed in, treat it as account takeover: revoke sessions and rotate the password.'
+        runbook: docs/ALERTING.md#platformadminsignin
+  - eval_time: 601m
+    alertname: PlatformAdminSignInOffHours
+    exp_alerts: []
+- interval: 1m
+  name: PlatformAdminSignIn is silent without a sign-in
+  input_series:
+  - series: safry_platform_admin_signins_total
+    values: '0x20'
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: PlatformAdminSignIn
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: PlatformAdminSignInOffHours
+    exp_alerts: []
+- interval: 1m
+  name: MfaResetPerformed fires while a reset is inside the last 24 hours
+  input_series:
+  - series: safry_platform_admin_mfa_resets_24h
+    values: 0 0 1 1 1
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: MfaResetPerformed
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: MfaResetPerformed
+    exp_alerts:
+    - exp_labels:
+        severity: page
+      exp_annotations:
+        summary: A platform administrator second factor was reset (break-glass)
+        description: The emergency script removed an administrator MFA in the last 24 hours.
+        first_action: Confirm there is a ticket with the operator and approver names for it (they are in the audit event). If there is none, treat it as an incident.
+        runbook: docs/ALERTING.md#mfaresetperformed
+- interval: 1m
+  name: MfaResetPerformed is silent at zero
+  input_series:
+  - series: safry_platform_admin_mfa_resets_24h
+    values: '0x10'
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: MfaResetPerformed
+    exp_alerts: []
+- interval: 1m
+  name: MailFailureRate fires when half of the mails fail
+  input_series:
+  - series: safry_mail_delivery_total{outcome="failed"}
+    values: 0+1x60
+  - series: safry_mail_delivery_total{outcome="sent"}
+    values: 0+1x60
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: MailFailureRate
+    exp_alerts: []
+  - eval_time: 50m
+    alertname: MailFailureRate
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Outgoing e-mail is failing
+        description: Password-reset and verification mails are not being delivered (at least 3 failures in 30 minutes, over 25% of attempts).
+        first_action: Check the mail provider status page and the API key; look at the API log lines 'mail ... not delivered' for the provider answer.
+        runbook: docs/ALERTING.md#mailfailurerate
+- interval: 1m
+  name: MailFailureRate is silent when failures are a small share
+  input_series:
+  - series: safry_mail_delivery_total{outcome="failed"}
+    values: 0+1x60
+  - series: safry_mail_delivery_total{outcome="sent"}
+    values: 0+10x60
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: MailFailureRate
+    exp_alerts: []
+- interval: 1m
+  name: MailFailureRate is silent below 3 failures
+  input_series:
+  - series: safry_mail_delivery_total{outcome="failed"}
+    values: 0 0 0 1 1 2x50
+  - series: safry_mail_delivery_total{outcome="sent"}
+    values: '0x55'
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: MailFailureRate
+    exp_alerts: []

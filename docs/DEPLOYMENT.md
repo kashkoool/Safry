@@ -329,6 +329,10 @@ Two runnable drills live in `scripts/drills/` (Docker only; run weekly and on mi
 
 Not proven by either: the managed cloud backup service, point-in-time restore, cross-region restore, restore time at production size. Repeat the restore on the real provider once it exists (see [INFRASTRUCTURE.md](INFRASTRUCTURE.md), section 7).
 
+### Alerting
+
+Alert rules for failed-login bursts, database or API down, server errors, mail failures and administrator activity are in `deploy/alerts/`. What each means, how to tune them and the Azure Monitor wiring checklist: [ALERTING.md](ALERTING.md). `METRICS_TOKEN` must be set for the API to serve `/api/v1/metrics` to the scraper.
+
 ## 7. Local development
 
 `backend/compose.yml` runs only PostgreSQL for development, published on `127.0.0.1:${POSTGRES_PORT:-5432}`.

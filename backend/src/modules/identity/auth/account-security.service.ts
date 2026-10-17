@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
+import { MetricsService } from "../../../common/http/metrics.js";
 import { ConfigService } from "@nestjs/config";
 import { requestContext } from "../../../common/context/request-context.js";
 import { PrismaService } from "../../../database/prisma.service.js";
@@ -55,7 +56,8 @@ export class AccountSecurityService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService
+    private readonly config: ConfigService,
+    @Optional() private readonly metrics?: MetricsService
   ) {}
 
   private get maxAttempts(): number {
@@ -209,6 +211,8 @@ export class AccountSecurityService {
       ipAddress: context.ipAddress,
       metadata: { reason: context.reason }
     };
+    this.metrics?.loginFailure(context.reason.startsWith("throttled") ? "locked" : context.reason === "bad_mfa_code" ? "mfa_failed" : "bad_credentials");
+    if (context.blocked && context.userId) this.metrics?.accountLockout();
     await this.prisma.auditEvent.createMany({
       data: [
         { ...base, action: "identity.login.failed" },

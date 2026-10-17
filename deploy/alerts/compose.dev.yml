@@ -1,0 +1,99 @@
+# LOCAL ONLY. Throwaway stack used by scripts/alerts-fire-test.sh to prove the alert rules really fire:
+# Postgres + migrations + API + Prometheus + Alertmanager + a webhook sink that only writes to a file.
+# Not a deployment file. Nothing here is published beyond 127.0.0.1; ports avoid 3000/4000/5433/6379/3001.
+# Every secret comes from the environment that the script generates per run; nothing is stored.
+name: safry-alerts
+
+services:
+  postgres:
+    container_name: safry-alerts-postgres
+    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_DB: safry
+      POSTGRES_USER: safry
+      POSTGRES_PASSWORD: ${ALERTS_PG_PASSWORD:-unused-for-down}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U safry -d safry"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    container_name: safry-alerts-migrate
+    image: ${ALERTS_MIGRATE_IMAGE:-safry-alerts-migrate:unset}
+    profiles: [ops]
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://safry:${ALERTS_PG_PASSWORD}@postgres:5432/safry?schema=public
+      DATABASE_MIGRATE_URL: postgresql://safry:${ALERTS_PG_PASSWORD}@postgres:5432/safry?schema=public
+
+  seed:
+    container_name: safry-alerts-seed
+    image: ${ALERTS_MIGRATE_IMAGE:-safry-alerts-migrate:unset}
+    profiles: [ops]
+    depends_on: { postgres: { condition: service_healthy } }
+    command: ["node", "node_modules/tsx/dist/cli.mjs", "prisma/seed.ts"]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://safry:${ALERTS_PG_PASSWORD}@postgres:5432/safry?schema=public
+      DATABASE_MIGRATE_URL: postgresql://safry:${ALERTS_PG_PASSWORD}@postgres:5432/safry?schema=public
+      BOOTSTRAP_TENANT_CODE: alertsdemo
+      BOOTSTRAP_TENANT_NAME: Alerts fire test
+      BOOTSTRAP_ADMIN_EMAIL: ${ALERTS_USER_EMAIL}
+      BOOTSTRAP_ADMIN_PASSWORD: ${ALERTS_USER_PASSWORD}
+      DEMO_SEED_PASSWORD: ${ALERTS_USER_PASSWORD}
+
+  api:
+    container_name: safry-alerts-api
+    image: ${ALERTS_API_IMAGE:-safry-alerts-api:unset}
+    depends_on: { postgres: { condition: service_healthy } }
+    ports:
+      - "127.0.0.1:14010:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      API_PREFIX: api/v1
+      DATABASE_URL: postgresql://safry:${ALERTS_PG_PASSWORD}@postgres:5432/safry?schema=public
+      JWT_ACCESS_SECRET: ${ALERTS_JWT_SECRET}
+      MFA_ENCRYPTION_KEY: ${ALERTS_MFA_KEY}
+      METRICS_TOKEN: ${ALERTS_METRICS_TOKEN}
+      LOGIN_MAX_ATTEMPTS: "5"
+      # Readiness is probed by Docker every 3 s, like an orchestrator would.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 4s
+      retries: 3
+      start_period: 5s
+
+  webhook-sink:
+    container_name: safry-alerts-webhook
+    image: node:22.23.3-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+    command: ["node", "/app/webhook-sink.mjs"]
+    volumes:
+      - ./webhook-sink.mjs:/app/webhook-sink.mjs:ro
+      - ${ALERTS_WORK_DIR:-./.tmp-fire}/out:/out
+
+  alertmanager:
+    container_name: safry-alerts-alertmanager
+    image: prom/alertmanager:v0.28.1@sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    volumes:
+      - ./alertmanager.dev.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "127.0.0.1:19093:9093"
+    depends_on: [webhook-sink]
+
+  prometheus:
+    container_name: safry-alerts-prometheus
+    image: prom/prometheus:v3.5.1@sha256:38c3b05c3bc744ff1b0b7b4eb82196026442845e62a1e2073795565da506d7a2
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--web.enable-lifecycle"]
+    volumes:
+      - ./prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro
+      # The script copies the real rules here with every "for:" shortened to seconds (the timing itself is covered by promtool tests).
+      - ${ALERTS_WORK_DIR}/rules:/etc/prometheus/rules:ro
+      - ${ALERTS_WORK_DIR}/secrets/metrics-token:/etc/prometheus/metrics-token:ro
+    ports:
+      - "127.0.0.1:19090:9090"
+    depends_on: [alertmanager, api]
