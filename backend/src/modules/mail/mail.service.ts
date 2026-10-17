@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_MAIL_RETRY, MAIL_RETRY, MAIL_TRANSPORT, MailDeliveryError, type MailRetryPolicy, type MailTransport } from "./mail.types.js";
+import { MailBudget } from "./mail-budget.js";
 import { MetricsService } from "../../common/http/metrics.js";
 import { mailLocale, renderMail, type MailTemplate } from "./templates.js";
 
@@ -11,11 +12,13 @@ export class MailService {
   constructor(
     @Inject(MAIL_TRANSPORT) readonly transport: MailTransport,
     @Optional() @Inject(MAIL_RETRY) private readonly retry: MailRetryPolicy = DEFAULT_MAIL_RETRY,
-    @Optional() private readonly metrics?: MetricsService
+    @Optional() private readonly metrics?: MetricsService,
+    @Optional() private readonly budget?: MailBudget
   ) {}
 
   /** Renders the template for the user's locale and hands it to the transport; the caller decides whether to await. */
-  send(to: string, locale: string | null | undefined, template: MailTemplate, idempotencyKey: string = randomUUID()): Promise<void> {
+  async send(to: string, locale: string | null | undefined, template: MailTemplate, idempotencyKey: string = randomUUID()): Promise<void> {
+    if (this.budget && !(await this.budget.allow(template.kind))) throw new MailDeliveryError("mail budget spent");
     return this.transport.send(renderMail(mailLocale(locale), template, to), idempotencyKey);
   }
 
@@ -32,6 +35,7 @@ export class MailService {
 
   private async deliverWithRetry(to: string, locale: string | null | undefined, template: MailTemplate, idempotencyKey: string): Promise<void> {
     const { attempts, baseDelayMs } = this.retry;
+    if (this.budget && !(await this.budget.allow(template.kind))) return; // dropped and counted by the budget; the caller answer is unchanged
     let message;
     try {
       message = renderMail(mailLocale(locale), template, to);

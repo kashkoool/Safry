@@ -196,6 +196,19 @@ groups:
 
   - name: safry-mail
     rules:
+      - alert: MailBudgetExhausted
+        # The API dropped mail because the hourly or daily mail budget (MAIL_BUDGET_PER_HOUR / _PER_DAY) was spent. Either real growth or someone
+        # abusing register / forgot-password. Tune: raise "for" if brief spikes are normal; raise the budget when the mail plan allows more.
+        expr: sum(increase(safry_mail_budget_exhausted_total{pool="general"}[15m])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The mail budget is spent; verification and reset mail is being dropped"
+          description: "Mail was refused by the hourly or daily budget for at least 5 minutes, so new users may not receive their verification or reset mail until the window resets."
+          first_action: "Check the registration and forgot-password rate in the logs by client address; block an abusive range at the edge. If the traffic is real, raise MAIL_BUDGET_PER_HOUR and MAIL_BUDGET_PER_DAY within your mail plan."
+          runbook: "docs/ALERTING.md#mailbudgetexhausted"
+
       - alert: MailFailureRate
         # At least 3 mails permanently failed in 30 minutes and they are over a quarter of all mail. Mail carries password resets and verification links.
         # Tune: raise 3 if you send a lot of mail.

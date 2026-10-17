@@ -24,7 +24,7 @@ describe("credential links: pool-wide bursts and post-commit failures", () => {
     world.api(method, path, { headers: { "x-forwarded-for": nextIp() }, body, ...(session ? { session } : {}) });
 
   beforeAll(async () => {
-    world = await World.start({ DATABASE_POOL_MAX: String(POOL), TRUST_PROXY: "true", AUTH_MAIL_MIN_RESPONSE_MS: "250", NODE_ENV: "development", RATE_LIMIT_IP_PER_MINUTE: "10000", RATE_LIMIT_ACCOUNT_PER_MINUTE: "10000" });
+    world = await World.start({ DATABASE_POOL_MAX: String(POOL), TRUST_PROXY: "true", AUTH_MAIL_MIN_RESPONSE_MS: "250", NODE_ENV: "development", RATE_LIMIT_IP_PER_MINUTE: "10000", RATE_LIMIT_ACCOUNT_PER_MINUTE: "10000", MAIL_BUDGET_PER_HOUR: "1000", MAIL_BUDGET_PER_DAY: "10000" });
     const { MAIL_TRANSPORT } = await import("../dist/modules/mail/mail.types.js");
     transport = world.app.get(MAIL_TRANSPORT) as typeof transport;
     outbox = () => [...(transport as unknown as { outbox: Sent[] }).outbox];

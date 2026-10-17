@@ -96,6 +96,12 @@ describe("validateEnvironment", () => {
     for (const attempts of ["0", "6", "x", "1.5"]) expect(() => validateEnvironment({ ...valid, MAIL_RETRY_ATTEMPTS: attempts })).toThrow("MAIL_RETRY_ATTEMPTS");
     for (const base of ["-1", "30001", "x"]) expect(() => validateEnvironment({ ...valid, MAIL_RETRY_BASE_MS: base })).toThrow("MAIL_RETRY_BASE_MS");
   });
+  it("validates the mail budget settings", () => {
+    expect(validateEnvironment({ ...valid, MAIL_BUDGET_PER_HOUR: "20", MAIL_BUDGET_PER_DAY: "80", MAIL_BUDGET_RESERVE_PERCENT: "0" })).toMatchObject({ MAIL_BUDGET_PER_HOUR: 20, MAIL_BUDGET_PER_DAY: 80, MAIL_BUDGET_RESERVE_PERCENT: 0 });
+    for (const v of ["0", "-1", "x", "1.5"]) expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_PER_HOUR: v })).toThrow("MAIL_BUDGET_PER_HOUR");
+    for (const v of ["51", "-1", "x"]) expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_RESERVE_PERCENT: v })).toThrow("MAIL_BUDGET_RESERVE_PERCENT");
+    expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_PER_HOUR: "200" })).toThrow("must not exceed");
+  });
 });
 
 describe("staging gets production-grade defaults unless it explicitly opts out", () => {
