@@ -13,15 +13,16 @@ are detailed in `backend/docs/database-operations.md`.
 |---|---|---|---|---|---|
 | `postgres` | `postgres:17.11-alpine` (digest-pinned) | postgres (entrypoint drops root) | `data` (internal, no Internet) | never | long-running |
 | `api` | `backend/Dockerfile` target `runtime` (Alpine, production deps only) | `node` (uid 1000) | `data` + `app` | never | long-running |
-| `web` | `frontend/Dockerfile` (nginx-unprivileged 1.30) | uid 101 | `app` | `WEB_BIND:WEB_PORT` (loopback by default) | long-running |
+| `web` | `frontend/Dockerfile` (nginx-unprivileged 1.31) | uid 101 | `app` | `WEB_BIND:WEB_PORT` (loopback by default) | long-running |
 | `migrate` | target `migrate` | `node` | `data` | no | one-off (`run --rm`) |
 | `db-roles` | `postgres:17.11-alpine` + `backend/scripts/db/create-runtime-role.sql` | postgres | `data` | no | one-off |
 | `seed` | target `migrate` | `node` | `data` | no | one-off, demo only, profile `seed` |
 | `proxy` | `caddy:2.11.7-alpine` | root without capabilities except NET_BIND_SERVICE | `app` | 80, 443 (tcp+udp) | optional, profile `tls` |
 | `backup` | `postgres:17.11-alpine` + `backend/scripts/backup/backup.sh` | postgres | `data` | no | optional, profile `backup` |
 
-Every service: read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, memory/CPU/PID limits,
-log rotation (10 MB x 5). Nothing migrates or seeds when a container starts or restarts.
+Every long-running service: read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, memory/PID limits,
+log rotation (10 MB x 5). The one-off jobs (`migrate`, `db-roles`, `seed`) have the read-only root filesystem, `cap_drop: ALL`,
+`no-new-privileges` and a small `/tmp`, but no memory/PID limits and no log rotation. Nothing migrates or seeds when a container starts or restarts.
 
 Two database logins (see `backend/docs/database-operations.md` section 1):
 
@@ -322,7 +323,7 @@ The production `docker-compose.yml` never publishes the database.
 
 ## 8. Scanning
 
-`.github/proposed/image-scan.yml` (to be activated) builds the images, writes CycloneDX SBOMs and fails on
+`.github/workflows/image-scan.yml` (a required check) builds the images, writes CycloneDX SBOMs and fails on
 fixable HIGH/CRITICAL findings, weekly as well as on changes. Manual run:
 
 ```sh

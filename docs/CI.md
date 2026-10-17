@@ -1,7 +1,12 @@
 # Continuous integration
 
 Every workflow lives in `.github/workflows/`. Actions are pinned by full commit SHA, the default token is read-only
-(`contents: read`), and no workflow uses `pull_request_target`.
+(`contents: read`), and exactly one workflow uses `pull_request_target`: `dependabot-security-auto-merge.yml`. It gets a
+write token (`contents: write`, `pull-requests: write`, granted to its single job only), so it never checks out or runs pull request
+code. It runs only when the pull request author is `dependabot[bot]`, reads Dependabot's metadata with `dependabot/fetch-metadata`
+(pinned by SHA) and only calls `gh pr merge --auto`. It queues a merge only for patch or minor updates labelled `security`, and
+skips Docker, Docker Compose and GitHub Actions updates; untrusted values reach the shell through environment variables, not
+inline expansion. The queued merge still waits for the required checks on `main`.
 
 | Workflow | Check name | Runs | Required for merge | What it does |
 |---|---|---|---|---|

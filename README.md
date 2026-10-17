@@ -40,11 +40,16 @@ Only Docker Desktop (or Docker Engine with Compose v2) is needed.
 
 ```bash
 cp docker.env.example .env                 # replace every CHANGE_ME value (openssl rand -base64 48)
-docker compose up -d --build               # postgres + api + web
+docker compose build
+docker compose --profile ops build migrate
+docker compose up -d --wait postgres
+docker compose run --rm migrate            # one-off: apply migrations
+docker compose run --rm db-roles           # one-off: create the restricted runtime database login
+docker compose up -d --wait                # api + web
 docker compose down                        # stop; add -v to also delete the database volume
 ```
 
-Nothing migrates or seeds at API start: migrations are the one-off `migrate` job and the first tenant/administrator come from `pnpm --dir backend db:bootstrap` (no demo data; in Docker there is no dedicated compose service: run it through the `migrate` image, exact command in docs/DEPLOYMENT.md section 2); the demo seed is the opt-in `seed` job (profile `seed`, needs `ALLOW_DEMO_SEED_IN_PRODUCTION=true`) and must never run on a real host. Full steps: docs/DEPLOYMENT.md. Only the web port (`WEB_PORT`, default 3001) is published; the API and PostgreSQL are internal to the compose network. `backend/compose.yml` is a separate PostgreSQL-only file for development that publishes port 5432.
+The API must connect as the restricted `safry_runtime` login created by the `db-roles` job (it refuses the database owner login), so run both jobs before the first start. Nothing migrates or seeds at API start: migrations are the one-off `migrate` job and the first tenant/administrator come from `pnpm --dir backend db:bootstrap` (no demo data; in Docker there is no dedicated compose service: run it through the `migrate` image, exact command in docs/DEPLOYMENT.md section 2); the demo seed is the opt-in `seed` job (profile `seed`, needs `ALLOW_DEMO_SEED_IN_PRODUCTION=true`) and must never run on a real host. Full steps: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) section 2. Only the web port (`WEB_PORT`, default 3001) is published; the API and PostgreSQL are internal to the compose network. `backend/compose.yml` is a separate PostgreSQL-only file for development that publishes port 5432.
 
 ### Documentation
 
@@ -65,7 +70,7 @@ pnpm --dir backend lint && pnpm --dir backend typecheck
 pnpm --dir frontend lint && pnpm --dir frontend build
 ```
 
-The frontend has Playwright end-to-end tests (`frontend/e2e`): real-API journeys plus mocked-API specs for the token-refresh race, administrator step-up, booking idempotency and the sessions screen; it also has a small set of Vitest unit tests (`pnpm --dir frontend test:unit`, run in CI). The tenant-isolation spec tests exactly this: RLS on every table with a tenant key, fail-closed behaviour without a tenant scope, hidden bookings/services of another tenant, cross-tenant booking and role/status changes refused, forged `x-tenant-id` ignored, and the platform-administrator guard. "Tenant isolation is tested" means that list and nothing more.
+The frontend has Playwright end-to-end tests (`frontend/e2e`): real-API journeys plus mocked-API specs for the token-refresh race, administrator step-up, booking idempotency and the sessions screen; it also has a small set of Vitest unit tests (`pnpm --dir frontend test:unit`, run in CI). The tenant-isolation spec tests exactly this: RLS on every table with a tenant key, fail-closed behaviour without a tenant scope, hidden bookings/services of another tenant, cross-tenant booking and role/status changes refused, forged `x-tenant-id` ignored, and the platform-administrator guard. "Tenant isolation is tested" means that list and nothing more. Rate limiting (per IP, per account, per user, and on token refresh) is covered by the integration specs `api-throttle`, `api-throttle-untrusted`, `credentials-throttle` and `refresh-throttle` in `backend/test`.
 
 ### Implementation status
 
@@ -83,7 +88,7 @@ Module-level status, checked against `backend/src/modules`. "Implemented" means 
 
 ### Known limitations
 
-The ones that most affect a reader of this README: tenant configuration is not enforced, money is stored as 32-bit minor units with one cap for every currency, server error messages are free-text Arabic translated on the client by exact string match, and "today" in the booking rules is the server's UTC date.
+The ones that most affect a reader of this README: tenant configuration is not enforced, money is stored as 64-bit minor units (bigint) with per-currency exponents, server error messages are free-text Arabic translated on the client by exact string match (error responses also carry a `code` field for a few cases, such as an expired booking or required MFA enrolment), and "today" in the booking rules is the server's UTC date.
 
 ---
 
@@ -240,7 +245,11 @@ pnpm --dir frontend test:unit     # اختبارات الوحدة للواجهة
 
 ```bash
 cp docker.env.example .env      # ثم استبدل كل قيمة CHANGE_ME داخل .env (ولّد الأسرار بـ: openssl rand -base64 48)
-docker compose up -d --build
+docker compose build
+docker compose --profile ops build migrate
+# ثم نفّذ مهمتي migrate وdb-roles قبل التشغيل (docs/DEPLOYMENT.md القسم 2)
+docker compose up -d --wait postgres && docker compose run --rm migrate && docker compose run --rm db-roles
+docker compose up -d --wait
 ```
 
 يبني الأمر ثلاث خدمات: PostgreSQL، وواجهة API (لا تُطبّق الهجرات ولا تزرع بيانات عند التشغيل؛ الهجرات عبر المهمة المنفصلة `migrate` وأول مدير عبر `db:bootstrap`، راجع docs/DEPLOYMENT.md)، وخادم nginx للواجهة. الموقع على http://localhost:3001 وSwagger معطّل افتراضياً في Docker. في Docker تعمل طبقة RLS كاملة لأن قاعدة البيانات PostgreSQL حقيقية.
