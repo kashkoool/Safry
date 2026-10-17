@@ -2,8 +2,11 @@
 # Select it with CADDYFILE=./deploy/caddy/Caddyfile.cloudflare in .env and put the Cloudflare Origin Certificate
 # and key in CADDY_CERT_DIR as origin.pem and origin.key (never commit them). See docs/DEPLOYMENT.md section 4.
 #
-# SAFE ONLY IF ports 80/443 accept traffic from Cloudflare address ranges alone: CF-Connecting-IP is a plain
-# request header that any other caller could forge. TRUST_PROXY=2 (Caddy, nginx).
+# CF-Connecting-IP is a plain request header that any caller could forge, so it is believed ONLY when the connection really comes
+# from a Cloudflare address range. Put the current ranges (https://www.cloudflare.com/ips-v4 and /ips-v6, space separated) in
+# CLOUDFLARE_IP_RANGES in .env. Without that variable no connection counts as Cloudflare (or the file fails to load), so the header is
+# never trusted by default, and every visitor then shares the Cloudflare address: set it before going live. A caller from any other address gets its own connection address as the client address, so it can not rotate rate-limit
+# keys. TRUST_PROXY=2 (Caddy, nginx). Still keep the firewall rule of docs/DEPLOYMENT.md step 4.
 {
 	admin off
 }
@@ -11,9 +14,19 @@
 {$SITE_ADDRESS} {
 	tls /certs/origin.pem /certs/origin.key
 	encode zstd gzip
-	reverse_proxy web:8080 {
-		# Replace (not append to) X-Forwarded-For with the visitor address Cloudflare saw.
-		header_up X-Forwarded-For {header.CF-Connecting-IP}
+	@cloudflare remote_ip {$CLOUDFLARE_IP_RANGES}
+	handle @cloudflare {
+		reverse_proxy web:8080 {
+			# Replace (not append to) X-Forwarded-For with the visitor address Cloudflare saw.
+			header_up X-Forwarded-For {header.CF-Connecting-IP}
+		}
+	}
+	handle {
+		reverse_proxy web:8080 {
+			# Not Cloudflare: ignore CF-Connecting-IP and any client X-Forwarded-For; the client is whoever connected.
+			header_up X-Forwarded-For {remote_host}
+			header_up -CF-Connecting-IP
+		}
 	}
 	header -Server
 }

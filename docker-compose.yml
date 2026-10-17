@@ -171,6 +171,8 @@ services:
     environment:
       # "localhost" = Caddy internal CA (testing only). Production: the public DNS name.
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      # Only read by Caddyfile.cloudflare: the Cloudflare address ranges whose CF-Connecting-IP header is believed.
+      CLOUDFLARE_IP_RANGES: ${CLOUDFLARE_IP_RANGES:-}
     volumes:
       # CADDYFILE=./deploy/caddy/Caddyfile.cloudflare for Cloudflare Full (strict); certificate files in CADDY_CERT_DIR.
       - ${CADDYFILE:-./deploy/caddy/Caddyfile}:/etc/caddy/Caddyfile:ro
