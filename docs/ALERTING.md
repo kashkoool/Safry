@@ -26,6 +26,7 @@ Counters added for alerting (labels are fixed words, never an e-mail, address, u
 | `safry_platform_admin_signins_total` | Completed platform-administrator sign-ins. |
 | `safry_platform_admin_mfa_resets_24h` (gauge) | Break-glass MFA resets in the last 24 hours, read from the audit trail (the reset runs in a separate script, so no in-process counter could see it). Omitted while the database is down. |
 | `safry_mail_delivery_total{outcome}` | Detached mails (password reset, verification) that ended `sent` or `failed`. |
+| `safry_mail_budget_exhausted_total{pool}` | Mails dropped because the mail budget was spent: `general` (verification, reset) or `security` (its reserve). |
 | `safry_rate_limited_total{group}` | HTTP 429 answers, `auth` routes or `api` (all others). |
 | `safry_readiness_failures_total{reason}` | Readiness probes answered 503: `database` or `draining`. |
 
@@ -77,6 +78,9 @@ First action: look at failed-login audit events by address and reason; block a d
 
 ### MfaResetPerformed
 *page.* The break-glass script ran in the last 24 hours. It stays firing for 24 hours by design. First action: confirm a ticket exists naming the operator and approver (they are in the audit event); if not, it is an incident. See "Lost authenticator and recovery codes" in [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### MailBudgetExhausted
+*ticket.* Mail was dropped for 5 minutes because the hourly or daily mail budget (`MAIL_BUDGET_PER_HOUR`, `MAIL_BUDGET_PER_DAY`) is spent; new users may not get verification or reset mail until the window resets. First action: look for a flood of registrations or forgot-password requests by client address and block it at the edge; if the traffic is real, raise the budget within the mail plan.
 
 ### MailFailureRate
 *ticket.* At least 3 mails failed in 30 minutes and over 25% of attempts. Password resets and verification links are not arriving. First action: provider status page, API key, the "mail ... not delivered" log lines.
