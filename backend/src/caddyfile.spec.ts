@@ -13,8 +13,8 @@ describe("Caddyfile.cloudflare", () => {
     expect(fallbackAt).toBeGreaterThan(trustedAt);
     const uses = [...text.matchAll(/header_up X-Forwarded-For \{header\.CF-Connecting-IP\}/g)];
     expect(uses.length).toBe(1);
-    expect(uses[0]!.index!).toBeGreaterThan(trustedAt);
-    expect(uses[0]!.index!).toBeLessThan(fallbackAt);
+    expect(uses[0]?.index ?? -1).toBeGreaterThan(trustedAt);
+    expect(uses[0]?.index ?? -1).toBeLessThan(fallbackAt);
   });
   it("keys every other caller by its own connection address and drops its forged header", () => {
     const fallback = text.slice(fallbackAt);
