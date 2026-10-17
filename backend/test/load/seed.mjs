@@ -2,9 +2,8 @@
 //   LOAD_DATABASE_URL=postgresql://... LOAD_JWT_SECRET=<same secret the API runs with> node seed.mjs
 // Defaults: 4 tenants, ~10,000 users, 50,000 bookings. Run `prisma migrate deploy` first.
 // Direct set-based SQL as the database owner, so row-level security does not apply to the seeder.
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import pg from "pg";
 
 const url = process.env.LOAD_DATABASE_URL;
@@ -20,6 +19,11 @@ const SERVICES_PER_ORG = Number(process.env.LOAD_SERVICES_PER_ORG ?? 20);
 const BOOKINGS = Number(process.env.LOAD_BOOKINGS_PER_TENANT ?? 12500);
 const HOT_BOOKINGS = Number(process.env.LOAD_HOT_BOOKINGS ?? 3000);
 const TOKENS_PER_TENANT = Number(process.env.LOAD_TOKENS_PER_TENANT ?? 200);
+// Booking-contention cohort (first tenant only): CONTENDERS fresh travelers with no bookings compete for the last seats of
+// CONTENTION_SERVICES services whose capacity is CONTENTION_CAPACITY on a single date.
+const CONTENDERS = Number(process.env.LOAD_CONTENDERS ?? 500);
+const CONTENTION_SERVICES = Number(process.env.LOAD_CONTENTION_SERVICES ?? 10);
+const CONTENTION_CAPACITY = Number(process.env.LOAD_CONTENTION_CAPACITY ?? 20);
 
 const PERMISSIONS = {
   "tenant.read": ["tenant-admin", "service-provider", "traveler"],
@@ -44,19 +48,23 @@ await client.connect();
 const q = (text, values) => client.query(text, values);
 const t0 = Date.now();
 
-// Real argon2 hash of a throwaway password so /auth/login can be exercised too.
-let passwordHash = "x".repeat(60);
+// Every seeded user gets the same password, generated for this run (never committed) and hashed with the application's own
+// helper, so /auth/login accepts it. It is written to .data/tokens.json (git-ignored) for the load scenarios.
+let hashPassword;
 try {
-  const argon2 = createRequire(new URL("../../package.json", import.meta.url))("argon2");
-  passwordHash = await argon2.hash(process.env.LOAD_USER_PASSWORD ?? "Load-Test-Only-Pw-1");
+  ({ hashPassword } = await import(new URL("../../dist/common/security/password.js", import.meta.url).href));
 } catch {
-  console.warn("argon2 not found in ../../node_modules; users get an unusable password hash");
+  console.error("Build the backend first (pnpm build): the seed hashes passwords with dist/common/security/password.js");
+  process.exit(1);
 }
+const loadPassword = process.env.LOAD_USER_PASSWORD ?? randomBytes(18).toString("base64url");
+const passwordHash = await hashPassword(loadPassword);
 
 await q("TRUNCATE tenants, users, permissions RESTART IDENTITY CASCADE");
 for (const code of Object.keys(PERMISSIONS)) await q("INSERT INTO permissions (id, code) VALUES (gen_random_uuid(), $1)", [code]);
 
 const tokens = [];
+const contention = { serviceIds: [], capacity: CONTENTION_CAPACITY };
 const hot = {};
 for (let t = 0; t < TENANTS; t++) {
   const tenantId = randomUUID();
@@ -76,10 +84,10 @@ for (let t = 0; t < TENANTS; t++) {
      SELECT gen_random_uuid(), $1, 'Org '||g, 'Org '||g, 'Org '||g, 'TRAVEL_COMPANY', 'Riyadh', 'org'||g||'@example.test', now() FROM generate_series(1,$2) g`,
     [tenantId, ORGS]
   );
-  for (const [kind, count] of [["admin", 1], ["prov", ORGS], ["trav", TRAVELERS]]) {
+  for (const [kind, count] of [["admin", 1], ["prov", ORGS], ["trav", TRAVELERS], ...(t === 0 && CONTENDERS > 0 ? [["cont", CONTENDERS]] : [])]) {
     await q(
-      `INSERT INTO users (id,email,"emailNormalized","passwordHash","displayName","updatedAt")
-       SELECT gen_random_uuid(), $1::text||'-'||$2::text||'-'||g||'@example.test', $1::text||'-'||$2::text||'-'||g||'@example.test', $3, $1::text||' '||g, now()
+      `INSERT INTO users (id,email,"emailNormalized","passwordHash","displayName","emailVerifiedAt","updatedAt")
+       SELECT gen_random_uuid(), $1::text||'-'||$2::text||'-'||g||'@example.test', $1::text||'-'||$2::text||'-'||g||'@example.test', $3, $1::text||' '||g, now(), now()
        FROM generate_series(1,$4::int) g`,
       [kind, String(t), passwordHash, count]
     );
@@ -89,7 +97,7 @@ for (let t = 0; t < TENANTS; t++) {
      SELECT gen_random_uuid(), $1, u.id, 'ACTIVE',
        CASE WHEN u.email LIKE 'prov-%' THEN (SELECT o.id FROM (SELECT id, row_number() OVER (ORDER BY name) rn FROM provider_organizations WHERE "tenantId"=$1) o
          WHERE o.rn = split_part(split_part(u.email,'-',3),'@',1)::int) END, now()
-     FROM users u WHERE u.email ~ ('^(admin|prov|trav)-' || $2::text || '-')`,
+     FROM users u WHERE u.email ~ ('^(admin|prov|trav|cont)-' || $2::text || '-')`,
     [tenantId, String(t)]
   );
   await q(
@@ -105,7 +113,19 @@ for (let t = 0; t < TENANTS; t++) {
      FROM provider_organizations o JOIN tenant_memberships m ON m."providerOrganizationId" = o.id, generate_series(1,$2::int) g WHERE o."tenantId"=$1`,
     [tenantId, SERVICES_PER_ORG]
   );
-  await q(`CREATE TEMP TABLE svc AS SELECT id, row_number() OVER (ORDER BY id) rn FROM travel_services WHERE "tenantId"=$1`, [tenantId]);
+  if (t === 0 && CONTENTION_SERVICES > 0) {
+    await q(
+      `INSERT INTO travel_services (id,"tenantId","providerMembershipId","providerOrganizationId",title,description,category,city,"priceCents",status,capacity,details,"updatedAt")
+       SELECT gen_random_uuid(), $1, m.id, o.id, 'Contention '||g, 'Last seats', 'PACKAGE', 'Makkah', 100000, 'ACTIVE', $3::int,
+         '{"durationDays":"5","departureCity":"Riyadh","itinerary":"x"}', now()
+       FROM (SELECT id FROM provider_organizations WHERE "tenantId"=$1 ORDER BY name LIMIT 1) o
+       JOIN tenant_memberships m ON m."providerOrganizationId" = o.id, generate_series(1,$2::int) g`,
+      [tenantId, CONTENTION_SERVICES, CONTENTION_CAPACITY]
+    );
+    contention.serviceIds = (await q(`SELECT id FROM travel_services WHERE "tenantId"=$1 AND title LIKE 'Contention %' ORDER BY title`, [tenantId])).rows.map((r) => r.id);
+    contention.capacity = CONTENTION_CAPACITY;
+  }
+  await q(`CREATE TEMP TABLE svc AS SELECT id, row_number() OVER (ORDER BY id) rn FROM travel_services WHERE "tenantId"=$1 AND title NOT LIKE 'Contention %'`, [tenantId]);
   await q(
     `CREATE TEMP TABLE trav AS SELECT m.id, row_number() OVER (ORDER BY m.id) rn FROM tenant_memberships m JOIN users u ON u.id=m."userId"
      WHERE m."tenantId"=$1 AND u.email LIKE 'trav-%'`,
@@ -137,6 +157,12 @@ for (let t = 0; t < TENANTS; t++) {
     [tenantId, TOKENS_PER_TENANT]
   );
   const now = Math.floor(Date.now() / 1000);
+  if (t === 0 && CONTENDERS > 0) {
+    const cont = await q(
+      `SELECT m.id AS mid, m."userId" AS uid, u.email, NULL AS org, 'contender' AS role FROM tenant_memberships m JOIN users u ON u.id=m."userId"
+       WHERE m."tenantId"=$1 AND u.email LIKE 'cont-%' ORDER BY u.email`, [tenantId]);
+    sample.rows.push(...cont.rows);
+  }
   for (const row of sample.rows) {
     const sid = randomUUID();
     await q(
@@ -146,12 +172,16 @@ for (let t = 0; t < TENANTS; t++) {
     );
     tokens.push({
       role: row.role, tenantId, tenantCode: code, membershipId: row.mid, organizationId: row.org,
-      token: sign({ iss: "safry-api", aud: "safry-access", av: 0, sid, sub: row.uid, tid: tenantId, mid: row.mid, email: row.email, roles: [row.role], permissions: [], iat: now, exp: now + 6 * 3600 })
+      token: sign({ iss: "safry-api", aud: "safry-access", av: 0, sid, sub: row.uid, tid: tenantId, mid: row.mid, email: row.email, roles: [row.role === "contender" ? "traveler" : row.role], permissions: [], iat: now, exp: now + 6 * 3600 })
     });
   }
 }
 mkdirSync(new URL("./.data/", import.meta.url), { recursive: true });
-writeFileSync(new URL("./.data/tokens.json", import.meta.url), JSON.stringify({ tokens, hot, createdAt: new Date().toISOString() }));
+const tenantCodes = Array.from({ length: TENANTS }, (_, i) => `load-${i}`);
+writeFileSync(
+  new URL("./.data/tokens.json", import.meta.url),
+  JSON.stringify({ tokens, hot, contention, password: loadPassword, tenantCodes, travelersPerTenant: TRAVELERS, createdAt: new Date().toISOString() })
+);
 await q("ANALYZE");
 const counts = await q(
   `SELECT (SELECT count(*) FROM users)::int users, (SELECT count(*) FROM bookings)::int bookings,
