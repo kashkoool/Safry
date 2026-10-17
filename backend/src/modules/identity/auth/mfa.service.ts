@@ -11,6 +11,9 @@ import { AccountSecurityService } from "./account-security.service.js";
 import type { Prisma, User } from "../../../generated/prisma/client.js";
 import { verifyPassword } from "../../../common/security/password.js";
 
+/** Machine code on the 401 for a missing step-up secret; the status stays 401 (a wrong secret is 401 too). */
+export const STEP_UP_REQUIRED = "step_up_required";
+
 const RECOVERY_CODE_COUNT = 8;
 
 export interface MfaStatus {
@@ -192,14 +195,14 @@ export class MfaService {
    * alone can not perform the action and can not be used to guess the secrets.
    */
   async stepUp(user: AuthUser, password: string | undefined, code: string | undefined, ipAddress?: string): Promise<void> {
-    if (!password) throw new UnauthorizedException("أكّد كلمة المرور لإتمام هذا الإجراء");
+    if (!password) throw new UnauthorizedException({ code: STEP_UP_REQUIRED, message: "أكّد كلمة المرور لإتمام هذا الإجراء" });
     const account = await this.account(user.userId);
     if (account.isPlatformAdmin && account.mfaEnabledAt === null)
       throw new ForbiddenException({ code: MFA_ENROLLMENT_REQUIRED, message: "فعّل المصادقة متعددة العوامل لحسابك لإتمام هذا الإجراء" });
     const needsSecondFactor = account.mfaEnabledAt !== null;
     await this.reauthenticate(account, password, user.tenantId, ipAddress, needsSecondFactor);
     if (needsSecondFactor) {
-      if (!code) throw new UnauthorizedException("أدخل رمز التحقق لإتمام هذا الإجراء");
+      if (!code) throw new UnauthorizedException({ code: STEP_UP_REQUIRED, message: "أدخل رمز التحقق لإتمام هذا الإجراء" });
       await this.requireSecondFactor(account, user.tenantId, code, ipAddress, "bad_mfa_code_on_step_up");
     }
   }

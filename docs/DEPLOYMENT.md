@@ -106,6 +106,19 @@ docker compose run --rm -e ALLOW_DEMO_SEED_IN_PRODUCTION=true \
   -e BOOTSTRAP_ADMIN_PASSWORD=... -e DEMO_SEED_PASSWORD=... seed
 ```
 
+### Local stack with console e-mail
+
+To try sign-up, e-mail verification and password reset on your own machine without a Resend key, add the local override. It runs the API as `NODE_ENV=staging` with `ALLOW_NON_PRODUCTION_DEFAULTS=true` (the loose mode described in section 5, which is refused with any other `NODE_ENV`) and `MAIL_TRANSPORT=console`, so nothing is sent: the API log shows each message's recipient, subject and first link (not the full body). The printed link is a credential: use this only on a stack that nobody else can reach.
+
+```sh
+# .env as in section 2, plus dummy values for RESEND_API_KEY, MAIL_FROM and a local APP_BASE_URL, for example
+#   APP_BASE_URL=http://localhost:3001   (WEB_PORT)
+docker compose -f docker-compose.yml -f deploy/compose.local.override.yml up -d
+docker compose logs -f api            # verification and reset links show up here
+```
+
+Run the migrate and db-roles steps from section 2 first (add the same `-f` flags to each command). Never enable this on a public host.
+
 ## 3. Rolling out a new version
 
 1. Take a backup (`docker compose run --rm --entrypoint sh backup /scripts/backup.sh`, or the
@@ -281,7 +294,7 @@ Settings (API container; compose already wires them, `scripts/check-env.sh` chec
 
 Development and tests use `MAIL_TRANSPORT=console` (the default outside production). Nothing leaves the machine: the API logs
 the recipient, the subject and the link, for example `MailConsole to=user@example.test subject="Reset your Safry password" link=http://localhost:3001/reset-password#token=...`.
-That log line contains a credential, which is why production refuses the transport. After setting up Resend, send yourself a
+That log line contains a credential, which is why production refuses the transport. To use it with the compose stack, see "Local stack with console e-mail" in section 2. After setting up Resend, send yourself a
 reset request from the real site and confirm it arrives in the inbox (not spam) and that the link opens the reset page.
 
 ### Deliverability checklist
