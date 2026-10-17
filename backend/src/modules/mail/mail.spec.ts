@@ -135,6 +135,24 @@ describe("console transport and the mail service", () => {
         expect(h.logs.at(-1)).toContain("permanent failure (no retry)");
       }
     });
+    it("asks the mail budget once per mail, not once per attempt, and passes the sign-up source on", async () => {
+      const calls: Array<[string, string | undefined]> = [];
+      const budget = { allow: (kind: string, source?: string): Promise<boolean> => { calls.push([kind, source]); return Promise.resolve(true); } };
+      const h = harness([transient]);
+      const service = new MailService((h.service as unknown as { transport: never }).transport, { attempts: 3, baseDelayMs: 2000 }, undefined, budget as never);
+      (service as unknown as { logger: object }).logger = { error: (): number => 0, warn: (): number => 0, log: (): number => 0 };
+      service.sendDetached("new@example.test", "en", { kind: "email-verification", link: "https://x.test/#token=t", validForHours: 24 }, "idem-fixed", "registration");
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.keys).toHaveLength(3); // three attempts reached the provider...
+      expect(calls).toEqual([["email-verification", "registration"]]); // ...but the budget was charged once
+    });
+    it("sends nothing when the budget refuses, with no retry", async () => {
+      const h = harness(["ok"]);
+      const service = new MailService((h.service as unknown as { transport: never }).transport, { attempts: 3, baseDelayMs: 2000 }, undefined, { allow: () => Promise.resolve(false) } as never);
+      service.sendDetached("x@example.test", "en", { kind: "password-changed" });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.keys).toHaveLength(0);
+    });
     it("backoff is 2 s then 10 s within +-20% jitter", () => {
       expect(backoffMs(2000, 1, () => 0)).toBe(1600);
       expect(backoffMs(2000, 1, () => 1)).toBe(2400);

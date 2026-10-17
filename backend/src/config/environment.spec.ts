@@ -97,10 +97,17 @@ describe("validateEnvironment", () => {
     for (const base of ["-1", "30001", "x"]) expect(() => validateEnvironment({ ...valid, MAIL_RETRY_BASE_MS: base })).toThrow("MAIL_RETRY_BASE_MS");
   });
   it("validates the mail budget settings", () => {
-    expect(validateEnvironment({ ...valid, MAIL_BUDGET_PER_HOUR: "20", MAIL_BUDGET_PER_DAY: "80", MAIL_BUDGET_RESERVE_PERCENT: "0" })).toMatchObject({ MAIL_BUDGET_PER_HOUR: 20, MAIL_BUDGET_PER_DAY: 80, MAIL_BUDGET_RESERVE_PERCENT: 0 });
-    for (const v of ["0", "-1", "x", "1.5"]) expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_PER_HOUR: v })).toThrow("MAIL_BUDGET_PER_HOUR");
-    for (const v of ["51", "-1", "x"]) expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_RESERVE_PERCENT: v })).toThrow("MAIL_BUDGET_RESERVE_PERCENT");
-    expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_PER_HOUR: "200" })).toThrow("must not exceed");
+    expect(validateEnvironment({ ...valid, MAIL_BUDGET_RESET_PER_HOUR: "20", MAIL_BUDGET_RESET_PER_DAY: "80", MAIL_ADDRESS_RESET_PER_DAY: "5" })).toMatchObject({ MAIL_BUDGET_RESET_PER_HOUR: 20, MAIL_BUDGET_RESET_PER_DAY: 80, MAIL_ADDRESS_RESET_PER_DAY: 5 });
+    for (const pool of ["REGISTRATION", "RESET", "SECURITY"])
+      for (const v of ["0", "-1", "x", "1.5"]) {
+        expect(() => validateEnvironment({ ...valid, [`MAIL_BUDGET_${pool}_PER_HOUR`]: v })).toThrow(`MAIL_BUDGET_${pool}_PER_HOUR`);
+        expect(() => validateEnvironment({ ...valid, [`MAIL_BUDGET_${pool}_PER_DAY`]: v })).toThrow(`MAIL_BUDGET_${pool}_PER_DAY`);
+      }
+    for (const scope of ["REGISTRATION", "RESET"])
+      for (const v of ["0", "-1", "x", "100001"]) expect(() => validateEnvironment({ ...valid, [`MAIL_ADDRESS_${scope}_PER_DAY`]: v })).toThrow(`MAIL_ADDRESS_${scope}_PER_DAY`);
+    // hourly above the daily limit of the same pool, set or defaulted
+    expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_RESET_PER_HOUR: "200" })).toThrow("MAIL_BUDGET_RESET_PER_HOUR must not exceed MAIL_BUDGET_RESET_PER_DAY");
+    expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_REGISTRATION_PER_DAY: "5" })).toThrow("MAIL_BUDGET_REGISTRATION_PER_HOUR must not exceed");
   });
 });
 

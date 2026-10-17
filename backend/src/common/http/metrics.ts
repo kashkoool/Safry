@@ -22,10 +22,14 @@ const EVENT_SERIES: Record<string, { help: string; label?: string; values?: read
   safry_refresh_reuse_detected_total: { help: "Refresh tokens presented again after rotation (session family revoked)" },
   safry_platform_admin_signins_total: { help: "Completed sign-ins of platform administrators" },
   safry_mail_delivery_total: { help: "Detached mail deliveries by final outcome", label: "outcome", values: ["sent", "failed"] },
-  safry_mail_budget_exhausted_total: { help: "Mails dropped because the hourly or daily mail budget was spent, by pool", label: "pool", values: ["general", "security"] },
+  safry_mail_budget_exhausted_total: { help: "Mails dropped because the hourly or daily mail budget was spent, by pool", label: "pool", values: ["registration", "reset", "security"] },
+  safry_mail_address_capped_total: { help: "Requests from one client address that caused no mail because its daily cap was reached, by scope", label: "scope", values: ["registration", "reset"] },
   safry_readiness_failures_total: { help: "Readiness probes answered 503", label: "reason", values: ["database", "draining"] },
   safry_rate_limited_total: { help: "HTTP 429 answers by route group", label: "group", values: ["auth", "api"] }
 };
+
+/** Fixed at load, so a restart (new process) shows as a new value and changes() counts restarts. */
+const PROCESS_START_SECONDS = Math.floor(Date.now() / 1000 - process.uptime());
 
 const BUCKETS_MS = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10_000];
 
@@ -47,7 +51,8 @@ export class MetricsService {
   refreshReuse(): void { this.bump("safry_refresh_reuse_detected_total"); }
   platformAdminSignIn(): void { this.bump("safry_platform_admin_signins_total"); }
   mailOutcome(outcome: MailOutcome): void { this.bump("safry_mail_delivery_total", outcome); }
-  mailBudgetExhausted(pool: "general" | "security"): void { this.bump("safry_mail_budget_exhausted_total", pool); }
+  mailBudgetExhausted(pool: "registration" | "reset" | "security"): void { this.bump("safry_mail_budget_exhausted_total", pool); }
+  mailAddressCapped(scope: "registration" | "reset"): void { this.bump("safry_mail_address_capped_total", scope); }
   readinessFailure(reason: ReadinessFailureReason): void { this.bump("safry_readiness_failures_total", reason); }
 
   /** Route templates only (never raw URLs): the label set stays bounded and carries no ids or query strings. */
@@ -86,6 +91,7 @@ export class MetricsService {
     }
     for (const [name, value] of Object.entries(extra)) lines.push(`${name} ${value}`);
     const memory = process.memoryUsage();
+    lines.push("# TYPE safry_process_start_time_seconds gauge", `safry_process_start_time_seconds ${PROCESS_START_SECONDS}`);
     lines.push(`safry_process_resident_memory_bytes ${memory.rss}`, `safry_process_heap_used_bytes ${memory.heapUsed}`);
     return `${lines.join("\n")}\n`;
   }

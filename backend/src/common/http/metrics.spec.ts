@@ -65,6 +65,30 @@ describe("MetricsService event counters", () => {
     m.loginFailure("bad_credentials");
     const text = m.render({});
     const labelled = text.split("\n").filter((l) => /^safry_(login|mail|readiness|rate_limited)/.test(l));
-    for (const l of labelled) expect(l).toMatch(/\{(reason|outcome|group|pool)="[a-z_]+"\} \d+$/);
+    for (const l of labelled) expect(l).toMatch(/\{(reason|outcome|group|pool|scope)="[a-z_]+"\} \d+$/);
+  });
+});
+
+describe("mail pool metrics and process start time", () => {
+  it("renders every pool and address scope at 0, then counts each under its own label", () => {
+    const m = new MetricsService();
+    const zero = m.render({});
+    for (const pool of ["registration", "reset", "security"]) expect(line(zero, `safry_mail_budget_exhausted_total{pool="${pool}"}`)).toBe(0);
+    for (const scope of ["registration", "reset"]) expect(line(zero, `safry_mail_address_capped_total{scope="${scope}"}`)).toBe(0);
+    m.mailBudgetExhausted("registration");
+    m.mailBudgetExhausted("reset");
+    m.mailBudgetExhausted("reset");
+    m.mailAddressCapped("reset");
+    const text = m.render({});
+    expect(line(text, 'safry_mail_budget_exhausted_total{pool="registration"}')).toBe(1);
+    expect(line(text, 'safry_mail_budget_exhausted_total{pool="reset"}')).toBe(2);
+    expect(line(text, 'safry_mail_budget_exhausted_total{pool="security"}')).toBe(0);
+    expect(line(text, 'safry_mail_address_capped_total{scope="reset"}')).toBe(1);
+  });
+  it("exports a constant process start time in the past", () => {
+    const first = line(new MetricsService().render({}), "safry_process_start_time_seconds");
+    expect(first).toBeLessThanOrEqual(Math.ceil(Date.now() / 1000));
+    expect(first).toBeGreaterThan(1_700_000_000);
+    expect(line(new MetricsService().render({}), "safry_process_start_time_seconds")).toBe(first);
   });
 });

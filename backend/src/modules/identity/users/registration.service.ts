@@ -66,9 +66,9 @@ export class RegistrationService {
    * Closing sentence of a registration answer. A new (unverified) identity is mailed a confirmation link and must use it
    * before signing in; an existing, already verified identity that was linked to one more tenant can sign in at once.
    */
-  private async confirmation(user: User | undefined, created: string): Promise<string> {
+  private async confirmation(user: User | undefined, created: string, ipAddress: string | undefined): Promise<string> {
     if (user && user.emailVerifiedAt === null) {
-      await this.credentials.sendVerification(user);
+      await this.credentials.sendVerification(user, ipAddress, "registration");
       return `${created} أرسلنا رابط تأكيد إلى بريدك الإلكتروني؛ أكّده ثم سجّل الدخول.`;
     }
     return `${created} يمكنك تسجيل الدخول الآن.`;
@@ -95,7 +95,7 @@ export class RegistrationService {
           return user;
         });
       } catch (error) { this.registrationError(error); }
-      return { message: await this.confirmation(registered, "أُنشئ حساب المسافر.") };
+      return { message: await this.confirmation(registered, "أُنشئ حساب المسافر.", ipAddress) };
     });
   }
 
@@ -134,7 +134,7 @@ export class RegistrationService {
           return user;
         });
       } catch (error) { this.registrationError(error); }
-      return { message: await this.confirmation(registered, "أُنشئ حساب الشركة وهو بانتظار تفعيل النشاط من إدارة الجهة.") };
+      return { message: await this.confirmation(registered, "أُنشئ حساب الشركة وهو بانتظار تفعيل النشاط من إدارة الجهة.", ipAddress) };
     });
   }
 }
