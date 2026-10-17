@@ -108,7 +108,7 @@ docker compose run --rm -e ALLOW_DEMO_SEED_IN_PRODUCTION=true \
 
 ### Local stack with console e-mail
 
-To try sign-up, e-mail verification and password reset on your own machine without a Resend key, add the local override. It runs the API as `NODE_ENV=staging` with `ALLOW_NON_PRODUCTION_DEFAULTS=true` (the loose mode described in section 5, which is refused with any other `NODE_ENV`) and `MAIL_TRANSPORT=console`, so every e-mail is printed to the API log instead of sent. The printed link is a credential: use this only on a stack that nobody else can reach.
+To try sign-up, e-mail verification and password reset on your own machine without a Resend key, add the local override. It runs the API as `NODE_ENV=staging` with `ALLOW_NON_PRODUCTION_DEFAULTS=true` (the loose mode described in section 5, which is refused with any other `NODE_ENV`) and `MAIL_TRANSPORT=console`, so nothing is sent: the API log shows each message's recipient, subject and first link (not the full body). The printed link is a credential: use this only on a stack that nobody else can reach.
 
 ```sh
 # .env as in section 2, plus dummy values for RESEND_API_KEY, MAIL_FROM and a local APP_BASE_URL, for example
