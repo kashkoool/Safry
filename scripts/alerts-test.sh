@@ -23,7 +23,7 @@ echo "== every metric the rules use is exported by backend/src/common/http/metri
 metrics_src="$here/../backend/src/common/http/metrics.ts"
 missing=0
 for name in $(grep -v '^[[:space:]]*#' "$alerts_dir/safry.rules.yml" | grep -oE 'safry_[a-z0-9_]+' | sed -E 's/_(bucket|sum|count)$//' | sort -u); do
-  if ! grep -q "$name" "$metrics_src"; then echo "MISSING in metrics.ts: $name"; missing=1; fi
+  if ! grep -qwF "$name" "$metrics_src"; then echo "MISSING in metrics.ts: $name"; missing=1; fi
 done
 [ "$missing" = 0 ] || exit 1
 
