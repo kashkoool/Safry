@@ -23,7 +23,9 @@ docker run --rm --name "$NAME" --ipc=host \
   "$IMAGE" bash -ec '
     mkdir /work && cd /src && tar cf - --exclude=node_modules --exclude=dist --exclude=test-results --exclude=playwright-report . | tar xf - -C /work
     cd /work
-    npm install -g pnpm@11 >/dev/null 2>&1
+    # exact pnpm with integrity hashes (tools/pnpm/package-lock.json), same as the Dockerfile
+    mkdir -p /opt/pnpm && cp tools/pnpm/package.json tools/pnpm/package-lock.json /opt/pnpm/ && npm ci --ignore-scripts --no-audit --no-fund --prefix /opt/pnpm >/dev/null
+    ln -s /opt/pnpm/node_modules/.bin/pnpm /usr/local/bin/pnpm
     pnpm install --frozen-lockfile >/dev/null
     cp -r /out/. e2e/__screenshots__/ 2>/dev/null || true
     E2E_PROJECTS=visual E2E_BASE_URL=http://127.0.0.1:55526 E2E_API_URL=http://127.0.0.1:55516 CI=1 pnpm exec playwright test $UPDATE --reporter=list || RC=$?
