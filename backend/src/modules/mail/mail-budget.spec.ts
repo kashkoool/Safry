@@ -12,7 +12,8 @@ describe("mailBudgetLimits", () => {
     expect(limits).toEqual({
       enabled: true,
       pools: { registration: { hour: 10, day: 40 }, reset: { hour: 15, day: 45 }, security: { hour: 5, day: 15 } },
-      addressPerDay: { registration: 10, reset: 10 }
+      addressPerDay: { registration: 10, reset: 10 },
+      recipientResetPerDay: 5
     });
     expect(Object.values(limits.pools).reduce((sum, p) => sum + p.day, 0)).toBeLessThanOrEqual(100);
     expect(Object.values(limits.pools).reduce((sum, p) => sum + p.hour, 0)).toBe(30);
