@@ -1,6 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import { describe, expect, it } from "vitest";
-import { assertCapacity, bookingTerms } from "./booking-rules.js";
+import { assertCapacity, bookingTerms, stringDetails } from "./booking-rules.js";
 import { assertCategory, validateDetails } from "../../travel-services/catalog.js";
 
 describe("business provider scope", () => {
@@ -150,5 +150,18 @@ describe("dated inventory", () => {
         endDate: new Date("2030-01-14")
       })
     ).not.toThrow();
+  });
+});
+
+describe("stringDetails", () => {
+  it("keeps string entries and drops anything else instead of trusting the stored JSON", () => {
+    expect(stringDetails({ a: "x", b: 3, c: null, d: { e: "f" } })).toEqual({ a: "x" });
+    expect(stringDetails(null)).toEqual({});
+    expect(stringDetails(["x"])).toEqual({});
+    expect(stringDetails("text")).toEqual({});
+  });
+  it("lets bookingTerms price a service whose stored details are not an object", () => {
+    const terms = bookingTerms("HOTEL", stringDetails(null), 100n, { travelersCount: 1, serviceDate: "2030-01-02", endDate: "2030-01-03" }, "2030-01-01", 4000);
+    expect(terms.nights).toBe(1);
   });
 });

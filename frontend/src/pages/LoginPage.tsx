@@ -13,7 +13,7 @@ import { ResendVerification } from "./credentials/ResendVerification";
 import "./auth-premium.css";
 
 type Portal = "customer" | "provider" | "admin";
-const DEMOS = [
+const DEMOS: { portal: Portal; label: readonly [string, string]; email: string }[] = [
   { portal: "admin", label: ["مدير المنصة", "Platform admin"], email: "admin@safry.local" },
   { portal: "provider", label: ["شركة سياحة", "Travel company"], email: "provider@safry.local" },
   { portal: "customer", label: ["المسافر", "Traveler"], email: "traveler@safry.local" },
@@ -21,7 +21,7 @@ const DEMOS = [
     ["شركة عمرة", "Umrah company", "umrah"], ["فندق", "Hotel", "hotel"],
     ["شركة طيران", "Airline", "airline"], ["شركة نقل", "Transport", "transport"],
     ["مطعم", "Restaurant", "restaurant"], ["تأشيرات", "Visa", "visa"], ["زيارات", "Tours", "visit"]
-  ].map(([ar, en, alias]) => ({ portal: "provider", label: [ar, en], email: `${alias}@safry.local` }))
+  ].map(([ar = "", en = "", alias = ""]) => ({ portal: "provider" as const, label: [ar, en] as const, email: `${alias}@safry.local` }))
 ];
 
 /** Shared travel identity. Decorative graphics never imply live booking data. */

@@ -8,6 +8,8 @@ try {
   if (!email) throw new Error("BOOTSTRAP_ADMIN_EMAIL is required");
   // One transaction with the RLS bypass flag: audit_events has FORCE RLS, so a non-superuser owner needs it.
   await withRlsBypass(prisma, async (tx) => {
+    // Same row lock as the platform grant and the MFA disable paths: the MFA check below and the promotion are one atomic step.
+    await tx.$queryRaw`SELECT "id" FROM "users" WHERE "emailNormalized" = ${email} FOR UPDATE`;
     const user = await tx.user.findUniqueOrThrow({ where: { emailNormalized: email } });
     if (user.status !== "ACTIVE" || user.deletedAt) throw new Error("Bootstrap administrator must be active");
     if (user.isPlatformAdmin) return;

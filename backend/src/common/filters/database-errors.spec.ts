@@ -11,6 +11,15 @@ describe("mapDatabaseError", () => {
     expect(mapDatabaseError(prismaError("P2025"))).toBeInstanceOf(NotFoundException);
   });
 
+  it("maps a deadlock or lock timeout to a retryable 409", () => {
+    for (const error of [prismaError("P2034"), { name: "PrismaClientKnownRequestError", code: "P2010", message: "Raw query failed", meta: { code: "40P01" } }, { name: "PrismaClientKnownRequestError", code: "P2010", message: "Raw query failed", meta: { code: "55P03" } }]) {
+      const mapped = mapDatabaseError(error);
+      expect(mapped).toBeInstanceOf(ConflictException);
+      expect(mapped?.message).toMatch(/try again/i);
+    }
+    expect(mapDatabaseError({ name: "PrismaClientKnownRequestError", code: "P2010", message: "Raw query failed", meta: { code: "42P01" } })).toBeUndefined();
+  });
+
   it("maps a row-level-security violation to 403 without leaking details", () => {
     const rls = mapDatabaseError({ message: 'new row violates row-level security policy for table "bookings"' });
     expect(rls).toBeInstanceOf(ForbiddenException);
