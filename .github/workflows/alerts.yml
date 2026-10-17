@@ -1,0 +1,31 @@
+name: Alert rules
+
+# Unit-tests the Prometheus alert rules (promtool, official image pinned in scripts/alerts-test.sh). No cloud, no secrets.
+# Informational: not a required check. See docs/ALERTING.md and docs/CI.md.
+on:
+  pull_request:
+    paths:
+      - "deploy/alerts/**"
+      - "scripts/alerts-test.sh"
+      - "backend/src/common/http/metrics.ts"
+      - ".github/workflows/alerts.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alerts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rules:
+    name: Alert rules (promtool)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check and unit-test the rules
+        run: bash scripts/alerts-test.sh

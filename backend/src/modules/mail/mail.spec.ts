@@ -168,3 +168,22 @@ describe("templates", () => {
     for (const locale of ["ar", "en"] as const) expect(new Set(kinds.map((k) => renderMail(locale, k, "u@x.test").subject)).size).toBe(3);
   });
 });
+
+describe("mail delivery metrics", () => {
+  it("counts a sent mail and a permanently failed mail", async () => {
+    const { MetricsService } = await import("../../common/http/metrics.js");
+    const metrics = new MetricsService();
+    let fail = false;
+    const transport = { name: "console" as const, send: (): Promise<void> => (fail ? Promise.reject(new MailDeliveryError("rejected", 422)) : Promise.resolve()) };
+    const service = new MailService(transport, { attempts: 3, baseDelayMs: 1 }, metrics);
+    (service as unknown as { logger: object }).logger = { error: (): number => 0, warn: (): number => 0, log: (): number => 0 };
+    service.sendDetached("a@example.test", "en", { kind: "password-changed" });
+    await new Promise((r) => setTimeout(r, 20));
+    fail = true;
+    service.sendDetached("a@example.test", "en", { kind: "password-changed" });
+    await new Promise((r) => setTimeout(r, 20));
+    const text = metrics.render({});
+    expect(text).toContain('safry_mail_delivery_total{outcome="sent"} 1');
+    expect(text).toContain('safry_mail_delivery_total{outcome="failed"} 1');
+  });
+});

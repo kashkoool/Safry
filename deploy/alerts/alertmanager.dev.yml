@@ -1,0 +1,18 @@
+# LOCAL ONLY. Sends every alert to a webhook that only writes a file. Real receivers (e-mail, chat, pager) come with the deployment.
+route:
+  receiver: file-sink
+  group_by: [alertname]
+  group_wait: 1s
+  group_interval: 5s
+  repeat_interval: 1h
+
+receivers:
+  - name: file-sink
+    webhook_configs:
+      - url: http://webhook-sink:9099/
+        send_resolved: true
+
+# A database outage also makes the generic readiness alert fire; page the specific one only.
+inhibit_rules:
+  - source_matchers: ['alertname="DatabaseUnreachable"']
+    target_matchers: ['alertname="ReadinessDown"']

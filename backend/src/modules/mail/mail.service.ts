@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_MAIL_RETRY, MAIL_RETRY, MAIL_TRANSPORT, MailDeliveryError, type MailRetryPolicy, type MailTransport } from "./mail.types.js";
+import { MetricsService } from "../../common/http/metrics.js";
 import { mailLocale, renderMail, type MailTemplate } from "./templates.js";
 
 @Injectable()
@@ -9,7 +10,8 @@ export class MailService {
 
   constructor(
     @Inject(MAIL_TRANSPORT) readonly transport: MailTransport,
-    @Optional() @Inject(MAIL_RETRY) private readonly retry: MailRetryPolicy = DEFAULT_MAIL_RETRY
+    @Optional() @Inject(MAIL_RETRY) private readonly retry: MailRetryPolicy = DEFAULT_MAIL_RETRY,
+    @Optional() private readonly metrics?: MetricsService
   ) {}
 
   /** Renders the template for the user's locale and hands it to the transport; the caller decides whether to await. */
@@ -35,21 +37,25 @@ export class MailService {
       message = renderMail(mailLocale(locale), template, to);
     } catch (error) {
       this.logger.error(`mail "${template.kind}" not delivered: could not be rendered (${errorClass(error)})`);
+      this.metrics?.mailOutcome("failed");
       return;
     }
     for (let attempt = 1; ; attempt++) {
       try {
         await this.transport.send(message, idempotencyKey);
+        this.metrics?.mailOutcome("sent");
         if (attempt > 1) this.logger.log(`mail "${template.kind}" delivered on attempt ${attempt}`);
         return;
       } catch (error) {
         const detail = error instanceof MailDeliveryError ? error.message : errorClass(error);
         if (!isTransient(error)) {
           this.logger.error(`mail "${template.kind}" not delivered, permanent failure (no retry) on attempt ${attempt}: ${detail}`);
+          this.metrics?.mailOutcome("failed");
           return;
         }
         if (attempt >= attempts) {
           this.logger.error(`mail "${template.kind}" not delivered after ${attempt} attempts, giving up: ${detail}`);
+          this.metrics?.mailOutcome("failed");
           return;
         }
         const delay = backoffMs(baseDelayMs, attempt);
