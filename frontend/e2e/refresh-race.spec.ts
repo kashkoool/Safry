@@ -43,5 +43,6 @@ test("a refresh in flight during logout does not resurrect the session", async (
   // Signed out stays signed out: no hint, no session, and the late refresh result did not bring the user back.
   expect(await page.evaluate(() => localStorage.getItem("safry.hasSession"))).toBeNull();
   await expect(page.getByRole("button", { name: "Sign out" })).toHaveCount(0);
-  expect(logouts).toBe(2); // user logout + best-effort end of the family the late refresh rotated
+  // Logout waits for the in-flight refresh, so its single call carries the cookie that refresh rotated and ends that family.
+  expect(logouts).toBe(1);
 });
