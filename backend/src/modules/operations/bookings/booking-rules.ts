@@ -4,6 +4,12 @@ import type { ServiceCategory } from "../../../generated/prisma/enums.js";
 import { DEFAULT_BOOKING_LIMITS, dateTooFarError } from "./booking-limits.js";
 
 const day = 86400000;
+
+/** Stored service details are JSON written by an earlier version or by hand: keep the string entries, ignore everything else. */
+export function stringDetails(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+}
 /**
  * Booking limits (still code constants, not tenant configuration). The error messages below stay static
  * literals on purpose: the frontend dictionary translates them by exact text, so keep the numbers in sync by hand.

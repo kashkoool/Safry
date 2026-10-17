@@ -27,4 +27,10 @@ describe("MfaService.stepUp for platform administrators", () => {
     const service = build({ isPlatformAdmin: true, mfaEnabledAt: null });
     await expect(service.stepUp(actor, undefined, undefined)).rejects.toBeInstanceOf(UnauthorizedException);
   });
+
+  it("marks the missing-password 401 with the machine code step_up_required so non-web clients do not treat it as an expired session", async () => {
+    const service = build({ isPlatformAdmin: true, mfaEnabledAt: null });
+    const failure = await service.stepUp(actor, undefined, undefined).catch((error: unknown) => error);
+    expect((failure as UnauthorizedException).getResponse()).toMatchObject({ code: "step_up_required" });
+  });
 });

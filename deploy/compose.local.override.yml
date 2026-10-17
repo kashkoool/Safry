@@ -1,0 +1,17 @@
+# Local test stack only. Never use on a host that is reachable from the internet.
+#
+# Runs the compose stack on your machine without sending e-mail: the API log shows the recipient, the subject
+# and the first link of each message, not the full body (verification and reset links appear in `docker compose logs api`).
+# It switches the API to NODE_ENV=staging with ALLOW_NON_PRODUCTION_DEFAULTS=true, which turns off the
+# production safety rules (see docs/DEPLOYMENT.md, "Local stack with console e-mail").
+#
+#   docker compose -f docker-compose.yml -f deploy/compose.local.override.yml up -d
+#
+# The base file still requires RESEND_API_KEY, MAIL_FROM and APP_BASE_URL to be set in .env; any dummy
+# values are fine here because the console transport never contacts Resend.
+services:
+  api:
+    environment:
+      NODE_ENV: staging
+      ALLOW_NON_PRODUCTION_DEFAULTS: "true"
+      MAIL_TRANSPORT: console

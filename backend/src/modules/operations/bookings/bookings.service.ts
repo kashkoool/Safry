@@ -7,7 +7,7 @@ import { isOperator, isTenantAdmin } from "../../../common/security/principal.js
 import { PrismaService } from "../../../database/prisma.service.js";
 import type { Prisma } from "../../../generated/prisma/client.js";
 import { serviceInclude } from "../../travel-services/service-select.js";
-import { assertCapacity, bookingTerms, inventorySelect, overlapWhere } from "./booking-rules.js";
+import { assertCapacity, bookingTerms, inventorySelect, overlapWhere, stringDetails } from "./booking-rules.js";
 import { bookingLimits, expiredError, pendingCutoff, pendingLimitError, type BookingLimits } from "./booking-limits.js";
 import type { CreateBookingDto } from "./dto/create-booking.dto.js";
 import type { UpdateBookingDto } from "./dto/update-booking.dto.js";
@@ -154,7 +154,7 @@ export class BookingsService {
         throw new ConflictException("الخدمة أو المنشأة غير متاحة للحجز حالياً");
       const terms = bookingTerms(
         service.category,
-        service.details as Record<string, string>,
+        stringDetails(service.details),
         service.priceCents,
         input,
         undefined,
@@ -212,7 +212,7 @@ export class BookingsService {
       if (booking.status !== "PENDING") throw new ConflictException("يمكن تعديل الحجوزات المعلقة فقط");
       const terms = bookingTerms(
         service.category,
-        service.details as Record<string, string>,
+        stringDetails(service.details),
         booking.unitPriceCents,
         {
           travelersCount: input.travelersCount ?? booking.travelersCount,
