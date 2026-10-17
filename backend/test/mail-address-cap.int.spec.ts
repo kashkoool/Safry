@@ -48,10 +48,16 @@ describe("per-address daily cap", () => {
     const { world, tenant, outbox, api } = ctx;
     const email = (await world.createUser(tenant, { roles: ["traveler"] })).email;
     const replies: Reply[] = [];
-    for (let i = 0; i < 4; i++) replies.push(await api("/auth/password/forgot", { email })); // a fresh client address each time
+    const clearTokens = (): Promise<unknown> => world.sql.query(`DELETE FROM credential_tokens WHERE "userId" = (SELECT id FROM users WHERE "emailNormalized" = $1)`, [email]);
+    for (let i = 0; i < 4; i++) {
+      replies.push(await api("/auth/password/forgot", { email })); // a fresh client address each time
+      await settle();
+      if (i === 0) replies.push(await api("/auth/password/forgot", { email })); // too soon after the first: refused by the per-account limit, must not use the recipient's day
+      await clearTokens(); // forget the previous link, so the one-minute resend interval does not decide and only the recipient cap does
+    }
     const unknown = await api("/auth/password/forgot", { email: `${world.unique("nobody")}@example.test` });
     await settle();
-    expect(replies.map((r) => r.status)).toEqual([202, 202, 202, 202]);
+    expect(replies.map((r) => r.status)).toEqual([202, 202, 202, 202, 202]);
     expect(new Set([...replies, unknown].map((r) => JSON.stringify(r.body))).size, "capped, uncapped and unknown answers are identical").toBe(1);
     expect(outbox().filter((m) => m.to === email).length).toBe(2); // MAIL_RECIPIENT_RESET_PER_DAY=2
   }, 120_000);

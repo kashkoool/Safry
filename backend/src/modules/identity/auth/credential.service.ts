@@ -114,17 +114,13 @@ export class CredentialService {
         });
         return;
       }
-      // Only a real account is counted, and a capped one is answered like any other (same reply and timing): no existence signal.
-      if (!(await this.mail.allowRecipient(user.emailNormalized))) {
-        await this.prisma.$transaction(async (tx) => {
-          await this.audit(tx, "identity.password.reset_requested.suppressed", user.id, ipAddress, { reason: "recipient_cap" });
-        });
-        return;
-      }
       // A failure here must look like success: an unknown address answers 202, so a known one must too (no enumeration under failure).
       try {
         const token = await this.issue(user, "PASSWORD_RESET", RESET_TTL_MINUTES * 60_000, ipAddress, "identity.password.reset_requested");
-        if (token) this.mail.sendDetached(user.email, user.locale, { kind: "password-reset", link: this.link("/reset-password", token), validForMinutes: RESET_TTL_MINUTES });
+        // Counted only when a mail would really go out (a request the per-account limit already refused does not use the recipient's day),
+        // and a capped recipient is answered like any other (same reply and timing): no existence signal.
+        if (token && (await this.mail.allowRecipient(user.emailNormalized)))
+          this.mail.sendDetached(user.email, user.locale, { kind: "password-reset", link: this.link("/reset-password", token), validForMinutes: RESET_TTL_MINUTES });
       } catch (error) {
         this.logger.error(`password reset link not sent: ${error instanceof Error ? error.name : "unknown error"}`);
       }
@@ -142,12 +138,6 @@ export class CredentialService {
         });
         return;
       }
-      if (!(await this.mail.allowRecipient(user.emailNormalized))) {
-        await this.prisma.$transaction(async (tx) => {
-          await this.audit(tx, "identity.email.verification_requested.suppressed", user.id, ipAddress, { reason: "recipient_cap" });
-        });
-        return;
-      }
       await this.sendVerification(user, ipAddress);
     }));
   }
@@ -161,7 +151,9 @@ export class CredentialService {
     try {
       if (source === "registration" && !(await this.mail.allowAddress("registration", ipAddress))) return; // daily cap of this client address: the sign-up answer is unchanged
       const token = await runAsSystem(() => this.issue(user, "EMAIL_VERIFICATION", VERIFY_TTL_HOURS * 3_600_000, ipAddress, "identity.email.verification_requested"));
-      if (token) this.mail.sendDetached(user.email, user.locale, { kind: "email-verification", link: this.link("/verify-email", token), validForHours: VERIFY_TTL_HOURS }, undefined, source);
+      // Mail to an existing account (resend, address change) is capped per recipient; sign-ups are covered by the per-address cap above.
+      if (token && (source === "registration" || (await this.mail.allowRecipient(user.emailNormalized))))
+        this.mail.sendDetached(user.email, user.locale, { kind: "email-verification", link: this.link("/verify-email", token), validForHours: VERIFY_TTL_HOURS }, undefined, source);
     } catch (error) {
       this.logger.error(`verification link not sent: ${error instanceof Error ? error.name : "unknown error"}`);
     }
