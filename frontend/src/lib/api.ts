@@ -382,6 +382,22 @@ function refreshSession(): Promise<TokenPair | null> {
   });
   return pendingRefresh;
 }
+const SETTLE_REFRESH_MAX_MS = 5_000;
+/**
+ * Waits (bounded) for a refresh that is already in flight. Sign-in and sign-out call it first: the browser applies the
+ * Set-Cookie of a refresh response when it arrives, so a late response after a quick sign-out and sign-in would overwrite
+ * the new session's cookie. Letting it finish first means the next call the server sees carries its cookie.
+ */
+async function settleRefresh(): Promise<void> {
+  const inFlight = pendingRefresh;
+  if (!inFlight) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    inFlight.then(() => undefined, () => undefined),
+    new Promise<void>((resolve) => { timer = setTimeout(resolve, SETTLE_REFRESH_MAX_MS); })
+  ]);
+  clearTimeout(timer);
+}
 function withRefreshLock<T>(work: () => Promise<T>): Promise<T> {
   const locks = (navigator as Navigator & { locks?: { request: <R>(name: string, cb: () => Promise<R>) => Promise<R> } }).locks;
   return locks ? locks.request("safry-refresh", work) : work();
@@ -518,6 +534,7 @@ export const api = {
     }, false),
   async login(input: LoginInput): Promise<LoginResult> {
     clearCache();
+    await settleRefresh();
     const response = await request<LoginResult>(
       "/auth/login",
       { method: "POST", body: JSON.stringify(input) },
@@ -603,6 +620,7 @@ export const api = {
     const userId = readSession()?.user.userId;
     signingOut = true;
     try {
+      await settleRefresh();
       await request<void>("/auth/logout", { method: "POST" }, false);
     } finally {
       signingOut = false;

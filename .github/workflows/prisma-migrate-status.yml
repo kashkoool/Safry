@@ -2,12 +2,8 @@
 name: prisma-migrate-status
 
 on:
+  # No path filter on pull_request: a required check skipped by a path filter never reports and blocks the merge.
   pull_request:
-    paths:
-      - "backend/prisma/**"
-      - "backend/prisma7.config.ts"
-      - "backend/package.json"
-      - ".github/workflows/prisma-migrate-status.yml"
   push:
     branches: [main]
     paths:
@@ -66,8 +62,6 @@ jobs:
       - name: Migration status (must report the database schema is up to date)
         run: pnpm exec prisma migrate status
       # --exit-code fails when the migrated database differs from the Prisma schema (exit 2).
-      # Known baseline drift exists (updatedAt default, one FK name), so this step
-      # is reported but not blocking. Remove continue-on-error once the drift is fixed by a new migration.
+      # Blocking: the baseline drift was fixed by the 20261007_db_schema_drift_fix migration.
       - name: Drift check (migrations vs schema.prisma)
-        continue-on-error: true
         run: pnpm exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code

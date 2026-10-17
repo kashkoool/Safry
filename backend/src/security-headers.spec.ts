@@ -29,3 +29,22 @@ describe("web server security headers", () => {
     expect(block(head)).toContain(INCLUDE);
   });
 });
+
+describe("web server hardening defaults", () => {
+  it("does not announce the nginx version", () => {
+    expect(server).toMatch(/^\s*server_tokens off;/m);
+  });
+
+  it("compresses static text but never the token-bearing API responses", () => {
+    expect(server).toMatch(/^\s*gzip on;/m);
+    const api = server.slice(server.indexOf("location /api/ {"), server.indexOf("location /assets/ {"));
+    expect(api).toMatch(/^\s*gzip off;/m);
+    expect(api).toMatch(/proxy_set_header Accept-Encoding "";/);
+  });
+
+  it("bounds upstream waits", () => {
+    const api = server.slice(server.indexOf("location /api/ {"), server.indexOf("location /assets/ {"));
+    for (const name of ["proxy_connect_timeout", "proxy_send_timeout", "proxy_read_timeout"])
+      expect(api).toMatch(new RegExp(`^\\s*${name} \\d+s;`, "m"));
+  });
+});
