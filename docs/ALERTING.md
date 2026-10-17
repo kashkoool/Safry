@@ -26,7 +26,9 @@ Counters added for alerting (labels are fixed words, never an e-mail, address, u
 | `safry_platform_admin_signins_total` | Completed platform-administrator sign-ins. |
 | `safry_platform_admin_mfa_resets_24h` (gauge) | Break-glass MFA resets in the last 24 hours, read from the audit trail (the reset runs in a separate script, so no in-process counter could see it). Omitted while the database is down. |
 | `safry_mail_delivery_total{outcome}` | Detached mails (password reset, verification) that ended `sent` or `failed`. |
-| `safry_mail_budget_exhausted_total{pool}` | Mails dropped because the mail budget was spent: `general` (verification, reset) or `security` (its reserve). |
+| `safry_mail_budget_exhausted_total{pool}` | Mails dropped because a mail pool was spent: `registration` (verification mail for new sign-ups), `reset` (reset and resend mail for existing accounts) or `security` (owner notices). |
+| `safry_mail_address_capped_total{scope}` | Sign-up (`registration`) or forgot-password / resend (`reset`) requests that sent no mail because their client address reached its daily cap. |
+| `safry_process_start_time_seconds` (gauge) | Unix time the API process started; it changes on every restart, which the `ProcessRestarting` alert counts. |
 | `safry_rate_limited_total{group}` | HTTP 429 answers, `auth` routes or `api` (all others). |
 | `safry_readiness_failures_total{reason}` | Readiness probes answered 503: `database` or `draining`. |
 
@@ -37,6 +39,9 @@ Already present: `safry_http_requests_total`, `safry_http_request_duration_ms_*`
 
 Severity `page` = wake someone; `ticket` = look in working hours. Who is notified is a placeholder until the deployment exists:
 **page -> on-call phone (TBD), ticket -> team inbox or chat channel (TBD)**.
+
+### ProcessRestarting
+*page.* The API process started more than 2 times in 15 minutes: a crash loop. The process handlers exit on an unhandled rejection or uncaught exception and the platform restarts the process. It counts restarts of scrape targets with a stable address; if every restart gets a new target name (for example a new pod name), it cannot see them, so also alert on the platform's own restart count. First action: read the log just before each restart (error class and message length only), check the last deploy and roll it back if the loop started with it, then find the request that triggers the crash.
 
 ### ApiDown
 *page.* Prometheus cannot read `/metrics` for 2 minutes, or no target is configured. The API is down, unreachable, or the scrape token is wrong.
@@ -80,7 +85,7 @@ First action: look at failed-login audit events by address and reason; block a d
 *page.* The break-glass script ran in the last 24 hours. It stays firing for 24 hours by design. First action: confirm a ticket exists naming the operator and approver (they are in the audit event); if not, it is an incident. See "Lost authenticator and recovery codes" in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ### MailBudgetExhausted
-*ticket.* Mail was dropped for 5 minutes because the hourly or daily mail budget (`MAIL_BUDGET_PER_HOUR`, `MAIL_BUDGET_PER_DAY`) is spent; new users may not get verification or reset mail until the window resets. First action: look for a flood of registrations or forgot-password requests by client address and block it at the edge; if the traffic is real, raise the budget within the mail plan.
+*ticket.* Mail of one pool was dropped for 5 minutes; the alert carries the pool in its summary. `registration`: verification mail for new sign-ups is spent (`MAIL_BUDGET_REGISTRATION_PER_HOUR`, `_PER_DAY`), so new users may not get their link: real growth or a sign-up flood. `reset`: reset and resend mail for existing accounts is spent (`MAIL_BUDGET_RESET_PER_HOUR`, `_PER_DAY`), so real users cannot recover access: look for forgot-password or resend abuse. The pools are independent, so a spent registration pool does not stop reset mail. First action: look for a flood by client address in the logs and block it at the edge; if the traffic is real, raise that pool within the mail plan.
 
 ### MailFailureRate
 *ticket.* At least 3 mails failed in 30 minutes and over 25% of attempts. Password resets and verification links are not arriving. First action: provider status page, API key, the "mail ... not delivered" log lines.
