@@ -26,6 +26,10 @@ export ALERTS_METRICS_TOKEN="$(secret)"
 export ALERTS_USER_EMAIL="firetest-$(secret | head -c 8 | tr 'A-Z' 'a-z')@example.test"
 export ALERTS_USER_PASSWORD="Aa1-$(secret | head -c 20)"
 export ALERTS_WORK_DIR="./.tmp-fire"
+# Run-owned image tags: always built from the current source, and only these are removed afterwards.
+run_id="$(secret | head -c 8 | tr 'A-Z' 'a-z')"
+export ALERTS_API_IMAGE="safry-alerts-api:run-$run_id"
+export ALERTS_MIGRATE_IMAGE="safry-alerts-migrate:run-$run_id"
 
 compose() { (cd "$alerts" && docker compose -f compose.dev.yml "$@"); }
 
@@ -35,7 +39,7 @@ cleanup() {
   echo "== teardown"
   compose --profile ops down -v --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$work"
-  if [ "${KEEP_IMAGES:-0}" != "1" ]; then docker rmi -f safry-alerts-api:test safry-alerts-migrate:test >/dev/null 2>&1 || true; fi
+  if [ "${KEEP_IMAGES:-0}" != "1" ]; then docker rmi -f "$ALERTS_API_IMAGE" "$ALERTS_MIGRATE_IMAGE" >/dev/null 2>&1 || true; fi
   exit $status
 }
 trap cleanup EXIT
@@ -67,10 +71,8 @@ sed -E 's/^([[:space:]]+for:) [0-9]+m/\1 15s/' "$alerts/safry.rules.yml" > "$wor
 echo "rules copied with for: 15s ($(grep -c 'for: 15s' "$work/rules/safry.rules.yml") alerts shortened)"
 
 echo "== images"
-for pair in "runtime safry-alerts-api:test" "migrate safry-alerts-migrate:test"; do
-  set -- $pair
-  docker image inspect "$2" >/dev/null 2>&1 || docker build -q --target "$1" -t "$2" "$repo/backend" >/dev/null
-done
+docker build -q --target runtime -t "$ALERTS_API_IMAGE" "$repo/backend" >/dev/null
+docker build -q --target migrate -t "$ALERTS_MIGRATE_IMAGE" "$repo/backend" >/dev/null
 
 echo "== start database, migrate, seed a throwaway user"
 compose up -d postgres >/dev/null 2>&1 || { echo "postgres failed to start"; exit 1; }

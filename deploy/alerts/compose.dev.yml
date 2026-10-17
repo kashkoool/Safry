@@ -20,7 +20,7 @@ services:
 
   migrate:
     container_name: safry-alerts-migrate
-    image: safry-alerts-migrate:test
+    image: ${ALERTS_MIGRATE_IMAGE:-safry-alerts-migrate:unset}
     profiles: [ops]
     depends_on: { postgres: { condition: service_healthy } }
     environment:
@@ -30,7 +30,7 @@ services:
 
   seed:
     container_name: safry-alerts-seed
-    image: safry-alerts-migrate:test
+    image: ${ALERTS_MIGRATE_IMAGE:-safry-alerts-migrate:unset}
     profiles: [ops]
     depends_on: { postgres: { condition: service_healthy } }
     command: ["node", "node_modules/tsx/dist/cli.mjs", "prisma/seed.ts"]
@@ -46,7 +46,7 @@ services:
 
   api:
     container_name: safry-alerts-api
-    image: safry-alerts-api:test
+    image: ${ALERTS_API_IMAGE:-safry-alerts-api:unset}
     depends_on: { postgres: { condition: service_healthy } }
     ports:
       - "127.0.0.1:14010:3000"
