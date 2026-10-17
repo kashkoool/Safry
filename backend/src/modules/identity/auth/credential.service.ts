@@ -7,6 +7,7 @@ import { PrismaService } from "../../../database/prisma.service.js";
 import type { Prisma } from "../../../generated/prisma/client.js";
 import type { CredentialTokenPurpose } from "../../../generated/prisma/enums.js";
 import { appBaseUrl } from "../../mail/mail.config.js";
+import type { MailSource } from "../../mail/mail-budget.js";
 import { MailService } from "../../mail/mail.service.js";
 import { AccountSecurityService } from "./account-security.service.js";
 import {
@@ -104,10 +105,12 @@ export class CredentialService {
   /** POST /auth/password/forgot */
   forgotPassword(email: string, ipAddress: string | undefined): Promise<void> {
     return this.paced(() => runAsSystem(async () => {
+      // Counted for every request (known address or not), so the cap itself tells nothing about an account.
+      const mayMail = await this.mail.allowAddress("reset", ipAddress);
       const user = await this.prisma.user.findUnique({ where: { emailNormalized: email.trim().toLowerCase() } });
-      if (!this.eligible(user)) {
+      if (!this.eligible(user) || !mayMail) {
         await this.prisma.$transaction(async (tx) => {
-          await this.audit(tx, "identity.password.reset_requested", null, ipAddress, { matched: false });
+          await this.audit(tx, "identity.password.reset_requested", null, ipAddress, mayMail ? { matched: false } : { suppressed: "address_cap" });
         });
         return;
       }
@@ -124,10 +127,11 @@ export class CredentialService {
   /** POST /auth/email/resend: only an unverified, active account gets a link; everyone else gets the same answer. */
   resendVerification(email: string, ipAddress: string | undefined): Promise<void> {
     return this.paced(() => runAsSystem(async () => {
+      const mayMail = await this.mail.allowAddress("reset", ipAddress);
       const user = await this.prisma.user.findUnique({ where: { emailNormalized: email.trim().toLowerCase() } });
-      if (!this.eligible(user) || user.emailVerifiedAt !== null) {
+      if (!this.eligible(user) || user.emailVerifiedAt !== null || !mayMail) {
         await this.prisma.$transaction(async (tx) => {
-          await this.audit(tx, "identity.email.verification_requested", null, ipAddress, { matched: false });
+          await this.audit(tx, "identity.email.verification_requested", null, ipAddress, mayMail ? { matched: false } : { suppressed: "address_cap" });
         });
         return;
       }
@@ -140,10 +144,11 @@ export class CredentialService {
    * committed, so it never throws: a failure to issue or to hand the mail over is logged (error class only, no address or token)
    * and the user can ask for a new link through /auth/email/resend.
    */
-  async sendVerification(user: MailAccount, ipAddress?: string): Promise<void> {
+  async sendVerification(user: MailAccount, ipAddress?: string, source: MailSource = "existing"): Promise<void> {
     try {
+      if (source === "registration" && !(await this.mail.allowAddress("registration", ipAddress))) return; // daily cap of this client address: the sign-up answer is unchanged
       const token = await runAsSystem(() => this.issue(user, "EMAIL_VERIFICATION", VERIFY_TTL_HOURS * 3_600_000, ipAddress, "identity.email.verification_requested"));
-      if (token) this.mail.sendDetached(user.email, user.locale, { kind: "email-verification", link: this.link("/verify-email", token), validForHours: VERIFY_TTL_HOURS });
+      if (token) this.mail.sendDetached(user.email, user.locale, { kind: "email-verification", link: this.link("/verify-email", token), validForHours: VERIFY_TTL_HOURS }, undefined, source);
     } catch (error) {
       this.logger.error(`verification link not sent: ${error instanceof Error ? error.name : "unknown error"}`);
     }
