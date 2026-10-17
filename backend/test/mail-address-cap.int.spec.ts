@@ -62,6 +62,26 @@ describe("per-address daily cap", () => {
     expect(outbox().filter((m) => m.to === email).length).toBe(2); // MAIL_RECIPIENT_RESET_PER_DAY=2
   }, 120_000);
 
+  it("a request refused by the recipient cap leaves the last good link working and answers like any other", async () => {
+    const { world, tenant, outbox, api } = ctx;
+    const email = (await world.createUser(tenant, { roles: ["traveler"] })).email;
+    const age = (): Promise<unknown> => world.sql.query(`UPDATE credential_tokens SET "createdAt" = now() - interval '5 minutes' WHERE "userId" = (SELECT id FROM users WHERE "emailNormalized" = $1)`, [email]);
+    const replies: Reply[] = [];
+    for (let i = 0; i < 3; i++) {
+      replies.push(await api("/auth/password/forgot", { email }));
+      await settle();
+      await age(); // past the one-minute resend interval: only the recipient cap decides
+    }
+    const mails = outbox().filter((m) => m.to === email);
+    expect(mails.length, "cap of 2: the third request sends nothing").toBe(2);
+    expect(new Set(replies.map((r) => JSON.stringify(r.body))).size).toBe(1);
+    const tokens = mails.map((m) => /#token=([A-Za-z0-9_-]{43})/.exec(m.text)?.[1] ?? "");
+    const newest = tokens[1]!;
+    // The capped request must not have voided the newest link.
+    const reset = await api("/auth/password/reset", { token: newest, newPassword: `Np-${randomBytes(9).toString("hex")}-Zz` });
+    expect(reset.status).toBe(204);
+  }, 120_000);
+
   it("counts an IPv6 /64 as one address", async () => {
     const { world, tenant, outbox, api } = ctx;
     const emails = await Promise.all(Array.from({ length: 4 }, async () => (await world.createUser(tenant, { roles: ["traveler"] })).email));

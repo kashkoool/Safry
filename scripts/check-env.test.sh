@@ -35,6 +35,8 @@ check "2 hops + public bind WITHOUT tls profile fails"    1 "FAIL WEB_BIND"   TR
 check "2 hops + public bind WITH tls profile fails"       1 "FAIL WEB_BIND"   TRUST_PROXY=2 WEB_BIND=0.0.0.0 SITE_ADDRESS=app.example.net
 check "3 hops + public bind fails"                        1 "FAIL WEB_BIND"   TRUST_PROXY=3 WEB_BIND=10.0.0.5
 check "explicit acknowledgement downgrades it to a warn"  0 "acknowledged"    TRUST_PROXY=2 WEB_BIND=0.0.0.0 ALLOW_PUBLIC_WEB_BIND_WITH_PROXY_HOPS=true
+check "Cloudflare Caddyfile without ranges fails"          1 "FAIL CLOUDFLARE_IP_RANGES" CADDYFILE=./deploy/caddy/Caddyfile.cloudflare
+check "Cloudflare Caddyfile with ranges passes"            0 "OK:"            CADDYFILE=./deploy/caddy/Caddyfile.cloudflare "CLOUDFLARE_IP_RANGES=173.245.48.0/20 103.21.244.0/22"
 check "placeholder sender fails"                         1 "FAIL MAIL_FROM"  MAIL_FROM=CHANGE_ME_SENDER
 check "malformed sender fails"                           1 "FAIL MAIL_FROM"  "MAIL_FROM=not an address"
 check "http app origin fails"                            1 "FAIL APP_BASE_URL" APP_BASE_URL=http://app.safry.test

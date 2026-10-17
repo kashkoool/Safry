@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ThrottlerStorage } from "@nestjs/throttler";
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { clientKey } from "../../common/http/rate-limit.js";
 import { MetricsService } from "../../common/http/metrics.js";
 import { ADDRESS_SCOPES, MAIL_ADDRESS_DEFAULTS, MAIL_POOLS, MAIL_RECIPIENT_RESET_PER_DAY_DEFAULT, RECIPIENT_ENV_KEY, MAIL_POOL_DEFAULTS, addressEnvKey, poolEnvKeys, type AddressScope, type MailPool, type PoolLimit } from "./mail-limits.js";
@@ -59,6 +59,8 @@ export function mailBudgetLimits(config: { get<T = unknown>(key: string, fallbac
 export class MailBudget {
   private readonly logger = new Logger(MailBudget.name);
   private readonly limits: MailBudgetLimits;
+  /** Server secret for the recipient key, so a leaked store (Redis) does not give an offline guessing list for addresses. */
+  private readonly keySecret: string;
   private readonly warnedUntil = new Map<string, number>();
 
   constructor(
@@ -67,6 +69,7 @@ export class MailBudget {
     @Optional() private readonly metrics?: MetricsService
   ) {
     this.limits = mailBudgetLimits(config);
+    this.keySecret = config.get<string>("JWT_ACCESS_SECRET") ?? "";
   }
 
   /** True when this mail may be sent. Counts the attempt; a store failure never blocks mail (fail open, logged). */
@@ -126,7 +129,7 @@ export class MailBudget {
     if (!this.limits.enabled) return true;
     const limit = this.limits.recipientResetPerDay;
     try {
-      const digest = createHash("sha256").update(emailNormalized).digest("hex").slice(0, 32);
+      const digest = createHmac("sha256", this.keySecret).update(`mail-recipient:${emailNormalized}`).digest("hex").slice(0, 32);
       const record = await this.storage.increment(`recipient:${digest}`, DAY_MS, limit, 0, "mailrecipient");
       if (record.totalHits <= limit) return true;
       this.metrics?.mailAddressCapped("recipient");
