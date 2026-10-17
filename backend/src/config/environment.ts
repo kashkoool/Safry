@@ -175,6 +175,10 @@ export function validateEnvironment(config: Environment): Environment {
   if (allowNonProduction === "true") assertLooseModeNotPublic(config);
   const productionGrade = isProductionLike(nodeEnv, allowNonProduction);
   if (productionGrade && config["DATABASE_ALLOW_PLAINTEXT"] !== "true") assertDatabaseTls(databaseUrl);
+  // The demo seed creates known accounts. Only its own one-off job may carry these settings; a running production or staging API that does
+  // has been given a local env file by mistake.
+  if (productionGrade && (config["ALLOW_DEMO_SEED_IN_PRODUCTION"] === "true" || (typeof config["DEMO_SEED_PASSWORD"] === "string" && config["DEMO_SEED_PASSWORD"] !== "")))
+    throw new Error("ALLOW_DEMO_SEED_IN_PRODUCTION=true and DEMO_SEED_PASSWORD must not be set in production or staging; they belong to the one-off demo seed job only");
   const jwtSecret = requiredSecret(config, "JWT_ACCESS_SECRET");
   // The TOTP seed key must not depend on the JWT secret: production needs a dedicated key.
   if (config["MFA_ENCRYPTION_KEY"] !== undefined || productionGrade) {

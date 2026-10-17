@@ -134,6 +134,17 @@ describe("staging gets production-grade defaults unless it explicitly opts out",
     expect(() => validateEnvironment({ ...valid, ...mfaKey, ...stagingMail, NODE_ENV: "staging" })).not.toThrow();
   });
 
+  it("refuses the demo-seed settings on a production or staging API, but allows them in development and in loose staging", () => {
+    const prod = { ...valid, ...mfaKey, ...stagingMail, NODE_ENV: "production" };
+    expect(() => validateEnvironment(prod)).not.toThrow();
+    expect(() => validateEnvironment({ ...prod, ALLOW_DEMO_SEED_IN_PRODUCTION: "true" })).toThrow("demo seed");
+    expect(() => validateEnvironment({ ...prod, DEMO_SEED_PASSWORD: "Some-Demo-Password-12" })).toThrow("demo seed");
+    expect(() => validateEnvironment({ ...prod, NODE_ENV: "staging", ALLOW_DEMO_SEED_IN_PRODUCTION: "true" })).toThrow("demo seed");
+    expect(() => validateEnvironment({ ...prod, ALLOW_DEMO_SEED_IN_PRODUCTION: "false", DEMO_SEED_PASSWORD: "" })).not.toThrow();
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "development", ALLOW_DEMO_SEED_IN_PRODUCTION: "true", DEMO_SEED_PASSWORD: "Some-Demo-Password-12" })).not.toThrow();
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "staging", MAIL_TRANSPORT: "console", ALLOW_NON_PRODUCTION_DEFAULTS: "true", DEMO_SEED_PASSWORD: "Some-Demo-Password-12" })).not.toThrow();
+  });
+
   it("allows development defaults on staging only with the explicit opt-in, and never in production", () => {
     expect(() => validateEnvironment({ ...valid, NODE_ENV: "staging", MAIL_TRANSPORT: "console", ALLOW_NON_PRODUCTION_DEFAULTS: "true" })).not.toThrow();
     expect(() => validateEnvironment({ ...valid, NODE_ENV: "production", ...mfaKey, ...stagingMail, ALLOW_NON_PRODUCTION_DEFAULTS: "true" })).toThrow("only valid with NODE_ENV=staging");
