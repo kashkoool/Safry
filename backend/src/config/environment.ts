@@ -1,6 +1,12 @@
+import { MAIL_POOL_DEFAULTS, type MailPool } from "../modules/mail/mail-limits.js";
 import { isPlaceholder } from "./placeholders.js";
 
 type Environment = Record<string, unknown>;
+
+function integerInRange(config: Environment, key: string, min: number, max: number): void {
+  const raw = config[key];
+  if (raw !== undefined && (!Number.isInteger(Number(raw)) || Number(raw) < min || Number(raw) > max)) throw new Error(`${key} must be an integer from ${min} to ${max}`);
+}
 
 function requiredString(config: Environment, key: string, minimumLength = 1): string {
   const value = config[key];
@@ -14,7 +20,7 @@ function requiredString(config: Environment, key: string, minimumLength = 1): st
 const TUNABLE_INTEGERS = ["DATABASE_CONNECT_TIMEOUT_MS", "DATABASE_IDLE_TIMEOUT_MS", "DATABASE_STATEMENT_TIMEOUT_MS",
     "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS", "DATABASE_TX_MAX_WAIT_MS", "DATABASE_TX_TIMEOUT_MS", "AUTH_CACHE_TTL_MS",
     "AUTH_CACHE_MAX_ENTRIES", "RATE_LIMIT_IP_PER_MINUTE", "RATE_LIMIT_ACCOUNT_PER_MINUTE", "RATE_LIMIT_USER_PER_MINUTE", "RATE_LIMIT_REFRESH_SESSION_PER_MINUTE", "RATE_LIMIT_REFRESH_INVALID_PER_MINUTE",
-    "SHUTDOWN_DRAIN_MS", "SHUTDOWN_DEADLINE_MS", "HTTP_KEEP_ALIVE_TIMEOUT_MS", "HTTP_REQUEST_TIMEOUT_MS", "ACTIVITY_WRITE_INTERVAL_MS", "MAIL_TIMEOUT_MS", "AUTH_MAIL_MIN_RESPONSE_MS", "MAIL_RETRY_ATTEMPTS", "MAIL_RETRY_BASE_MS", "MAIL_BUDGET_PER_HOUR", "MAIL_BUDGET_PER_DAY", "MAIL_BUDGET_RESERVE_PERCENT",
+    "SHUTDOWN_DRAIN_MS", "SHUTDOWN_DEADLINE_MS", "HTTP_KEEP_ALIVE_TIMEOUT_MS", "HTTP_REQUEST_TIMEOUT_MS", "ACTIVITY_WRITE_INTERVAL_MS", "MAIL_TIMEOUT_MS", "AUTH_MAIL_MIN_RESPONSE_MS", "MAIL_RETRY_ATTEMPTS", "MAIL_RETRY_BASE_MS", "MAIL_BUDGET_REGISTRATION_PER_HOUR", "MAIL_BUDGET_REGISTRATION_PER_DAY", "MAIL_BUDGET_RESET_PER_HOUR", "MAIL_BUDGET_RESET_PER_DAY", "MAIL_BUDGET_SECURITY_PER_HOUR", "MAIL_BUDGET_SECURITY_PER_DAY", "MAIL_ADDRESS_REGISTRATION_PER_DAY", "MAIL_ADDRESS_RESET_PER_DAY",
     "BOOKING_MAX_PENDING_PER_TRAVELER", "BOOKING_MAX_DAYS_AHEAD", "BOOKING_PENDING_TTL_HOURS"];
 
 /**
@@ -107,12 +113,13 @@ export function assertMailConfig(config: Environment): void {
     if (raw !== undefined && (!Number.isInteger(Number(raw)) || Number(raw) < min || Number(raw) > max))
       throw new Error(`${key} must be an integer from ${min} to ${max}`);
   }
-  for (const [key, min, max] of [["MAIL_BUDGET_PER_HOUR", 1, 100_000], ["MAIL_BUDGET_PER_DAY", 1, 1_000_000], ["MAIL_BUDGET_RESERVE_PERCENT", 0, 50]] as const) {
-    const raw = config[key];
-    if (raw !== undefined && (!Number.isInteger(Number(raw)) || Number(raw) < min || Number(raw) > max)) throw new Error(`${key} must be an integer from ${min} to ${max}`);
+  for (const pool of ["REGISTRATION", "RESET", "SECURITY"]) {
+    for (const [suffix, max] of [["PER_HOUR", 100_000], ["PER_DAY", 1_000_000]] as const) integerInRange(config, `MAIL_BUDGET_${pool}_${suffix}`, 1, max);
+    // A pool whose hourly limit exceeds its daily one would be capped by the daily limit alone; that is a typo, so refuse it.
+    if (Number(config[`MAIL_BUDGET_${pool}_PER_HOUR`] ?? MAIL_POOL_DEFAULTS[pool.toLowerCase() as MailPool].hour) > Number(config[`MAIL_BUDGET_${pool}_PER_DAY`] ?? MAIL_POOL_DEFAULTS[pool.toLowerCase() as MailPool].day))
+      throw new Error(`MAIL_BUDGET_${pool}_PER_HOUR must not exceed MAIL_BUDGET_${pool}_PER_DAY`);
   }
-  if (Number(config["MAIL_BUDGET_PER_HOUR"] ?? 30) > Number(config["MAIL_BUDGET_PER_DAY"] ?? 100))
-    throw new Error("MAIL_BUDGET_PER_HOUR must not exceed MAIL_BUDGET_PER_DAY");
+  for (const scope of ["REGISTRATION", "RESET"]) integerInRange(config, `MAIL_ADDRESS_${scope}_PER_DAY`, 1, 100_000);
   const baseMs = config["MAIL_RETRY_BASE_MS"];
   if (baseMs !== undefined && (!Number.isInteger(Number(baseMs)) || Number(baseMs) > 30_000))
     throw new Error("MAIL_RETRY_BASE_MS must be an integer from 0 to 30000");

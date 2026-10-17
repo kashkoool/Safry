@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_MAIL_RETRY, MAIL_RETRY, MAIL_TRANSPORT, MailDeliveryError, type MailRetryPolicy, type MailTransport } from "./mail.types.js";
-import { MailBudget } from "./mail-budget.js";
+import { MailBudget, type AddressScope, type MailSource } from "./mail-budget.js";
 import { MetricsService } from "../../common/http/metrics.js";
 import { mailLocale, renderMail, type MailTemplate } from "./templates.js";
 
@@ -29,13 +29,19 @@ export class MailService {
    * recipient, body or link. A restart during a backoff wait loses the pending retry (nothing secret is persisted); the user can
    * request a new link.
    */
-  sendDetached(to: string, locale: string | null | undefined, template: MailTemplate, idempotencyKey: string = randomUUID()): void {
-    this.deliverWithRetry(to, locale, template, idempotencyKey).catch(() => undefined);
+  sendDetached(to: string, locale: string | null | undefined, template: MailTemplate, idempotencyKey: string = randomUUID(), source: MailSource = "existing"): void {
+    this.deliverWithRetry(to, locale, template, idempotencyKey, source).catch(() => undefined);
   }
 
-  private async deliverWithRetry(to: string, locale: string | null | undefined, template: MailTemplate, idempotencyKey: string): Promise<void> {
+  /** Counts one mail-causing request against the client address daily cap; false means "send no mail" (the caller still answers as usual). */
+  allowAddress(scope: AddressScope, ip: string | undefined): Promise<boolean> {
+    return this.budget ? this.budget.allowAddress(scope, ip) : Promise.resolve(true);
+  }
+
+  private async deliverWithRetry(to: string, locale: string | null | undefined, template: MailTemplate, idempotencyKey: string, source: MailSource): Promise<void> {
     const { attempts, baseDelayMs } = this.retry;
-    if (this.budget && !(await this.budget.allow(template.kind))) return; // dropped and counted by the budget; the caller answer is unchanged
+    // Asked once per mail, not per attempt: the retries share one idempotency key, so the provider sends at most one mail.
+    if (this.budget && !(await this.budget.allow(template.kind, source))) return; // dropped and counted by the budget; the caller answer is unchanged
     let message;
     try {
       message = renderMail(mailLocale(locale), template, to);
