@@ -27,7 +27,7 @@ Counters added for alerting (labels are fixed words, never an e-mail, address, u
 | `safry_platform_admin_mfa_resets_24h` (gauge) | Break-glass MFA resets in the last 24 hours, read from the audit trail (the reset runs in a separate script, so no in-process counter could see it). Omitted while the database is down. |
 | `safry_mail_delivery_total{outcome}` | Detached mails (password reset, verification) that ended `sent` or `failed`. |
 | `safry_mail_budget_exhausted_total{pool}` | Mails dropped because a mail pool was spent: `registration` (verification mail for new sign-ups), `reset` (reset and resend mail for existing accounts) or `security` (owner notices). |
-| `safry_mail_address_capped_total{scope}` | Sign-up (`registration`) or forgot-password / resend (`reset`) requests that sent no mail because their client address reached its daily cap. |
+| `safry_mail_address_capped_total{scope}` | Sign-up (`registration`) or forgot-password / resend (`reset`) requests that sent no mail because their client address reached its daily cap, or (`recipient`) a reset / resend mail to one recipient that was skipped because that recipient reached its daily cap. |
 | `safry_process_start_time_seconds` (gauge) | Unix time the API process started; it changes on every restart, which the `ProcessRestarting` alert counts. |
 | `safry_rate_limited_total{group}` | HTTP 429 answers, `auth` routes or `api` (all others). |
 | `safry_readiness_failures_total{reason}` | Readiness probes answered 503: `database` or `draining`. |

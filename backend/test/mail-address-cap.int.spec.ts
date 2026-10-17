@@ -22,7 +22,7 @@ async function start(env: Record<string, string>): Promise<{ world: World; tenan
 describe("per-address daily cap", () => {
   let ctx: Awaited<ReturnType<typeof start>>;
   beforeAll(async () => {
-    ctx = await start({ MAIL_ADDRESS_RESET_PER_DAY: "3", MAIL_ADDRESS_REGISTRATION_PER_DAY: "2" });
+    ctx = await start({ MAIL_ADDRESS_RESET_PER_DAY: "3", MAIL_ADDRESS_REGISTRATION_PER_DAY: "2", MAIL_RECIPIENT_RESET_PER_DAY: "2" });
   });
   afterAll(async () => {
     await ctx.world.stop();
@@ -42,6 +42,18 @@ describe("per-address daily cap", () => {
     expect((await api("/auth/password/forgot", { email: emails[4]! }, "198.51.100.51")).status).toBe(202);
     await settle();
     expect(outbox().some((m) => m.to === emails[4])).toBe(true);
+  }, 120_000);
+
+  it("stops reset mail to ONE recipient after the per-recipient cap, whoever asks, with the same answer as for an unknown address", async () => {
+    const { world, tenant, outbox, api } = ctx;
+    const email = (await world.createUser(tenant, { roles: ["traveler"] })).email;
+    const replies: Reply[] = [];
+    for (let i = 0; i < 4; i++) replies.push(await api("/auth/password/forgot", { email })); // a fresh client address each time
+    const unknown = await api("/auth/password/forgot", { email: `${world.unique("nobody")}@example.test` });
+    await settle();
+    expect(replies.map((r) => r.status)).toEqual([202, 202, 202, 202]);
+    expect(new Set([...replies, unknown].map((r) => JSON.stringify(r.body))).size, "capped, uncapped and unknown answers are identical").toBe(1);
+    expect(outbox().filter((m) => m.to === email).length).toBe(2); // MAIL_RECIPIENT_RESET_PER_DAY=2
   }, 120_000);
 
   it("counts an IPv6 /64 as one address", async () => {

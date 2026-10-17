@@ -120,6 +120,39 @@ describe("MailBudget pools", () => {
   });
 });
 
+describe("MailBudget per-recipient daily cap", () => {
+  const make = (values: Record<string, unknown> = {}): { metrics: MetricsService; budget: MailBudget } => {
+    const metrics = new MetricsService();
+    return { metrics, budget: new MailBudget(new ThrottlerStorageService(), config({ NODE_ENV: "production", MAIL_RECIPIENT_RESET_PER_DAY: 2, ...values }), metrics) };
+  };
+
+  it("allows the cap per recipient, refuses the rest, and counts another recipient separately", async () => {
+    const { budget, metrics } = make();
+    expect([await budget.allowRecipient("a@example.test"), await budget.allowRecipient("a@example.test"), await budget.allowRecipient("a@example.test")]).toEqual([true, true, false]);
+    expect(await budget.allowRecipient("b@example.test")).toBe(true);
+    expect(metrics.render({})).toContain('safry_mail_address_capped_total{scope="recipient"} 1');
+  });
+
+  it("defaults to 5 a day, is off when disabled, and the store key holds no address", async () => {
+    const storage = new ThrottlerStorageService();
+    const spy = vi.spyOn(storage, "increment");
+    const budget = new MailBudget(storage, config({ NODE_ENV: "production" }), new MetricsService());
+    const results: boolean[] = [];
+    for (let i = 0; i < 6; i++) results.push(await budget.allowRecipient("who@example.test"));
+    expect(results).toEqual([true, true, true, true, true, false]);
+    expect(spy.mock.calls.every(([key]) => !String(key).includes("who") && !String(key).includes("example"))).toBe(true);
+    const off = new MailBudget(new ThrottlerStorageService(), config({ NODE_ENV: "test" }), new MetricsService());
+    for (let i = 0; i < 20; i++) expect(await off.allowRecipient("who@example.test")).toBe(true);
+  });
+
+  it("fails open when the store fails", async () => {
+    const storage = new ThrottlerStorageService();
+    vi.spyOn(storage, "increment").mockRejectedValue(new Error("down"));
+    const budget = new MailBudget(storage, config({ NODE_ENV: "production" }), new MetricsService());
+    expect(await budget.allowRecipient("who@example.test")).toBe(true);
+  });
+});
+
 describe("MailBudget per-address daily cap", () => {
   afterEach(() => vi.restoreAllMocks());
   const make = (values: Record<string, unknown> = {}): { metrics: MetricsService; budget: MailBudget } => {

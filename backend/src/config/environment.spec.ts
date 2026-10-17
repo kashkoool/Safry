@@ -105,6 +105,7 @@ describe("validateEnvironment", () => {
       }
     for (const scope of ["REGISTRATION", "RESET"])
       for (const v of ["0", "-1", "x", "100001"]) expect(() => validateEnvironment({ ...valid, [`MAIL_ADDRESS_${scope}_PER_DAY`]: v })).toThrow(`MAIL_ADDRESS_${scope}_PER_DAY`);
+    for (const v of ["0", "-1", "x", "1001"]) expect(() => validateEnvironment({ ...valid, MAIL_RECIPIENT_RESET_PER_DAY: v })).toThrow("MAIL_RECIPIENT_RESET_PER_DAY");
     // hourly above the daily limit of the same pool, set or defaulted
     expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_RESET_PER_HOUR: "200" })).toThrow("MAIL_BUDGET_RESET_PER_HOUR must not exceed MAIL_BUDGET_RESET_PER_DAY");
     expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_REGISTRATION_PER_DAY: "5" })).toThrow("MAIL_BUDGET_REGISTRATION_PER_HOUR must not exceed");

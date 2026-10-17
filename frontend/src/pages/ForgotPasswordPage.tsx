@@ -41,7 +41,7 @@ export function ForgotPasswordPage() {
 
   return <CredentialLayout eyebrow={pick("استعادة الحساب", "Account recovery")} title={pick("نسيت كلمة المرور؟", "Forgot your password?")}
     intro={pick("اكتب بريدك الإلكتروني وسنرسل لك رابطاً لتعيين كلمة مرور جديدة.", "Enter your email address and we will send you a link to choose a new password.")}>
-    {sent && <FocusMessage kind="success" title={pick("تحقق من بريدك", "Check your email")}>{pick("إن كان لهذا البريد حساب، فقد أرسلنا إليه رابطاً لتعيين كلمة مرور جديدة. الرابط صالح لفترة قصيرة. إن لم يصلك، تحقق من البريد غير المرغوب فيه.", "If an account exists for this address, we sent it a link to set a new password. The link is valid for a short time. If you do not see it, check your spam folder.")}</FocusMessage>}
+    {sent && <FocusMessage kind="success" title={pick("تحقق من بريدك", "Check your email")}>{pick("إن كان لهذا البريد حساب، فقد أرسلنا إليه رابطاً لتعيين كلمة مرور جديدة. الرابط صالح لفترة قصيرة. إن لم يصلك، تحقق من البريد غير المرغوب فيه، أو حاول لاحقاً، أو تواصل مع الدعم.", "If an account exists for this address, we sent it a link to set a new password. The link is valid for a short time. If you do not see it, check your spam folder, try again later, or contact support.")}</FocusMessage>}
     <form className="auth-form" onSubmit={event => void submit(event)} aria-busy={busy}>
       <label htmlFor="forgot-email"><span>{pick("البريد الإلكتروني", "Email address")}</span>
         <div className="auth-input"><Mail size={18} aria-hidden="true" />

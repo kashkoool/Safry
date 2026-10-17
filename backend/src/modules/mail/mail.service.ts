@@ -38,6 +38,11 @@ export class MailService {
     return this.budget ? this.budget.allowAddress(scope, ip) : Promise.resolve(true);
   }
 
+  /** Counts one reset or resend mail for this recipient against its daily cap; false means "send no mail" (the caller still answers as usual). */
+  allowRecipient(emailNormalized: string): Promise<boolean> {
+    return this.budget ? this.budget.allowRecipient(emailNormalized) : Promise.resolve(true);
+  }
+
   private async deliverWithRetry(to: string, locale: string | null | undefined, template: MailTemplate, idempotencyKey: string, source: MailSource): Promise<void> {
     const { attempts, baseDelayMs } = this.retry;
     // Asked once per mail, not per attempt: the retries share one idempotency key, so the provider sends at most one mail.

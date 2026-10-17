@@ -114,6 +114,13 @@ export class CredentialService {
         });
         return;
       }
+      // Only a real account is counted, and a capped one is answered like any other (same reply and timing): no existence signal.
+      if (!(await this.mail.allowRecipient(user.emailNormalized))) {
+        await this.prisma.$transaction(async (tx) => {
+          await this.audit(tx, "identity.password.reset_requested.suppressed", user.id, ipAddress, { reason: "recipient_cap" });
+        });
+        return;
+      }
       // A failure here must look like success: an unknown address answers 202, so a known one must too (no enumeration under failure).
       try {
         const token = await this.issue(user, "PASSWORD_RESET", RESET_TTL_MINUTES * 60_000, ipAddress, "identity.password.reset_requested");
@@ -132,6 +139,12 @@ export class CredentialService {
       if (!this.eligible(user) || user.emailVerifiedAt !== null || !mayMail) {
         await this.prisma.$transaction(async (tx) => {
           await this.audit(tx, "identity.email.verification_requested", null, ipAddress, mayMail ? { matched: false } : { suppressed: "address_cap" });
+        });
+        return;
+      }
+      if (!(await this.mail.allowRecipient(user.emailNormalized))) {
+        await this.prisma.$transaction(async (tx) => {
+          await this.audit(tx, "identity.email.verification_requested.suppressed", user.id, ipAddress, { reason: "recipient_cap" });
         });
         return;
       }

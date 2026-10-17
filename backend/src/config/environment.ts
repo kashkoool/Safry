@@ -120,6 +120,7 @@ export function assertMailConfig(config: Environment): void {
       throw new Error(`MAIL_BUDGET_${pool}_PER_HOUR must not exceed MAIL_BUDGET_${pool}_PER_DAY`);
   }
   for (const scope of ["REGISTRATION", "RESET"]) integerInRange(config, `MAIL_ADDRESS_${scope}_PER_DAY`, 1, 100_000);
+  integerInRange(config, "MAIL_RECIPIENT_RESET_PER_DAY", 1, 1000);
   const baseMs = config["MAIL_RETRY_BASE_MS"];
   if (baseMs !== undefined && (!Number.isInteger(Number(baseMs)) || Number(baseMs) > 30_000))
     throw new Error("MAIL_RETRY_BASE_MS must be an integer from 0 to 30000");

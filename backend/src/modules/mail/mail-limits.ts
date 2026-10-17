@@ -16,5 +16,8 @@ export const MAIL_POOL_DEFAULTS: Record<MailPool, PoolLimit> = { registration: {
 export const MAIL_ADDRESS_DEFAULTS: Record<AddressScope, number> = { registration: 10, reset: 10 };
 
 export const poolEnvKeys = (pool: MailPool): { hour: string; day: string } => ({ hour: `MAIL_BUDGET_${pool.toUpperCase()}_PER_HOUR`, day: `MAIL_BUDGET_${pool.toUpperCase()}_PER_DAY` });
+/** Most reset or resend mails ONE recipient gets a day, whoever asks (a list of real accounts can not be used to bomb or use up one inbox). */
+export const MAIL_RECIPIENT_RESET_PER_DAY_DEFAULT = 5;
+export const RECIPIENT_ENV_KEY = "MAIL_RECIPIENT_RESET_PER_DAY";
 export const addressEnvKey = (scope: AddressScope): string => `MAIL_ADDRESS_${scope.toUpperCase()}_PER_DAY`;
 
