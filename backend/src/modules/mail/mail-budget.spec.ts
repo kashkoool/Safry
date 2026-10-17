@@ -79,7 +79,7 @@ describe("MailBudget", () => {
   it("does nothing when disabled and fails open if the store throws", async () => {
     const off = new MailBudget(new ThrottlerStorageService(), config({ NODE_ENV: "test" }), new MetricsService());
     for (let i = 0; i < 200; i++) expect(await off.allow("password-reset")).toBe(true);
-    const broken = new MailBudget({ increment: () => Promise.reject(new Error("boom")) }, config({ NODE_ENV: "production" }), new MetricsService());
+    const broken = new MailBudget({ increment: (): Promise<never> => Promise.reject(new Error("boom")) }, config({ NODE_ENV: "production" }), new MetricsService());
     vi.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
     expect(await broken.allow("password-reset")).toBe(true);
   });
