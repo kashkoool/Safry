@@ -25,7 +25,7 @@ tests:
       exp_annotations:
         summary: Safry API cannot be scraped
         description: Prometheus has not been able to read /metrics from the API for 2 minutes. The API may be down, unreachable, or the scrape token may be wrong (a rejected token also shows as down).
-        first_action: Open the platform health page for the API; check the container or app is running and the last deploy; then check /api/v1/health/live from outside. If /metrics answers 401, the scrape token was rotated.
+        first_action: Open the platform health page for the API; check the container or app is running and the last deploy; then check /api/v1/health/live from outside. If /metrics answers 401, the scraper token is missing or does not match (for example after a rotation).
         runbook: docs/ALERTING.md#apidown
 - interval: 1m
   name: ApiDown stays silent while the API is up
@@ -51,7 +51,7 @@ tests:
       exp_annotations:
         summary: Safry API cannot be scraped
         description: Prometheus has not been able to read /metrics from the API for 2 minutes. The API may be down, unreachable, or the scrape token may be wrong (a rejected token also shows as down).
-        first_action: Open the platform health page for the API; check the container or app is running and the last deploy; then check /api/v1/health/live from outside. If /metrics answers 401, the scrape token was rotated.
+        first_action: Open the platform health page for the API; check the container or app is running and the last deploy; then check /api/v1/health/live from outside. If /metrics answers 401, the scraper token is missing or does not match (for example after a rotation).
         runbook: docs/ALERTING.md#apidown
 - interval: 1m
   name: DatabaseUnreachable fires after 3 minutes of database readiness failures

@@ -13,8 +13,7 @@ notification channel and to Azure is a checklist at the end, not done yet.
 
 ## 1. How the signals get out
 
-The API serves Prometheus text on `/api/v1/metrics`. The endpoint answers 404 until `METRICS_TOKEN` is set and then only to a caller
-that sends it as `Authorization: Bearer <token>`. Keep the token in the secret store, give it only to the scraper, and never expose the
+The API serves Prometheus text on `/api/v1/metrics`. The endpoint answers 404 until `METRICS_TOKEN` is set. After that the `Authorization` header must carry the token, either as `Bearer <token>` or as the bare token (the handler strips an optional `Bearer ` prefix and compares in constant time); anything else, including a missing header, answers 401. Use the Bearer form in scraper configuration. Keep the token in the secret store, give it only to the scraper, and never expose the
 path through the public proxy (block `/api/v1/metrics` at Cloudflare or the proxy; the scraper reaches the API on the private network).
 
 Counters added for alerting (labels are fixed words, never an e-mail, address, user or tenant):
@@ -40,7 +39,7 @@ Severity `page` = wake someone; `ticket` = look in working hours. Who is notifie
 
 ### ApiDown
 *page.* Prometheus cannot read `/metrics` for 2 minutes, or no target is configured. The API is down, unreachable, or the scrape token is wrong.
-First action: open the platform health page, check the last deploy, call `/api/v1/health/live` from outside; a 401 on `/metrics` means the token was rotated.
+First action: open the platform health page, check the last deploy, call `/api/v1/health/live` from outside; a 401 on `/metrics` means the scraper's token is missing or does not match `METRICS_TOKEN` (for example after a rotation).
 
 ### DatabaseUnreachable
 *page.* Readiness has failed because the database did not answer `SELECT 1` within 2 seconds, for 3 minutes. Sign-in and booking fail; the API itself is up.
