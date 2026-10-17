@@ -12,6 +12,18 @@
     "booking_create_hot": 1300,
     "mixed_traveler": 3500
   },
+  "limiter": {
+    "login_storm": { "p99Ms": 8000, "max5xx": 0 },
+    "registration_storm": { "p99Ms": 4000, "max5xx": 0 },
+    "booking_contention": { "p99Ms": 6000, "max5xx": 0 },
+    "limiter_single_ip": { "p99Ms": 1000, "min429": 1, "max5xx": 0 }
+  },
+  "users": {
+    "mixed_users": { "p95Ms": 1000, "max429": 0, "max5xx": 0 }
+  },
+  "steady": {
+    "steady_state": { "p95Ms": 1000, "max429": 0, "max5xx": 0, "maxP95DriftRatio": 1.5, "maxRssGrowthPct": 25 }
+  },
   "soak": {
     "maxP95DriftRatio": 1.5,
     "maxRssGrowthPct": 25,

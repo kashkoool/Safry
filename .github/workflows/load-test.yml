@@ -1,15 +1,26 @@
 # Load test (autocannon) against the real API and PostgreSQL 17, reduced dataset. Never runs per pull request:
-# manual trigger and weekly. Fails when a scenario's error-response rate is above 0.5 % or its p99 exceeds the
-# limit in backend/test/load/thresholds.json. See backend/test/load/README.md.
+# manual trigger and weekly. Profiles: smoke (read scenarios, rate limiter off), standard (smoke + login, registration,
+# booking-contention and single-address limiter scenarios + a 200-user mixed workload, rate limiter on), soak (standard +
+# a sustained run of N minutes). Fails when a scenario breaks its limit in backend/test/load/thresholds.json.
+# Not a required check. See backend/test/load/README.md.
 name: Load test
 
 on:
   workflow_dispatch:
     inputs:
+      profile:
+        description: "smoke, standard or soak"
+        type: choice
+        options: [smoke, standard, soak]
+        default: standard
       duration:
         description: "Seconds per scenario"
         required: false
         default: "12"
+      soak_minutes:
+        description: "Length of the sustained run (soak profile)"
+        required: false
+        default: "10"
   schedule:
     - cron: "29 5 * * 1" # weekly
 
@@ -28,7 +39,7 @@ jobs:
   load:
     name: Load test (reduced dataset)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     # Throwaway test-only credentials for an ephemeral container that lives for this job only.
     services:
       postgres:
@@ -46,6 +57,8 @@ jobs:
       MIGRATE_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres?schema=public
       RUNTIME_URL: postgresql://safry_runtime:ci-runtime-only@127.0.0.1:5432/postgres?schema=public
       DURATION: ${{ github.event.inputs.duration || '12' }}
+      PROFILE: ${{ github.event.inputs.profile || 'standard' }}
+      SOAK_MINUTES: ${{ github.event.inputs.soak_minutes || '10' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -122,11 +135,54 @@ jobs:
             echo
             node check.mjs --label ci 2>&1 || true
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Restart the API with the rate limiter on
+        if: env.PROFILE != 'smoke'
+        working-directory: backend
+        env:
+          LOAD_DATABASE_URL: ${{ env.RUNTIME_URL }}
+          PORT: "3100"
+          LOAD_LIMITER: "on"
+        run: |
+          pkill -f "dist/main.js" || true
+          sleep 2
+          nohup bash test/load/start-api.sh > "$RUNNER_TEMP/api-limiter.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:3100/api/v1/health/ready && exit 0
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/api-limiter.log"
+          exit 1
+      - name: Limiter-on scenarios (login, registration, contention, single address)
+        if: env.PROFILE != 'smoke'
+        working-directory: backend/test/load
+        env:
+          LOAD_DATABASE_URL: postgresql://postgres:ci-test-only@127.0.0.1:5432/postgres
+        run: |
+          set -o pipefail
+          node run.mjs --url http://127.0.0.1:3100 --duration "$DURATION" --profile limiter --label ci-limiter
+          node check.mjs --label ci-limiter --set limiter | tee "$RUNNER_TEMP/limiter.md"
+          { echo "### Limiter-on scenarios"; echo; cat "$RUNNER_TEMP/limiter.md"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Mixed workload, 200 users
+        if: env.PROFILE != 'smoke'
+        working-directory: backend/test/load
+        run: |
+          set -o pipefail
+          node vu.mjs --url http://127.0.0.1:3100 --users 200 --seconds 120 --ramp 60 --think 4000 --label mixed_users
+          node check.mjs --label mixed_users --set users | tee "$RUNNER_TEMP/users.md"
+          { echo "### Mixed workload, 200 users"; echo; cat "$RUNNER_TEMP/users.md"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Sustained run
+        if: env.PROFILE == 'soak'
+        working-directory: backend/test/load
+        run: |
+          set -o pipefail
+          node vu.mjs --url http://127.0.0.1:3100 --users 200 --seconds "$((SOAK_MINUTES * 60))" --ramp 60 --think 4000 --pid "$(pgrep -f dist/main.js | head -n 1)" --label steady_state
+          node check.mjs --label steady_state --set steady | tee "$RUNNER_TEMP/steady.md"
+          { echo "### Sustained run, 200 users, $SOAK_MINUTES min"; echo; cat "$RUNNER_TEMP/steady.md"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload the raw results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: load-test-results
-          path: backend/test/load/.data/result-ci.json
+          path: backend/test/load/.data/result-*.json
           retention-days: 30
           if-no-files-found: ignore

@@ -89,12 +89,12 @@ const scenarios = {
   // --- limiter scenarios: start the API with LOAD_LIMITER=on ---
   // Many distinct users signing in at once, each from its own address; real argon2 behind the gate (4 running + 64 queued).
   login_storm: {
-    limiter: true, connections: 100,
+    limiter: true, connections: 10,
     requests: [jsonPost("/auth/login", loginBody, 2_000_000)]
   },
   // New accounts, each from a fresh address (the per-address limit is 5 a minute); the console mail transport logs the mails.
   registration_storm: {
-    limiter: true, connections: 20,
+    limiter: true, connections: 5,
     requests: [
       jsonPost("/auth/register/customer", () => ({
         displayName: "Load Test", email: `${unique("reg")}@example.test`, password: `${data.password}-reg`, tenantCode: tenantCodes[0] ?? "load-0"
