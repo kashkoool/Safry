@@ -39,7 +39,7 @@ export function mapDatabaseError(error: unknown): HttpException | undefined {
   const { name, code, message } = error as DatabaseError;
   const text = typeof message === "string" ? message : "";
   if (RLS_VIOLATION.test(text)) return new ForbiddenException("Access denied by the tenant isolation policy");
-  if (isOverload(error as DatabaseError, text)) return new ServiceBusyException();
+  if (isOverload(error, text)) return new ServiceBusyException();
   if (name !== "PrismaClientKnownRequestError" || typeof code !== "string") return undefined;
   switch (code) {
     case "P2002":
