@@ -26,6 +26,7 @@ describe("a refresh in flight while the user signs out or in", () => {
     vi.stubGlobal("localStorage", memoryStorage());
     vi.stubGlobal("sessionStorage", memoryStorage());
     vi.stubGlobal("window", { dispatchEvent: () => true });
+    vi.stubGlobal("navigator", {}); // no Web Locks: a never-settling refresh must not hold a process-wide lock across tests
     vi.stubGlobal("fetch", vi.fn((url: string) => {
       const path = String(url).replace(/^.*\/auth\//, "");
       calls.push(path);
@@ -61,6 +62,24 @@ describe("a refresh in flight while the user signs out or in", () => {
     await signingOut;
     expect(calls).toEqual(["refresh", "logout"]);
     expect(getStoredUser()).toBeNull();
+  });
+
+  it.each(["login", "logout"] as const)("a refresh that never settles releases %s after the 5 s cap", async (action) => {
+    vi.useFakeTimers();
+    try {
+      const { api, restoreSession } = await import("./api");
+      void restoreSession(); // its response is never delivered
+      const run = action === "login"
+        ? api.login({ email: "a@example.test", password: "x", portal: "customer" } as never)
+        : api.logout();
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(calls, "still waiting just before the cap").toEqual(["refresh"]);
+      await vi.advanceTimersByTimeAsync(2);
+      await run;
+      expect(calls).toEqual(["refresh", action]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("without a refresh in flight, sign-in is sent at once", async () => {
