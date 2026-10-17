@@ -1,6 +1,6 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger, type CanActivate, type ExecutionContext } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { ThrottlerStorage, ThrottlerStorageService } from "@nestjs/throttler";
+import { ThrottlerStorage, ThrottlerStorageService, normalizeIp } from "@nestjs/throttler";
 import { Redis } from "ioredis";
 import type { Request } from "express";
 import type { AuthUser } from "../security/auth-user.js";
@@ -114,6 +114,15 @@ export function accountOf(request: Request): string | undefined {
 }
 
 /**
+ * Client address as a rate-limit key: an IPv6 address stands for its whole /64 (one subscriber holds 2^64 addresses, so
+ * per-address keys would never fill) and an IPv4-mapped IPv6 address is the plain IPv4 address. IPv4 is unchanged.
+ * The "default" throttler already does this through @nestjs/throttler; every custom tracker must use this function.
+ */
+export function clientKey(ip: string | undefined): string {
+  return ip === undefined ? "" : normalizeIp(ip);
+}
+
+/**
  * Tracker of the "account" throttler: e-mail plus client address. Keyed on the e-mail alone, any
  * stranger could exhaust a victim's bucket and lock the real user out. Guessing one
  * account from many addresses is bounded by the database lockout (AccountSecurityService: per-account
@@ -121,7 +130,7 @@ export function accountOf(request: Request): string | undefined {
  */
 export function accountTracker(request: Request): string {
   const account = accountOf(request);
-  return account ? `${account}|${request.ip ?? ""}` : "";
+  return account ? `${account}|${clientKey(request.ip)}` : "";
 }
 
 /**
