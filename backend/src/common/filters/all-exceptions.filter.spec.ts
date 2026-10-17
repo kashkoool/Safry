@@ -1,6 +1,7 @@
 import { ForbiddenException, Logger, UnauthorizedException, type ArgumentsHost } from "@nestjs/common";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AllExceptionsFilter, describeDatabaseError } from "./all-exceptions.filter.js";
+import { ServiceBusyException } from "./service-busy.exception.js";
 
 
 function run(
@@ -97,5 +98,42 @@ describe("AllExceptionsFilter logging (merge)", () => {
     expect(text).toContain("Database error mapped to HTTP 409");
     expect(text).toContain("P2002");
     expect(text).not.toContain("victim");
+  });
+});
+
+describe("AllExceptionsFilter overload answers", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function runWithHeaders(error: unknown): { status: number; headers: Record<string, string>; body: Record<string, unknown> } {
+    const json = vi.fn();
+    const status = vi.fn().mockReturnValue({ json });
+    const headers: Record<string, string> = {};
+    const host = {
+      switchToHttp: (): unknown => ({
+        getResponse: (): unknown => ({ status, setHeader: (name: string, value: string) => (headers[name] = value) }),
+        getRequest: (): unknown => ({ method: "POST", originalUrl: "/api/v1/auth/login" })
+      })
+    } as unknown as ArgumentsHost;
+    new AllExceptionsFilter().catch(error, host);
+    return { status: status.mock.calls[0]?.[0] as number, headers, body: json.mock.calls[0]?.[0] as Record<string, unknown> };
+  }
+
+  it("answers 503 with Retry-After for a pool-wait timeout and shows no database detail", () => {
+    vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const raised = { name: "PrismaClientKnownRequestError", code: "P2028", message: "Transaction API error: Unable to start a transaction in the given time. SELECT secret_table" };
+    const { status, headers, body } = runWithHeaders(raised);
+    expect(status).toBe(503);
+    expect(Number(headers["Retry-After"])).toBeGreaterThan(0);
+    expect(JSON.stringify(body)).not.toContain("secret_table");
+  });
+
+  it("sets Retry-After for a refused hash queue too", () => {
+    const { status, headers } = runWithHeaders(new ServiceBusyException());
+    expect(status).toBe(503);
+    expect(headers["Retry-After"]).toBe("2");
+  });
+
+  it("sets no Retry-After on other statuses", () => {
+    expect(runWithHeaders(new ForbiddenException("x")).headers["Retry-After"]).toBeUndefined();
   });
 });

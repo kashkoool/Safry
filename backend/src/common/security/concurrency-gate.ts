@@ -33,3 +33,22 @@ export class ConcurrencyGate {
     }
   }
 }
+
+/** Counts requests that are in flight; the next one beyond `limit` is refused before it touches the database. */
+export class InFlightLimit {
+  private active = 0;
+
+  constructor(private readonly limit: number) {}
+
+  /** Returns a release function (safe to call more than once); throws GateFullError when the limit is reached. */
+  enter(): () => void {
+    if (this.active >= this.limit) throw new GateFullError();
+    this.active += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.active -= 1;
+    };
+  }
+}

@@ -1,6 +1,6 @@
-import { ServiceUnavailableException } from "@nestjs/common";
 import { argon2id, hash, verify } from "argon2";
-import { ConcurrencyGate, GateFullError } from "./concurrency-gate.js";
+import { ServiceBusyException } from "../filters/service-busy.exception.js";
+import { ConcurrencyGate, GateFullError, InFlightLimit } from "./concurrency-gate.js";
 
 /**
  * Password hashing parameters, pinned instead of relying on library defaults. argon2id with
@@ -17,13 +17,39 @@ const intFromEnv = (name: string, fallback: number): number => {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 };
-const hashGate = new ConcurrencyGate(intFromEnv("HASH_CONCURRENCY", 4), intFromEnv("HASH_QUEUE", 64));
+const HASH_CONCURRENCY = intFromEnv("HASH_CONCURRENCY", 4);
+const HASH_QUEUE = intFromEnv("HASH_QUEUE", 64);
+const hashGate = new ConcurrencyGate(HASH_CONCURRENCY, HASH_QUEUE);
+// The database work before the hash (user lookup, throttle transaction) of admitted sign-ins runs through this small gate, so a wave
+// can never take more than a few pooled connections at once and unrelated requests keep the rest. Waiters hold no connection.
+const preHashGate = new ConcurrencyGate(intFromEnv("SIGNIN_DB_CONCURRENCY", 3), HASH_CONCURRENCY + HASH_QUEUE);
+
+/** Runs the pre-hash database work of a sign-in with bounded concurrency (queued, never refused: callers are already admitted). */
+export function runPreHash<T>(task: () => Promise<T>): Promise<T> {
+  return preHashGate.run(task);
+}
+
+const signInsInFlight = new InFlightLimit(HASH_CONCURRENCY + HASH_QUEUE);
+
+/**
+ * Admission for a sign-in: taken before any database work, held until the answer is ready. A sign-in waiting for the hash gate
+ * holds no connection, but the steps around it (lookup, throttle, session) do; capping the sign-ins in flight at the capacity of
+ * the hash gate keeps their demand on the shared pool bounded and refuses the surplus with a retryable 503 that costs no throttle attempt.
+ */
+export function enterSignIn(): () => void {
+  try {
+    return signInsInFlight.enter();
+  } catch (error) {
+    if (error instanceof GateFullError) throw new ServiceBusyException();
+    throw error;
+  }
+}
 
 async function gated<T>(task: () => Promise<T>): Promise<T> {
   try {
     return await hashGate.run(task);
   } catch (error) {
-    if (error instanceof GateFullError) throw new ServiceUnavailableException("الخدمة مشغولة حالياً، حاول بعد لحظات");
+    if (error instanceof GateFullError) throw new ServiceBusyException();
     throw error;
   }
 }
