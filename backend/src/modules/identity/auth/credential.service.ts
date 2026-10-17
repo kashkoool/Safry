@@ -78,7 +78,7 @@ export class CredentialService {
    * Creates the token inside the user-row lock after applying the per-account send limits. Returns undefined when the limit
    * says "do not send" (the caller still answers as usual).
    */
-  private issue(user: MailAccount, purpose: CredentialTokenPurpose, ttlMs: number, ipAddress: string | undefined, action: string): Promise<string | undefined> {
+  private issue(user: MailAccount, purpose: CredentialTokenPurpose, ttlMs: number, ipAddress: string | undefined, action: string, mayMail: () => Promise<boolean> = () => Promise.resolve(true)): Promise<string | undefined> {
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id"=${user.id}::uuid FOR UPDATE`;
       const now = new Date();
@@ -90,6 +90,12 @@ export class CredentialService {
       const last = recent[0]?.createdAt;
       if (recent.length >= MAX_LINKS_PER_HOUR || (last && now.getTime() - last.getTime() < MIN_RESEND_INTERVAL_MS)) {
         await this.audit(tx, `${action}.suppressed`, user.id, ipAddress, { reason: "rate_limited" });
+        return undefined;
+      }
+      // Checked after the per-account limits (a refused request never uses the recipient's quota) and BEFORE any token is voided or
+      // created, so a capped request leaves the last good link working.
+      if (!(await mayMail())) {
+        await this.audit(tx, `${action}.suppressed`, user.id, ipAddress, { reason: "recipient_cap" });
         return undefined;
       }
       await tx.credentialToken.updateMany({ where: { userId: user.id, purpose, usedAt: null }, data: { usedAt: now } });
@@ -116,8 +122,10 @@ export class CredentialService {
       }
       // A failure here must look like success: an unknown address answers 202, so a known one must too (no enumeration under failure).
       try {
-        const token = await this.issue(user, "PASSWORD_RESET", RESET_TTL_MINUTES * 60_000, ipAddress, "identity.password.reset_requested");
-        if (token) this.mail.sendDetached(user.email, user.locale, { kind: "password-reset", link: this.link("/reset-password", token), validForMinutes: RESET_TTL_MINUTES });
+        const token = await this.issue(user, "PASSWORD_RESET", RESET_TTL_MINUTES * 60_000, ipAddress, "identity.password.reset_requested", () => this.mail.allowRecipient(user.emailNormalized));
+        // A capped recipient is answered like any other (same reply and timing): no existence signal.
+        if (token)
+          this.mail.sendDetached(user.email, user.locale, { kind: "password-reset", link: this.link("/reset-password", token), validForMinutes: RESET_TTL_MINUTES });
       } catch (error) {
         this.logger.error(`password reset link not sent: ${error instanceof Error ? error.name : "unknown error"}`);
       }
@@ -147,8 +155,11 @@ export class CredentialService {
   async sendVerification(user: MailAccount, ipAddress?: string, source: MailSource = "existing"): Promise<void> {
     try {
       if (source === "registration" && !(await this.mail.allowAddress("registration", ipAddress))) return; // daily cap of this client address: the sign-up answer is unchanged
-      const token = await runAsSystem(() => this.issue(user, "EMAIL_VERIFICATION", VERIFY_TTL_HOURS * 3_600_000, ipAddress, "identity.email.verification_requested"));
-      if (token) this.mail.sendDetached(user.email, user.locale, { kind: "email-verification", link: this.link("/verify-email", token), validForHours: VERIFY_TTL_HOURS }, undefined, source);
+      // Mail to an existing account (resend, address change) is capped per recipient; sign-ups are covered by the per-address cap above.
+      const gate = source === "registration" ? undefined : (): Promise<boolean> => this.mail.allowRecipient(user.emailNormalized);
+      const token = await runAsSystem(() => this.issue(user, "EMAIL_VERIFICATION", VERIFY_TTL_HOURS * 3_600_000, ipAddress, "identity.email.verification_requested", gate));
+      if (token)
+        this.mail.sendDetached(user.email, user.locale, { kind: "email-verification", link: this.link("/verify-email", token), validForHours: VERIFY_TTL_HOURS }, undefined, source);
     } catch (error) {
       this.logger.error(`verification link not sent: ${error instanceof Error ? error.name : "unknown error"}`);
     }

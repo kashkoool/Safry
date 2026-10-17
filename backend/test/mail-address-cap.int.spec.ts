@@ -22,7 +22,7 @@ async function start(env: Record<string, string>): Promise<{ world: World; tenan
 describe("per-address daily cap", () => {
   let ctx: Awaited<ReturnType<typeof start>>;
   beforeAll(async () => {
-    ctx = await start({ MAIL_ADDRESS_RESET_PER_DAY: "3", MAIL_ADDRESS_REGISTRATION_PER_DAY: "2" });
+    ctx = await start({ MAIL_ADDRESS_RESET_PER_DAY: "3", MAIL_ADDRESS_REGISTRATION_PER_DAY: "2", MAIL_RECIPIENT_RESET_PER_DAY: "2" });
   });
   afterAll(async () => {
     await ctx.world.stop();
@@ -42,6 +42,44 @@ describe("per-address daily cap", () => {
     expect((await api("/auth/password/forgot", { email: emails[4]! }, "198.51.100.51")).status).toBe(202);
     await settle();
     expect(outbox().some((m) => m.to === emails[4])).toBe(true);
+  }, 120_000);
+
+  it("stops reset mail to ONE recipient after the per-recipient cap, whoever asks, with the same answer as for an unknown address", async () => {
+    const { world, tenant, outbox, api } = ctx;
+    const email = (await world.createUser(tenant, { roles: ["traveler"] })).email;
+    const replies: Reply[] = [];
+    const clearTokens = (): Promise<unknown> => world.sql.query(`DELETE FROM credential_tokens WHERE "userId" = (SELECT id FROM users WHERE "emailNormalized" = $1)`, [email]);
+    for (let i = 0; i < 4; i++) {
+      replies.push(await api("/auth/password/forgot", { email })); // a fresh client address each time
+      await settle();
+      if (i === 0) replies.push(await api("/auth/password/forgot", { email })); // too soon after the first: refused by the per-account limit, must not use the recipient's day
+      await clearTokens(); // forget the previous link, so the one-minute resend interval does not decide and only the recipient cap does
+    }
+    const unknown = await api("/auth/password/forgot", { email: `${world.unique("nobody")}@example.test` });
+    await settle();
+    expect(replies.map((r) => r.status)).toEqual([202, 202, 202, 202, 202]);
+    expect(new Set([...replies, unknown].map((r) => JSON.stringify(r.body))).size, "capped, uncapped and unknown answers are identical").toBe(1);
+    expect(outbox().filter((m) => m.to === email).length).toBe(2); // MAIL_RECIPIENT_RESET_PER_DAY=2
+  }, 120_000);
+
+  it("a request refused by the recipient cap leaves the last good link working and answers like any other", async () => {
+    const { world, tenant, outbox, api } = ctx;
+    const email = (await world.createUser(tenant, { roles: ["traveler"] })).email;
+    const age = (): Promise<unknown> => world.sql.query(`UPDATE credential_tokens SET "createdAt" = now() - interval '5 minutes' WHERE "userId" = (SELECT id FROM users WHERE "emailNormalized" = $1)`, [email]);
+    const replies: Reply[] = [];
+    for (let i = 0; i < 3; i++) {
+      replies.push(await api("/auth/password/forgot", { email }));
+      await settle();
+      await age(); // past the one-minute resend interval: only the recipient cap decides
+    }
+    const mails = outbox().filter((m) => m.to === email);
+    expect(mails.length, "cap of 2: the third request sends nothing").toBe(2);
+    expect(new Set(replies.map((r) => JSON.stringify(r.body))).size).toBe(1);
+    const tokens = mails.map((m) => /#token=([A-Za-z0-9_-]{43})/.exec(m.text)?.[1] ?? "");
+    const newest = tokens[1]!;
+    // The capped request must not have voided the newest link.
+    const reset = await api("/auth/password/reset", { token: newest, newPassword: `Np-${randomBytes(9).toString("hex")}-Zz` });
+    expect(reset.status).toBe(204);
   }, 120_000);
 
   it("counts an IPv6 /64 as one address", async () => {

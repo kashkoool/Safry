@@ -2,7 +2,7 @@ import { ArgumentsHost, Catch, HttpException, HttpStatus, Logger, type Exception
 import type { Request, Response } from "express";
 import { requestContext } from "../context/request-context.js";
 import { mapDatabaseError } from "./database-errors.js";
-import { ServiceBusyException } from "./service-busy.exception.js";
+import { ServiceBusyException, retryAfterWithJitter } from "./service-busy.exception.js";
 
 /** body-parser (Express) reports oversized or malformed bodies as plain errors with a 4xx status and `expose: true`; keep them 4xx. */
 function mapParserError(raised: unknown): HttpException | undefined {
@@ -27,6 +27,11 @@ export function describeDatabaseError(error: unknown): string | undefined {
   return `${typeof name === "string" ? name : "DatabaseError"}${typeof code === "string" ? ` code=${code}` : ""} (message withheld)`;
 }
 
+/** Class name only, for errors that are mapped to a status without being recognisable Prisma or PostgreSQL errors (e.g. a pool timeout). */
+function errorClassName(error: unknown): string {
+  return error instanceof Error ? error.name : "unknown error";
+}
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
@@ -41,7 +46,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       exception = parser ?? database ?? raised;
       if (database) {
         // Log the class and code only; driver messages carry table, column and row values.
-        this.logger.warn(`Database error mapped to HTTP ${database.getStatus()}: ${describeDatabaseError(raised) ?? "database error (message withheld)"}`);
+        this.logger.warn(`Database error mapped to HTTP ${database.getStatus()}: ${describeDatabaseError(raised) ?? `${errorClassName(raised)} (message withheld)`}`);
       }
     }
     const clientStatus = exception instanceof HttpException ? undefined : httpClientStatus(exception);
@@ -74,7 +79,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // Stable machine code (letters, digits, underscore) when the exception carries one, e.g. mfa_enrollment_required or BOOKING_EXPIRED.
     const rawCode = typeof exceptionBody === "object" && exceptionBody && "code" in exceptionBody ? exceptionBody.code : undefined;
     const code = typeof rawCode === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(rawCode) ? rawCode : undefined;
-    if (exception instanceof ServiceBusyException) response.setHeader("Retry-After", String(exception.retryAfterSeconds));
+    if (exception instanceof ServiceBusyException) response.setHeader("Retry-After", String(retryAfterWithJitter(exception.retryAfterSeconds)));
     response.status(status).json({
       statusCode: status,
       message,

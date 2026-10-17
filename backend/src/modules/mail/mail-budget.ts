@@ -1,9 +1,10 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ThrottlerStorage } from "@nestjs/throttler";
+import { createHmac } from "node:crypto";
 import { clientKey } from "../../common/http/rate-limit.js";
 import { MetricsService } from "../../common/http/metrics.js";
-import { ADDRESS_SCOPES, MAIL_ADDRESS_DEFAULTS, MAIL_POOLS, MAIL_POOL_DEFAULTS, addressEnvKey, poolEnvKeys, type AddressScope, type MailPool, type PoolLimit } from "./mail-limits.js";
+import { ADDRESS_SCOPES, MAIL_ADDRESS_DEFAULTS, MAIL_POOLS, MAIL_RECIPIENT_RESET_PER_DAY_DEFAULT, RECIPIENT_ENV_KEY, MAIL_POOL_DEFAULTS, addressEnvKey, poolEnvKeys, type AddressScope, type MailPool, type PoolLimit } from "./mail-limits.js";
 import type { MailTemplate } from "./templates.js";
 
 export type { AddressScope, MailPool } from "./mail-limits.js";
@@ -14,6 +15,7 @@ export interface MailBudgetLimits {
   enabled: boolean;
   pools: Record<MailPool, PoolLimit>;
   addressPerDay: Record<AddressScope, number>;
+  recipientResetPerDay: number;
 }
 
 const HOUR_MS = 3_600_000;
@@ -31,14 +33,15 @@ export function poolOf(kind: MailTemplate["kind"], source: MailSource = "existin
 
 /** Switched off under NODE_ENV=test (like the HTTP limiter) unless a limit is set explicitly, so the suites that send many mails are unaffected. */
 export function mailBudgetLimits(config: { get<T = unknown>(key: string, fallback?: T): T | undefined }): MailBudgetLimits {
-  const keys = [...MAIL_POOLS.flatMap((pool) => Object.values(poolEnvKeys(pool))), ...ADDRESS_SCOPES.map(addressEnvKey)];
+  const keys = [...MAIL_POOLS.flatMap((pool) => Object.values(poolEnvKeys(pool))), ...ADDRESS_SCOPES.map(addressEnvKey), RECIPIENT_ENV_KEY];
   const explicit = keys.some((key) => config.get<number>(key) !== undefined);
   const pools = Object.fromEntries(MAIL_POOLS.map((pool) => {
     const k = poolEnvKeys(pool);
     return [pool, { hour: config.get<number>(k.hour, MAIL_POOL_DEFAULTS[pool].hour)!, day: config.get<number>(k.day, MAIL_POOL_DEFAULTS[pool].day)! }];
   })) as Record<MailPool, PoolLimit>;
   const addressPerDay = Object.fromEntries(ADDRESS_SCOPES.map((scope) => [scope, config.get<number>(addressEnvKey(scope), MAIL_ADDRESS_DEFAULTS[scope])!])) as Record<AddressScope, number>;
-  return { enabled: config.get<string>("NODE_ENV") !== "test" || explicit, pools, addressPerDay };
+  const recipientResetPerDay = config.get<number>(RECIPIENT_ENV_KEY, MAIL_RECIPIENT_RESET_PER_DAY_DEFAULT)!;
+  return { enabled: config.get<string>("NODE_ENV") !== "test" || explicit, pools, addressPerDay, recipientResetPerDay };
 }
 
 /**
@@ -56,6 +59,8 @@ export function mailBudgetLimits(config: { get<T = unknown>(key: string, fallbac
 export class MailBudget {
   private readonly logger = new Logger(MailBudget.name);
   private readonly limits: MailBudgetLimits;
+  /** Server secret for the recipient key, so a leaked store (Redis) does not give an offline guessing list for addresses. */
+  private readonly keySecret: string;
   private readonly warnedUntil = new Map<string, number>();
 
   constructor(
@@ -64,6 +69,7 @@ export class MailBudget {
     @Optional() private readonly metrics?: MetricsService
   ) {
     this.limits = mailBudgetLimits(config);
+    this.keySecret = config.get<string>("JWT_ACCESS_SECRET") ?? "";
   }
 
   /** True when this mail may be sent. Counts the attempt; a store failure never blocks mail (fail open, logged). */
@@ -110,6 +116,31 @@ export class MailBudget {
       return false;
     } catch (error) {
       this.logger.error(`mail address cap check failed (${error instanceof Error ? error.name : "unknown error"}); sending without it`);
+      return true;
+    }
+  }
+
+  /**
+   * Counts one reset or resend mail for this recipient (any requester) against its daily cap and says whether it may be sent. Call it only
+   * for an account that would really get mail, and keep the API answer identical either way: the cap then reveals nothing. The store key is a
+   * hash of the normalised address, never the address. Fails open like `allow`.
+   */
+  async allowRecipient(emailNormalized: string): Promise<boolean> {
+    if (!this.limits.enabled) return true;
+    const limit = this.limits.recipientResetPerDay;
+    try {
+      const digest = createHmac("sha256", this.keySecret).update(`mail-recipient:${emailNormalized}`).digest("hex").slice(0, 32);
+      const record = await this.storage.increment(`recipient:${digest}`, DAY_MS, limit, 0, "mailrecipient");
+      if (record.totalHits <= limit) return true;
+      this.metrics?.mailAddressCapped("recipient");
+      const now = Date.now();
+      if ((this.warnedUntil.get("recipient") ?? 0) <= now) {
+        this.warnedUntil.set("recipient", now + 60_000);
+        this.logger.warn(`a recipient reached its daily cap of ${limit} reset or resend mails; further ones to it are dropped until the window resets`);
+      }
+      return false;
+    } catch (error) {
+      this.logger.error(`mail recipient cap check failed (${error instanceof Error ? error.name : "unknown error"}); sending without it`);
       return true;
     }
   }

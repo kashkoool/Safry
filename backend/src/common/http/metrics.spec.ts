@@ -74,7 +74,7 @@ describe("mail pool metrics and process start time", () => {
     const m = new MetricsService();
     const zero = m.render({});
     for (const pool of ["registration", "reset", "security"]) expect(line(zero, `safry_mail_budget_exhausted_total{pool="${pool}"}`)).toBe(0);
-    for (const scope of ["registration", "reset"]) expect(line(zero, `safry_mail_address_capped_total{scope="${scope}"}`)).toBe(0);
+    for (const scope of ["registration", "reset", "recipient"]) expect(line(zero, `safry_mail_address_capped_total{scope="${scope}"}`)).toBe(0);
     m.mailBudgetExhausted("registration");
     m.mailBudgetExhausted("reset");
     m.mailBudgetExhausted("reset");

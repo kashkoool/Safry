@@ -74,6 +74,10 @@ esac
 if is_set SITE_ADDRESS && [ -n "$(get SITE_ADDRESS)" ] && [ "${tp:-1}" = "1" ]; then
   problem TRUST_PROXY "SITE_ADDRESS is set (tls profile): the API sits behind 2 proxies, set TRUST_PROXY=2"
 fi
+case "$(get CADDYFILE)" in
+  *Caddyfile.cloudflare*)
+    [ -n "$(get CLOUDFLARE_IP_RANGES)" ] || problem CLOUDFLARE_IP_RANGES "CADDYFILE is the Cloudflare file but no Cloudflare ranges are set: the real visitor address would never be believed (every visitor shares one rate-limit key)" ;;
+esac
 case "$(get WEB_BIND)" in
   ""|127.0.0.1|::1) ;;
   *)

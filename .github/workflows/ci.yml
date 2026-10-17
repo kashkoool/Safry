@@ -289,6 +289,18 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  caddyfile:
+    name: Cloudflare Caddyfile (adapt and assert)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Uses the digest-pinned Caddy image of docker-compose.yml; jq is preinstalled on the runner.
+      - name: Adapt Caddyfile.cloudflare and check the trusted-header route
+        run: sh scripts/check-caddyfile.sh
+
   secrets:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest

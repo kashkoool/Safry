@@ -120,6 +120,7 @@ export function assertMailConfig(config: Environment): void {
       throw new Error(`MAIL_BUDGET_${pool}_PER_HOUR must not exceed MAIL_BUDGET_${pool}_PER_DAY`);
   }
   for (const scope of ["REGISTRATION", "RESET"]) integerInRange(config, `MAIL_ADDRESS_${scope}_PER_DAY`, 1, 100_000);
+  integerInRange(config, "MAIL_RECIPIENT_RESET_PER_DAY", 1, 1000);
   const baseMs = config["MAIL_RETRY_BASE_MS"];
   if (baseMs !== undefined && (!Number.isInteger(Number(baseMs)) || Number(baseMs) > 30_000))
     throw new Error("MAIL_RETRY_BASE_MS must be an integer from 0 to 30000");
@@ -174,6 +175,10 @@ export function validateEnvironment(config: Environment): Environment {
   if (allowNonProduction === "true") assertLooseModeNotPublic(config);
   const productionGrade = isProductionLike(nodeEnv, allowNonProduction);
   if (productionGrade && config["DATABASE_ALLOW_PLAINTEXT"] !== "true") assertDatabaseTls(databaseUrl);
+  // The demo seed creates known accounts. Only its own one-off job may carry these settings; a running production or staging API that does
+  // has been given a local env file by mistake.
+  if (productionGrade && (config["ALLOW_DEMO_SEED_IN_PRODUCTION"] === "true" || (typeof config["DEMO_SEED_PASSWORD"] === "string" && config["DEMO_SEED_PASSWORD"] !== "")))
+    throw new Error("ALLOW_DEMO_SEED_IN_PRODUCTION=true and DEMO_SEED_PASSWORD must not be set in production or staging; they belong to the one-off demo seed job only");
   const jwtSecret = requiredSecret(config, "JWT_ACCESS_SECRET");
   // The TOTP seed key must not depend on the JWT secret: production needs a dedicated key.
   if (config["MFA_ENCRYPTION_KEY"] !== undefined || productionGrade) {

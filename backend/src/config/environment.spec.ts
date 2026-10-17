@@ -105,6 +105,7 @@ describe("validateEnvironment", () => {
       }
     for (const scope of ["REGISTRATION", "RESET"])
       for (const v of ["0", "-1", "x", "100001"]) expect(() => validateEnvironment({ ...valid, [`MAIL_ADDRESS_${scope}_PER_DAY`]: v })).toThrow(`MAIL_ADDRESS_${scope}_PER_DAY`);
+    for (const v of ["0", "-1", "x", "1001"]) expect(() => validateEnvironment({ ...valid, MAIL_RECIPIENT_RESET_PER_DAY: v })).toThrow("MAIL_RECIPIENT_RESET_PER_DAY");
     // hourly above the daily limit of the same pool, set or defaulted
     expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_RESET_PER_HOUR: "200" })).toThrow("MAIL_BUDGET_RESET_PER_HOUR must not exceed MAIL_BUDGET_RESET_PER_DAY");
     expect(() => validateEnvironment({ ...valid, MAIL_BUDGET_REGISTRATION_PER_DAY: "5" })).toThrow("MAIL_BUDGET_REGISTRATION_PER_HOUR must not exceed");
@@ -131,6 +132,17 @@ describe("staging gets production-grade defaults unless it explicitly opts out",
     expect(() => validateEnvironment({ ...valid, ...stagingMail, NODE_ENV: "staging" })).toThrow("MFA_ENCRYPTION_KEY is required");
     expect(() => validateEnvironment({ ...valid, ...mfaKey, ...stagingMail, NODE_ENV: "staging", DATABASE_URL: "postgresql://u:p@db.example.com:5432/safry" })).toThrow("sslmode");
     expect(() => validateEnvironment({ ...valid, ...mfaKey, ...stagingMail, NODE_ENV: "staging" })).not.toThrow();
+  });
+
+  it("refuses the demo-seed settings on a production or staging API, but allows them in development and in loose staging", () => {
+    const prod = { ...valid, ...mfaKey, ...stagingMail, NODE_ENV: "production" };
+    expect(() => validateEnvironment(prod)).not.toThrow();
+    expect(() => validateEnvironment({ ...prod, ALLOW_DEMO_SEED_IN_PRODUCTION: "true" })).toThrow("demo seed");
+    expect(() => validateEnvironment({ ...prod, DEMO_SEED_PASSWORD: "Some-Demo-Password-12" })).toThrow("demo seed");
+    expect(() => validateEnvironment({ ...prod, NODE_ENV: "staging", ALLOW_DEMO_SEED_IN_PRODUCTION: "true" })).toThrow("demo seed");
+    expect(() => validateEnvironment({ ...prod, ALLOW_DEMO_SEED_IN_PRODUCTION: "false", DEMO_SEED_PASSWORD: "" })).not.toThrow();
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "development", ALLOW_DEMO_SEED_IN_PRODUCTION: "true", DEMO_SEED_PASSWORD: "Some-Demo-Password-12" })).not.toThrow();
+    expect(() => validateEnvironment({ ...valid, NODE_ENV: "staging", MAIL_TRANSPORT: "console", ALLOW_NON_PRODUCTION_DEFAULTS: "true", DEMO_SEED_PASSWORD: "Some-Demo-Password-12" })).not.toThrow();
   });
 
   it("allows development defaults on staging only with the explicit opt-in, and never in production", () => {
