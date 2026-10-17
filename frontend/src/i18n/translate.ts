@@ -51,10 +51,10 @@ export function translateText(value: string, language: Language): string {
 }
 function translate(value: string, language: Language): string {
   const normalized = value.trim().replace(/\s+/g, " ");
-  if (Object.hasOwn(systemText, normalized)) return systemText[normalized][language === "ar" ? 0 : 1];
+  if (Object.hasOwn(systemText, normalized)) return systemText[normalized]?.[language === "ar" ? 0 : 1] ?? normalized;
   if (normalized.includes("، ") && !messages[normalized]) return normalized.split("، ").map(part => translateText(part, language)).join(language === "ar" ? "، " : ", ");
   if (/^[\w.]+ (must |should |each value |has failed )/.test(normalized)) {
-    const field = normalized.split(" ")[0];
+    const field = normalized.split(" ")[0] ?? "";
     const fields: Record<string, string> = { nameAr: "اسم الشركة بالعربية", nameEn: "اسم الشركة بالإنجليزية", organizationName: "اسم الشركة بالعربية", organizationNameEn: "اسم الشركة بالإنجليزية", email: "البريد الإلكتروني", password: "كلمة المرور", displayName: "الاسم الكامل", tenantCode: "رمز الجهة", city: "المدينة", phone: "الهاتف", title: "اسم العرض", description: "الوصف" };
     const label = fields[field] ?? field;
     const minimum = normalized.match(/longer than or equal to (\d+) characters/);
