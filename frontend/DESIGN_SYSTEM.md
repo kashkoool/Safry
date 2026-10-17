@@ -39,4 +39,4 @@ User-authored names/descriptions without an English version remain as entered. T
 
 ## Release boundary
 
-This design improves UI readiness, not full commercial readiness of the platform. Payment, legal content, verified provider onboarding, email verification/recovery, production deployment/security, load testing, and unsupported booking integrations still require their own implementation and acceptance checks. Existing demo accounts are development-only.
+This design improves UI readiness, not full commercial readiness of the platform. Payment, legal content, verified provider onboarding, production deployment/security, load testing, and unsupported booking integrations still require their own implementation and acceptance checks. Existing demo accounts are development-only.

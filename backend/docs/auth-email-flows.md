@@ -18,8 +18,8 @@ well-formed body.
 
 ## Status
 
-The frontend pages for `/reset-password` and `/verify-email` (the token travels in the URL fragment) and the resend action are
-delivered in a separate frontend pull request. Until it lands, the emailed links have no page to open.
+The frontend pages for `/reset-password` and `/verify-email` (the token travels in the URL fragment) and the resend action exist
+in the web app (routes in `frontend/src/App.tsx`), so the emailed links open a page.
 
 ## Links and tokens
 
