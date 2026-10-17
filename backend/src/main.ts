@@ -1,14 +1,16 @@
-import { ConsoleLogger } from "@nestjs/common";
+import { ConsoleLogger, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module.js";
 import { configureApp } from "./app.setup.js";
+import { installProcessHandlers } from "./process-handlers.js";
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, {
     logger: new ConsoleLogger({ json: true, colors: false })
   });
   configureApp(app);
+  installProcessHandlers({ target: process, log: (message) => new Logger("process").error(message), shutdown: () => app.close(), exit: (code) => process.exit(code) });
   const config = app.get(ConfigService);
   await app.listen(config.get<number>("PORT", 3000));
   // Slow-client protection and keep-alive that outlives a typical 60 s load-balancer idle timeout.

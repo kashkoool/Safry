@@ -65,6 +65,6 @@ describe("MetricsService event counters", () => {
     m.loginFailure("bad_credentials");
     const text = m.render({});
     const labelled = text.split("\n").filter((l) => /^safry_(login|mail|readiness|rate_limited)/.test(l));
-    for (const l of labelled) expect(l).toMatch(/\{(reason|outcome|group)="[a-z_]+"\} \d+$/);
+    for (const l of labelled) expect(l).toMatch(/\{(reason|outcome|group|pool)="[a-z_]+"\} \d+$/);
   });
 });

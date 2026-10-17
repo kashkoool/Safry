@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth/auth-context";
 import { LoadingScreen } from "./components/LoadingScreen";
 import { LoginPage } from "./pages/LoginPage";
+import { NotFoundPage } from "./pages/NotFoundPage";
 import { getLoginPortal } from "./lib/api";
 
 // Only the sign-in screen is in the entry bundle; every other page is fetched when its route is first opened.
@@ -71,7 +72,7 @@ export function App() {
       <Route path="/account" element={<Navigate to="/account/profile" replace />} />
       <Route path="/account/:section" element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
       <Route path="/" element={<Navigate to="/workspace/overview" replace />} />
-      <Route path="*" element={<Navigate to="/workspace/overview" replace />} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
     </Suspense>
   );

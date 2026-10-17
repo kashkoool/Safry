@@ -148,3 +148,21 @@ describe("createThrottlerStorage without Redis", () => {
     expect(logged("staging", { ALLOW_NON_PRODUCTION_DEFAULTS: "true" })).toEqual([]);
   });
 });
+
+describe("client address grouping for rate-limit keys", () => {
+  const key = (ip: string): string => accountTracker({ body: { email: "a@example.test" }, ip } as never);
+  it("groups every address of one IPv6 /64 into one key", () => {
+    expect(key("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).toBe(key("2001:db8:1:2:1::9"));
+    expect(key("2001:db8:1:2::1")).not.toBe(key("2001:db8:1:3::1"));
+  });
+  it("treats an IPv4-mapped IPv6 address as the plain IPv4 address", () => {
+    expect(key("::ffff:198.51.100.7")).toBe(key("198.51.100.7"));
+  });
+  it("leaves IPv4 behaviour unchanged", () => {
+    expect(key("198.51.100.7")).toBe("a@example.test|198.51.100.7");
+    expect(key("198.51.100.7")).not.toBe(key("198.51.100.8"));
+  });
+  it("keeps an unknown address distinct from an empty one", () => {
+    expect(accountTracker({ body: { email: "a@example.test" } } as never)).toBe("a@example.test|");
+  });
+});
