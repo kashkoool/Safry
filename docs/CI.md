@@ -21,7 +21,7 @@ inline expansion. The queued merge still waits for the required checks on `main`
 | `codeql.yml` | Analyze (javascript-typescript) | PR, push, weekly | no | CodeQL static analysis |
 | `dependency-review.yml` | dependency-review | PR | no | Fails on newly introduced high-severity dependency advisories |
 | `docker-size-budget.yml` | Docker image-size budget | PR touching image inputs, push | no | Fails when an image grows past its size cap |
-| `prisma-migrate-status.yml` | prisma-migrate-status | PR touching Prisma files, push, manual | no | Applies all migrations to a fresh database and fails on schema drift |
+| `prisma-migrate-status.yml` | prisma-migrate-status | every PR, push touching Prisma files, manual | no | Applies all migrations to a fresh database and fails on schema drift |
 | `no-ai-attribution.yml` | No AI attribution | PR | no | Blocks AI co-author trailers and footers in commits and PR text |
 | `fuzz.yml` | Property-based fuzzing | PRs touching `backend/src/common`, `backend/src/config` or `backend/src/modules/mail`; weekly | no | fast-check property tests (`backend/src/common/fuzz.spec.ts`) over cursor decoding, money arithmetic, base32/TOTP, mail rendering and environment validation, 20000 cases per property; the same file runs with 300 cases in the normal unit suite |
 | `dast.yml` | DAST (ZAP baseline) | PRs touching nginx/headers/auth code; weekly; manual | no | OWASP ZAP baseline (passive) against a throwaway stack built in the job; fails on any Medium or higher alert; report uploaded as an artifact |
