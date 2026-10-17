@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException, HttpException, NotFoundException } from "@nestjs/common";
+import { ServiceBusyException } from "./service-busy.exception.js";
 
 interface DatabaseError {
   name?: unknown;
@@ -19,11 +20,26 @@ export function isUniqueViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
+// Prisma: P2024 pool wait timeout, P2028 transaction could not start / timed out, P2037 too many connections, P1008 operation timed out.
+const OVERLOAD_PRISMA_CODES = new Set(["P2024", "P2028", "P2037", "P1008"]);
+// PostgreSQL: 53300 too_many_connections, 57P03 cannot_connect_now (starting up / shutting down).
+const OVERLOAD_PG_CODES = new Set(["53300", "57P03"]);
+// node-postgres pool errors that carry no code.
+const POOL_EXHAUSTED = /^(timeout exceeded when trying to connect|sorry, too many clients already)$/i;
+
+function isOverload(error: DatabaseError, text: string): boolean {
+  const { name, code } = error;
+  if (name === "PrismaClientKnownRequestError" && typeof code === "string") return OVERLOAD_PRISMA_CODES.has(code);
+  if (typeof code === "string" && OVERLOAD_PG_CODES.has(code) && (error as { severity?: unknown }).severity !== undefined) return true;
+  return POOL_EXHAUSTED.test(text.trim());
+}
+
 export function mapDatabaseError(error: unknown): HttpException | undefined {
   if (typeof error !== "object" || error === null) return undefined;
   const { name, code, message } = error as DatabaseError;
   const text = typeof message === "string" ? message : "";
   if (RLS_VIOLATION.test(text)) return new ForbiddenException("Access denied by the tenant isolation policy");
+  if (isOverload(error as DatabaseError, text)) return new ServiceBusyException();
   if (name !== "PrismaClientKnownRequestError" || typeof code !== "string") return undefined;
   switch (code) {
     case "P2002":

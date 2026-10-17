@@ -2,6 +2,7 @@ import { ArgumentsHost, Catch, HttpException, HttpStatus, Logger, type Exception
 import type { Request, Response } from "express";
 import { requestContext } from "../context/request-context.js";
 import { mapDatabaseError } from "./database-errors.js";
+import { ServiceBusyException } from "./service-busy.exception.js";
 
 /** body-parser (Express) reports oversized or malformed bodies as plain errors with a 4xx status and `expose: true`; keep them 4xx. */
 function mapParserError(raised: unknown): HttpException | undefined {
@@ -73,6 +74,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // Stable machine code (letters, digits, underscore) when the exception carries one, e.g. mfa_enrollment_required or BOOKING_EXPIRED.
     const rawCode = typeof exceptionBody === "object" && exceptionBody && "code" in exceptionBody ? exceptionBody.code : undefined;
     const code = typeof rawCode === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(rawCode) ? rawCode : undefined;
+    if (exception instanceof ServiceBusyException) response.setHeader("Retry-After", String(exception.retryAfterSeconds));
     response.status(status).json({
       statusCode: status,
       message,

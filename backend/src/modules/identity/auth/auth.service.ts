@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { hashPassword, verifyPassword } from "../../../common/security/password.js";
+import { enterSignIn, hashPassword, verifyPassword } from "../../../common/security/password.js";
 import { requestContext, runAsSystem } from "../../../common/context/request-context.js";
 import type { AuthUser } from "../../../common/security/auth-user.js";
 import type { Prisma } from "../../../generated/prisma/client.js";
@@ -84,8 +84,14 @@ export class AuthService {
   }
 
   /** User Login (with throttling and an optional MFA challenge). */
-  login(input: LoginDto, metadata: ClientMetadata): Promise<LoginResult> {
-    return runAsSystem(() => this.authenticate(input, metadata));
+  async login(input: LoginDto, metadata: ClientMetadata): Promise<LoginResult> {
+    // Refused with 503 before any database work when the sign-in capacity is used up (see enterSignIn).
+    const leave = enterSignIn();
+    try {
+      return await runAsSystem(() => this.authenticate(input, metadata));
+    } finally {
+      leave();
+    }
   }
 
   /**
