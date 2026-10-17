@@ -148,7 +148,9 @@ const logins = latencies.filter(([, , kind]) => kind === "login");
 const statusCounts = {};
 for (const [, , , status] of latencies) statusCounts[status] = (statusCounts[status] ?? 0) + 1;
 const stats = summarize(steady.map(([, ms]) => [ms]));
-const badSteady = steady.filter(([, , , status]) => status === 0 || status >= 400 && status !== 429).length;
+// Errors count every request after sign-in, ramp-up included: a sign-in wave that breaks other users' reads must show up.
+const afterLogin = latencies.filter(([, , kind]) => kind !== "login");
+const badSteady = afterLogin.filter(([, , , status]) => status === 0 || (status >= 400 && status !== 429)).length;
 const count429 = latencies.filter(([, , , status]) => status === 429).length;
 const loginsOk = logins.filter(([, , , status]) => status === 200).length;
 const p95Of = (rows) => summarize(rows.map(([, ms]) => [ms])).p95;
@@ -159,8 +161,8 @@ const rss = perMinute.map((m) => m.rssMb).filter((v) => v != null);
 const row = {
   scenario: label, connections: users, users, thinkMs, rampSeconds, seconds, rps: Number((steady.length / Math.max(1, seconds)).toFixed(1)),
   p50: stats.p50, p95: stats.p95, p99: stats.p99, max: Math.round(Math.max(0, ...steady.map(([, ms]) => ms))),
-  total: steady.length, errors: badSteady, timeouts: 0, non2xx: badSteady, badResponses: badSteady, count429, count5xx: latencies.filter(([, , , s]) => s >= 500).length,
-  errorRatePct: Number(((badSteady / Math.max(1, steady.length)) * 100).toFixed(3)),
+  total: afterLogin.length, errors: badSteady, timeouts: 0, non2xx: badSteady, badResponses: badSteady, count429, count5xx: latencies.filter(([, , , s]) => s >= 500).length,
+  errorRatePct: Number(((badSteady / Math.max(1, afterLogin.length)) * 100).toFixed(3)),
   loginsOk, loginsTried: logins.length, loginP95: summarize(logins.map(([, ms]) => [ms])).p95,
   byAction: Object.fromEntries(MIX.map(([kind]) => [kind, summarize(steady.filter(([, , k]) => k === kind).map(([, ms]) => [ms]))])),
   statusCounts, p95DriftRatio: drift === null ? null : Number(drift.toFixed(2)),
