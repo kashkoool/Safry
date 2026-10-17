@@ -28,8 +28,10 @@ export function isUniqueViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
-// Prisma: P2024 pool wait timeout, P2028 transaction could not start / timed out, P2037 too many connections, P1008 operation timed out.
-const OVERLOAD_PRISMA_CODES = new Set(["P2024", "P2028", "P2037", "P1008"]);
+// Prisma: P2024 pool wait timeout, P2037 too many connections, P1008 operation timed out. P2028 only for its "could not start in time" cause (below).
+const OVERLOAD_PRISMA_CODES = new Set(["P2024", "P2037", "P1008"]);
+// P2028 is a general transaction error; an already-closed transaction is not cured by waiting, so only the pool-wait cause is retryable.
+const TRANSACTION_START_TIMEOUT = /unable to start a transaction in the given time/i;
 // PostgreSQL: 53300 too_many_connections, 57P03 cannot_connect_now (starting up / shutting down).
 const OVERLOAD_PG_CODES = new Set(["53300", "57P03"]);
 // node-postgres pool errors that carry no code.
@@ -37,7 +39,7 @@ const POOL_EXHAUSTED = /^(timeout exceeded when trying to connect|sorry, too man
 
 function isOverload(error: DatabaseError, text: string): boolean {
   const { name, code } = error;
-  if (name === "PrismaClientKnownRequestError" && typeof code === "string") return OVERLOAD_PRISMA_CODES.has(code);
+  if (name === "PrismaClientKnownRequestError" && typeof code === "string") return OVERLOAD_PRISMA_CODES.has(code) || (code === "P2028" && TRANSACTION_START_TIMEOUT.test(text));
   if (typeof code === "string" && OVERLOAD_PG_CODES.has(code) && (error as { severity?: unknown }).severity !== undefined) return true;
   return POOL_EXHAUSTED.test(text.trim());
 }

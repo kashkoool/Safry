@@ -20,6 +20,15 @@ const intFromEnv = (name: string, fallback: number): number => {
 const HASH_CONCURRENCY = intFromEnv("HASH_CONCURRENCY", 4);
 const HASH_QUEUE = intFromEnv("HASH_QUEUE", 64);
 const hashGate = new ConcurrencyGate(HASH_CONCURRENCY, HASH_QUEUE);
+// The database work before the hash (user lookup, throttle transaction) of admitted sign-ins runs through this small gate, so a wave
+// can never take more than a few pooled connections at once and unrelated requests keep the rest. Waiters hold no connection.
+const preHashGate = new ConcurrencyGate(intFromEnv("SIGNIN_DB_CONCURRENCY", 3), HASH_CONCURRENCY + HASH_QUEUE);
+
+/** Runs the pre-hash database work of a sign-in with bounded concurrency (queued, never refused: callers are already admitted). */
+export function runPreHash<T>(task: () => Promise<T>): Promise<T> {
+  return preHashGate.run(task);
+}
+
 const signInsInFlight = new InFlightLimit(HASH_CONCURRENCY + HASH_QUEUE);
 
 /**

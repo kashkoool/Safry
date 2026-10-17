@@ -120,7 +120,7 @@ describe("AllExceptionsFilter overload answers", () => {
 
   it("answers 503 with Retry-After for a pool-wait timeout and shows no database detail", () => {
     vi.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
-    const raised = { name: "PrismaClientKnownRequestError", code: "P2028", message: "Transaction API error: SELECT secret_table" };
+    const raised = { name: "PrismaClientKnownRequestError", code: "P2028", message: "Transaction API error: Unable to start a transaction in the given time. SELECT secret_table" };
     const { status, headers, body } = runWithHeaders(raised);
     expect(status).toBe(503);
     expect(Number(headers["Retry-After"])).toBeGreaterThan(0);

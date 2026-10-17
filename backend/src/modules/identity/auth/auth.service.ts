@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { enterSignIn, hashPassword, verifyPassword } from "../../../common/security/password.js";
+import { enterSignIn, hashPassword, runPreHash, verifyPassword } from "../../../common/security/password.js";
 import { requestContext, runAsSystem } from "../../../common/context/request-context.js";
 import type { AuthUser } from "../../../common/security/auth-user.js";
 import type { Prisma } from "../../../generated/prisma/client.js";
@@ -101,16 +101,19 @@ export class AuthService {
   private async authenticate(input: LoginDto, metadata: ClientMetadata): Promise<LoginResult> {
     const emailNormalized = input.email.trim().toLowerCase();
     const tenantCode = input.tenantCode.trim().toLowerCase();
-    const user = await this.prisma.user.findUnique({
-      where: { emailNormalized },
-      include: {
-        memberships: {
-          where: { tenant: { code: tenantCode, status: "ACTIVE" }, status: "ACTIVE" },
-          include: membershipInclude
+    const { user, attempt } = await runPreHash(async () => {
+      const found = await this.prisma.user.findUnique({
+        where: { emailNormalized },
+        include: {
+          memberships: {
+            where: { tenant: { code: tenantCode, status: "ACTIVE" }, status: "ACTIVE" },
+            include: membershipInclude
+          }
         }
-      }
+      });
+      const began = await this.security.begin(emailNormalized, metadata.ipAddress);
+      return { user: found, attempt: began };
     });
-    const attempt = await this.security.begin(emailNormalized, metadata.ipAddress);
     this.dummyHash ??= hashPassword(randomBytes(16).toString("hex"));
     const checked = await verifyPassword(user && attempt.allowed ? user.passwordHash : await this.dummyHash, input.password);
     const passwordValid = Boolean(user) && attempt.allowed && checked;

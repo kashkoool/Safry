@@ -42,12 +42,20 @@ describe("mapDatabaseError", () => {
 });
 
 describe("mapDatabaseError under overload", () => {
-  it.each(["P2024", "P2028", "P2037", "P1008"])("maps Prisma %s (pool wait, transaction wait, too many connections, timeout) to a retryable 503", (code) => {
+  it.each(["P2024", "P2037", "P1008"])("maps Prisma %s (pool wait, too many connections, timeout) to a retryable 503", (code) => {
     const mapped = mapDatabaseError(prismaError(code));
     expect(mapped).toBeInstanceOf(ServiceBusyException);
     expect(mapped).toBeInstanceOf(ServiceUnavailableException);
     expect((mapped as ServiceBusyException).retryAfterSeconds).toBeGreaterThan(0);
     expect(mapped?.message).not.toContain(code);
+  });
+
+  it("maps P2028 to 503 only when the transaction could not start in time (pool wait), not when it was already closed", () => {
+    const waited = { name: "PrismaClientKnownRequestError", code: "P2028", message: "Transaction API error: Unable to start a transaction in the given time." };
+    const closed = { name: "PrismaClientKnownRequestError", code: "P2028", message: "Transaction API error: Transaction already closed: A commit cannot be executed on an expired transaction." };
+    expect(mapDatabaseError(waited)).toBeInstanceOf(ServiceBusyException);
+    expect(mapDatabaseError(closed)).toBeUndefined();
+    expect(mapDatabaseError(prismaError("P2028"))).toBeUndefined();
   });
 
   it("maps PostgreSQL too_many_connections and cannot_connect_now to 503 and never echoes driver text", () => {
