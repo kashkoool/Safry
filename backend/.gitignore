@@ -6,3 +6,4 @@ src/generated/prisma/
 *.log
 backups/
 test/.coverage/
+.local-pg/
