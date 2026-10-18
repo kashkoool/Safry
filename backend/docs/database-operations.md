@@ -78,6 +78,16 @@ default 30. A missing or unknown token, an already used (rotated or revoked) tok
   Expression indexes (for example the case-insensitive organization name) are not representable in
   `schema.prisma` and are not compared by that command.
 
+### Row-level security on `users`
+
+`users` is global (no tenant column). Migration `20261018_authz_users_row_level_security` puts forced row-level security on it:
+
+- A tenant session sees and updates only identities that hold a membership in its tenant, and can never delete one.
+- A tenant session may change only `displayName`, `phone` and `locale` of a member (trigger allow-list); e-mail, password hash, MFA state, status and `authVersion` change only in the system scope (login, password reset, MFA, platform administration).
+- Staff creation and invitations look an identity up by e-mail and create one before a membership exists. They do it inside `withIdentityLookup` (`src/database/identity-access.ts`), which raises the transaction-local flag `app.identity_system` for SELECT and INSERT on `users` only.
+- Operator scripts that run as a non-superuser owner need the system scope (`withRlsBypass`), as for every other forced table.
+- **Rolling out**: an image built before this change cannot create staff or invite from a tenant session once the migration is applied (the lookup is hidden). Roll the migration and the new image out together.
+
 ### Money columns (bigint minor units)
 
 `travel_services.priceCents`, `bookings.unitPriceCents` and `bookings.totalCents` are PostgreSQL `bigint` (migration
