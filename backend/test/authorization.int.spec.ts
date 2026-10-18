@@ -434,6 +434,8 @@ describe("authorization", () => {
       try {
         await client.connect();
         expect((await client.query("SELECT current_user AS u")).rows[0]?.u).toBe(login);
+        // users is under row-level security: the login only reaches the rows of its tenant, so give it the tenant of the target.
+        await client.query("SELECT set_config('app.tenant_id', $1, false)", [a.id]);
         await expect(client.query(`UPDATE users SET "isPlatformAdmin" = true WHERE id = $1`, [adminA.userId]))
           .rejects.toThrow(/only be changed by the platform/);
       } finally {
