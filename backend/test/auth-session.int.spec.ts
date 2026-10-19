@@ -25,6 +25,25 @@ describe("auth sessions", () => {
     await world.stop();
   });
 
+  describe("routine rotation", () => {
+    it("writes no audit row per refresh, but keeps sign-in, sign-out and reuse rows", async () => {
+      const user = await world.createUser(tenant, { roles: ["traveler"] });
+      let session = await world.session(user);
+      for (let i = 0; i < 5; i += 1) {
+        const rotated = await refresh(session.refreshToken);
+        expect(rotated.status).toBe(200);
+        session = rotated.body as Session;
+      }
+      // Five rotations made five new session rows, and not one audit row.
+      expect(Number((await world.sql.query(`SELECT count(*) FROM refresh_sessions WHERE "userId" = $1`, [user.userId])).rows[0].count)).toBe(6);
+      const before = await actions(user.userId);
+      expect(before).not.toContain("identity.session.refresh");
+      expect(before.filter((action) => action === "identity.login")).toHaveLength(1);
+      await world.api("POST", "/auth/logout", { body: { refreshToken: session.refreshToken } });
+      expect(await actions(user.userId)).toContain("identity.logout");
+    });
+  });
+
   describe("refresh-token reuse detection", () => {
     it("revokes the whole session family when a rotated refresh token is presented again", async () => {
       const user = await world.createUser(tenant, { roles: ["traveler"] });
