@@ -415,6 +415,15 @@ model LoginThrottle {
   @@map("login_throttles")
 }
 
+/// Heartbeat of the scheduled maintenance job (backend/scripts/db/purge.sh): written by the owner role, read by the API for its metrics.
+model MaintenanceRun {
+  job           String   @id @db.VarChar(60)
+  lastSuccessAt DateTime @db.Timestamptz(3)
+  details       Json     @default("{}")
+
+  @@map("maintenance_runs")
+}
+
 /// Single-use links mailed to an identity (password reset, e-mail verification). Only the SHA-256 of the 32-byte token is stored.
 /// Identity-level (an identity spans tenants), so there is no tenant column: row-level security allows only the explicit system scope.
 model CredentialToken {

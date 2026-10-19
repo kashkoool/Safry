@@ -10,19 +10,27 @@ import { pathToFileURL } from "node:url";
 import pg from "pg";
 
 export function purgeStatements(env: Record<string, string | undefined>): string[] {
-  const integer = (name: string, fallback: string): string => {
+  const integer = (name: string, fallback: string, min: number, max: number): string => {
     const value = env[name] || fallback;
     if (!/^\d+$/.test(value)) throw new Error(`${name} must be an integer`);
+    if (Number(value) < min || Number(value) > max) throw new Error(`${name} must be from ${min} to ${max}`);
     return value;
   };
-  const sessions = integer("SESSION_RETENTION_DAYS", "30");
-  const ahead = integer("AUDIT_PARTITIONS_AHEAD", "6");
-  const audit = env["AUDIT_RETENTION_DAYS"] ? `${integer("AUDIT_RETENTION_DAYS", "")} days` : "24 months";
+  const sessions = integer("SESSION_RETENTION_DAYS", "30", 1, 3650);
+  const tokens = integer("CREDENTIAL_TOKEN_RETENTION_DAYS", "7", 1, 3650);
+  const throttles = integer("LOGIN_THROTTLE_RETENTION_HOURS", "24", 1, 720);
+  const pending = integer("BOOKING_PENDING_TTL_HOURS", "48", 1, 720);
+  const ahead = integer("AUDIT_PARTITIONS_AHEAD", "6", 1, 60);
+  const batch = integer("PURGE_BATCH_SIZE", "5000", 100, 100_000);
+  const audit = env["AUDIT_RETENTION_DAYS"] ? `${integer("AUDIT_RETENTION_DAYS", "", 30, 3650)} days` : "24 months";
   return [
     `CALL ensure_audit_event_partitions(0, ${ahead})`,
-    `CALL purge_refresh_sessions(interval '${sessions} days')`,
-    "CALL purge_credential_tokens(interval '7 days')",
-    `CALL purge_audit_events(interval '${audit}')`
+    `CALL purge_refresh_sessions(interval '${sessions} days', ${batch})`,
+    `CALL purge_credential_tokens(interval '${tokens} days', ${batch})`,
+    `CALL purge_login_throttles(interval '${throttles} hours', ${batch})`,
+    `CALL sweep_expired_bookings(interval '${pending} hours', ${batch})`,
+    `CALL purge_audit_events(interval '${audit}', ${batch})`,
+    "CALL record_maintenance_run('purge')"
   ];
 }
 

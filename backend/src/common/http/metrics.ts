@@ -137,6 +137,52 @@ export class MetricsController {
     return { safry_platform_admin_mfa_resets_24h: this.mfaResets.value };
   }
 
+  private maintenance: { at: number; values: Record<string, number> } = { at: 0, values: {} };
+
+  /**
+   * Storage-health gauges read from the database (cached 2 minutes, one short read-only transaction, 3 s statement cap):
+   *   safry_maintenance_last_success_timestamp_seconds  heartbeat of the retention job (maintenance_runs; a baseline row is written by the migration)
+   *   safry_audit_default_partition_rows               rows in audit_events_default: > 0 means partitions were not created ahead
+   *   safry_refresh_sessions_overdue                   1 when a refresh session is older than its retention plus 3 days (the job is not purging)
+   *   safry_table_dead_tuples / safry_table_live_tuples{table}   from pg_stat_user_tables, for the tables that churn
+   * On a database error the series are omitted (readiness alerts cover the outage; a stale-job alert must not fire on a guess).
+   */
+  private async storageSignals(): Promise<Record<string, number>> {
+    const now = Date.now();
+    if (now - this.maintenance.at < 120_000) return this.maintenance.values;
+    try {
+      const retentionMs = Number(this.config.get<number>("SESSION_RETENTION_DAYS", 30)) * 86_400_000;
+      const overdueBefore = new Date(now - retentionMs - 3 * 86_400_000);
+      const values = await runAsSystem(() =>
+        this.prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SET LOCAL statement_timeout = 3000`;
+          const beat = await tx.maintenanceRun.findUnique({ where: { job: "purge" } });
+          const defaultRows = (await tx.$queryRaw<{ rows: bigint }[]>`SELECT audit_default_partition_rows() AS rows`)[0]?.rows ?? 0n;
+          const overdue = (await tx.$queryRaw<{ overdue: boolean }[]>`
+            SELECT EXISTS (SELECT 1 FROM "refresh_sessions" WHERE "expiresAt" < ${overdueBefore} OR "revokedAt" < ${overdueBefore}) AS overdue`)[0]?.overdue ?? false;
+          const stats = await tx.$queryRaw<{ relname: string; live: bigint; dead: bigint }[]>`
+            SELECT relname, n_live_tup AS live, n_dead_tup AS dead FROM pg_stat_user_tables
+            WHERE schemaname = 'public' AND relname IN ('refresh_sessions', 'credential_tokens', 'login_throttles', 'bookings')`;
+          const out: Record<string, number> = {
+            safry_maintenance_last_success_timestamp_seconds: beat ? Math.floor(beat.lastSuccessAt.getTime() / 1000) : 0,
+            safry_audit_default_partition_rows: Number(defaultRows),
+            safry_refresh_sessions_overdue: overdue ? 1 : 0
+          };
+          for (const row of stats) {
+            out[`safry_table_live_tuples{table="${row.relname}"}`] = Number(row.live);
+            out[`safry_table_dead_tuples{table="${row.relname}"}`] = Number(row.dead);
+          }
+          return out;
+        })
+      );
+      this.maintenance = { at: now, values };
+      return values;
+    } catch {
+      this.maintenance = { at: now, values: {} };
+      return {};
+    }
+  }
+
   /** Prometheus 3 refuses a scrape whose Content-Type is not the text exposition format (a bare string would be sent as text/html). */
   @Get()
   @Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
@@ -154,7 +200,8 @@ export class MetricsController {
       safry_auth_cache_invalidations_total: cache.invalidations,
       safry_rate_limit_degraded: rateLimitState.degraded ? 1 : 0,
       safry_rate_limit_fallback_total: rateLimitState.fallbackTotal,
-      ...(await this.recentMfaResets())
+      ...(await this.recentMfaResets()),
+      ...(await this.storageSignals())
     });
   }
 }

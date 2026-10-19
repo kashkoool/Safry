@@ -284,7 +284,7 @@ export class AccountSecurityService {
   private async prune(now: Date): Promise<void> {
     if (now.getTime() - this.lastPrune < PRUNE_EVERY_MS) return;
     this.lastPrune = now.getTime();
-    const cutoff = new Date(now.getTime() - PRUNE_AFTER_MS);
+    const cutoff = new Date(now.getTime() - this.config.get<number>("LOGIN_THROTTLE_RETENTION_HOURS", PRUNE_AFTER_MS / 3_600_000) * 3_600_000);
     await this.prisma.loginThrottle
       .deleteMany({
         where: {

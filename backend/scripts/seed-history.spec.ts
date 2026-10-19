@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { assertSafeTarget, parseArgs, prng, uid } from "./seed-history.js";
 import { purgeStatements } from "./db/run-purge.js";
@@ -37,15 +39,26 @@ describe("history seed determinism", () => {
 });
 
 describe("maintenance helpers", () => {
-  it("builds the same four calls as purge.sh and rejects non-numbers", () => {
+  it("builds the same calls as purge.sh and rejects non-numbers and out-of-range values", () => {
     expect(purgeStatements({})).toEqual([
       "CALL ensure_audit_event_partitions(0, 6)",
-      "CALL purge_refresh_sessions(interval '30 days')",
-      "CALL purge_credential_tokens(interval '7 days')",
-      "CALL purge_audit_events(interval '24 months')"
+      "CALL purge_refresh_sessions(interval '30 days', 5000)",
+      "CALL purge_credential_tokens(interval '7 days', 5000)",
+      "CALL purge_login_throttles(interval '24 hours', 5000)",
+      "CALL sweep_expired_bookings(interval '48 hours', 5000)",
+      "CALL purge_audit_events(interval '24 months', 5000)",
+      "CALL record_maintenance_run('purge')"
     ]);
-    expect(purgeStatements({ AUDIT_RETENTION_DAYS: "90" })[3]).toContain("90 days");
+    expect(purgeStatements({ AUDIT_RETENTION_DAYS: "90" })[5]).toContain("90 days");
     expect(() => purgeStatements({ SESSION_RETENTION_DAYS: "1; DROP TABLE users" })).toThrow(/integer/);
+    expect(() => purgeStatements({ AUDIT_RETENTION_DAYS: "5" })).toThrow(/from 30 to 3650/);
+    expect(() => purgeStatements({ PURGE_BATCH_SIZE: "1" })).toThrow(/from 100 to 100000/);
+  });
+  it("purge.sh runs the same procedures in the same order as the Node helper", () => {
+    const script = readFileSync(resolve(import.meta.dirname, "db/purge.sh"), "utf8");
+    const fromScript = [...script.matchAll(/-c "CALL (\w+)\(/g)].map((match) => match[1]);
+    const fromHelper = purgeStatements({}).map((sql) => /^CALL (\w+)\(/.exec(sql)![1]);
+    expect(fromScript).toEqual(fromHelper);
   });
   it("formats sizes", () => {
     expect(formatBytes(512)).toBe("512 B");

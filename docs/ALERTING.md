@@ -28,6 +28,11 @@ Counters added for alerting (labels are fixed words, never an e-mail, address, u
 | `safry_mail_delivery_total{outcome}` | Detached mails (password reset, verification) that ended `sent` or `failed`. |
 | `safry_mail_budget_exhausted_total{pool}` | Mails dropped because a mail pool was spent: `registration` (verification mail for new sign-ups), `reset` (reset and resend mail for existing accounts) or `security` (owner notices). |
 | `safry_mail_address_capped_total{scope}` | Sign-up (`registration`) or forgot-password / resend (`reset`) requests that sent no mail because their client address reached its daily cap, or (`recipient`) a reset / resend mail to one recipient that was skipped because that recipient reached its daily cap. |
+| `safry_session_rotations_total` | Refresh tokens exchanged for a new session. Routine rotation is counted here and not written to the audit trail (sign-in, sign-out, reuse detection and revocation still are). |
+| `safry_audit_skipped_total{kind}` | Audit rows deliberately not written: `unknown_login` (failed sign-in for an account that does not exist), `unknown_address` (reset or verification request for an unknown or ineligible address, or past its address cap), `account_budget` (a known account already has `AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR` such rows this hour). A rise is an attack signal, not a fault. |
+| `safry_maintenance_last_success_timestamp_seconds` (gauge) | Unix time of the last successful retention run (heartbeat in `maintenance_runs`). Read from the database every 2 minutes; omitted while it is unreachable. |
+| `safry_audit_default_partition_rows`, `safry_refresh_sessions_overdue` (gauges) | Rows in the audit safety-net partition; 1 when a refresh session is more than 3 days past its retention. |
+| `safry_table_dead_tuples{table}`, `safry_table_live_tuples{table}` (gauges) | PostgreSQL's estimate of dead and live rows for `refresh_sessions`, `credential_tokens`, `login_throttles`, `bookings`. |
 | `safry_process_start_time_seconds` (gauge) | Unix time the API process started; it changes on every restart, which the `ProcessRestarting` alert counts. |
 | `safry_rate_limited_total{group}` | HTTP 429 answers, `auth` routes or `api` (all others). |
 | `safry_readiness_failures_total{reason}` | Readiness probes answered 503: `database` or `draining`. |
@@ -90,6 +95,18 @@ First action: look at failed-login audit events by address and reason; block a d
 ### MailFailureRate
 *ticket.* At least 3 mails failed in 30 minutes and over 25% of attempts. Password resets and verification links are not arriving. First action: provider status page, API key, the "mail ... not delivered" log lines.
 
+### PurgeJobStale
+*ticket.* The daily retention job (compose service `maintenance`, script `backend/scripts/db/purge.sh`) has not finished successfully for 36 hours. It writes a heartbeat row (`maintenance_runs`) as its last step; the API exports it as `safry_maintenance_last_success_timestamp_seconds`. A migration seeds a baseline, so a job that never ran alerts 36 hours after the deploy. While it is down, expired sessions, reset links, sign-in counters and audit events are kept, expired bookings stay PENDING in the database and audit partitions are not created ahead. First action: `docker compose logs --tail 100 maintenance`, fix the error, `docker compose restart maintenance`. A failed run is retried by itself every hour.
+
+### AuditDefaultPartitionHasRows
+*ticket.* `audit_events_default` (the safety-net partition) holds rows for 30 minutes: a month had no partition. Same root cause as PurgeJobStale. First action: restart the maintenance job; it creates the missing months and moves the rows.
+
+### RefreshSessionsPastRetention
+*ticket.* A refresh session expired or was revoked more than the retention plus 3 days ago (default 30 + 3) and is still stored, for 6 hours. The purge is not running or something blocks its deletes. First action: PurgeJobStale first; then look for a long transaction (`pg_stat_activity`).
+
+### TableDeadTuplesHigh
+*ticket.* More than 100,000 dead rows and over 30% of a churn table (`refresh_sessions`, `credential_tokens`, `login_throttles`, `bookings`) for 2 hours: autovacuum is blocked or cannot keep up, so the file grows. First action: a long transaction or stale replication slot, then `VACUUM (ANALYZE)` on that table. Background and the reclaim options: `backend/docs/database-operations.md`, "Disk space after a purge".
+
 ## 3. How to tune
 
 Every rule has a comment with the knob. Start from these values, watch for two weeks of real traffic, then adjust:
@@ -101,7 +118,7 @@ Every rule has a comment with the knob. Start from these values, watch for two w
 
 ## 4. Proof that exists
 
-- `bash scripts/alerts-test.sh`: 32 promtool cases, each alert fires on simulated data and stays silent below its threshold; it also checks that every metric used by a rule is defined in `metrics.ts`.
+- `bash scripts/alerts-test.sh`: promtool cases (one or more per alert), each alert fires on simulated data and stays silent below its threshold; it also checks that every metric used by a rule is defined in `metrics.ts`.
 - `bash scripts/alerts-fire-test.sh`: starts the real API, Postgres, Prometheus and Alertmanager locally, sends failed sign-ins, stops the database and then the API, and checks that LoginFailureSpike, DatabaseUnreachable and ApiDown reach `firing` and arrive at a webhook sink. Only the `for:` times are shortened to 15 s there.
 
 ## 5. Wiring to Azure Monitor (checklist for later)

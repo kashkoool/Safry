@@ -5,7 +5,7 @@
 #   docker compose up -d postgres
 #   docker compose run --rm migrate                             # one-off: prisma migrate deploy (owner role)
 #   docker compose run --rm db-roles                            # one-off: create/rotate the restricted runtime login
-#   docker compose up -d                                        # api + web
+#   docker compose up -d                                        # api + web + the daily maintenance (retention) job
 #   docker compose --profile tls up -d                          # optional: Caddy terminates TLS on 80/443
 #   docker compose --profile backup up -d                       # optional: scheduled pg_dump
 # Nothing migrates or seeds at boot. The demo seed is a separate, opt-in job (profile "seed").
@@ -130,6 +130,10 @@ services:
       SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
       SESSION_IDLE_TIMEOUT_MINUTES: ${SESSION_IDLE_TIMEOUT_MINUTES:-15}
       SESSION_ABSOLUTE_TIMEOUT_HOURS: ${SESSION_ABSOLUTE_TIMEOUT_HOURS:-24}
+      # The API reads these to tell the maintenance job's settings apart from its own: the same names and defaults as the maintenance service.
+      SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-30}
+      BOOKING_PENDING_TTL_HOURS: ${BOOKING_PENDING_TTL_HOURS:-48}
+      AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR: ${AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR:-20}
       # Transactional e-mail (password reset, e-mail verification): Resend over HTTPS. See docs/DEPLOYMENT.md, Transactional email.
       MAIL_TRANSPORT: resend
       RESEND_API_KEY: ${RESEND_API_KEY:?Set RESEND_API_KEY in .env (Resend dashboard, API keys; never commit it)}
@@ -217,11 +221,13 @@ services:
     cpus: 0.5
     pids_limit: 50
 
-  # Scheduled maintenance: audit_events partitions created ahead, expired refresh sessions purged (30 days), audit partitions older
-  # than 24 months dropped (AUDIT_RETENTION_DAYS overrides). Script: backend/scripts/db/purge.sh (owner-only procedures).
+  # Scheduled maintenance, part of the DEFAULT stack (no profile): `docker compose up -d` starts it, so a deployment that follows the
+  # runbook always purges. Daily: audit_events partitions created ahead, expired refresh sessions, credential links and idle login
+  # counters purged, expired PENDING bookings cancelled, audit partitions older than 24 months dropped, then a heartbeat is written
+  # (the API exports its age; the PurgeJobStale alert fires after 36 hours). A failed run is retried hourly. Retention settings and
+  # their ranges: docs/DEPLOYMENT.md. Script: backend/scripts/db/purge.sh (owner-only procedures).
   maintenance:
     <<: *hardening
-    profiles: [maintenance]
     image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     user: postgres
     depends_on: { postgres: { condition: service_healthy } }
@@ -231,8 +237,12 @@ services:
     environment:
       DATABASE_MIGRATE_URL: postgresql://safry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/safry
       SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-30}
+      CREDENTIAL_TOKEN_RETENTION_DAYS: ${CREDENTIAL_TOKEN_RETENTION_DAYS:-7}
+      LOGIN_THROTTLE_RETENTION_HOURS: ${LOGIN_THROTTLE_RETENTION_HOURS:-24}
+      BOOKING_PENDING_TTL_HOURS: ${BOOKING_PENDING_TTL_HOURS:-48}
       AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-}
-    entrypoint: ["sh", "-c", "while true; do sh /scripts/purge.sh || echo 'purge FAILED' >&2; sleep 86400; done"]
+      PURGE_BATCH_SIZE: ${PURGE_BATCH_SIZE:-5000}
+    entrypoint: ["sh", "-c", "while true; do if sh /scripts/purge.sh; then sleep 86400; else echo 'purge FAILED, retrying in 1 hour' >&2; sleep 3600; fi; done"]
     mem_limit: 128m
     cpus: 0.25
     pids_limit: 50
