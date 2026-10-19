@@ -220,6 +220,14 @@ export function validateEnvironment(config: Environment): Environment {
   if (!Number.isInteger(sessionAbsoluteHours) || sessionAbsoluteHours < 1 || sessionAbsoluteHours > 720)
     throw new Error("SESSION_ABSOLUTE_TIMEOUT_HOURS is invalid (1-720)");
   assertMailConfig(config);
+  // Retention and growth limits. The maintenance job (backend/scripts/db/purge.sh) reads the same names with the same ranges.
+  integerInRange(config, "AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR", 1, 1000);
+  integerInRange(config, "SESSION_RETENTION_DAYS", 1, 3650);
+  integerInRange(config, "AUDIT_RETENTION_DAYS", 30, 3650);
+  integerInRange(config, "CREDENTIAL_TOKEN_RETENTION_DAYS", 1, 3650);
+  integerInRange(config, "LOGIN_THROTTLE_RETENTION_HOURS", 1, 720);
+  integerInRange(config, "PURGE_BATCH_SIZE", 100, 100000);
+  integerInRange(config, "BOOKING_PENDING_TTL_HOURS", 1, 720);
 
   const numeric = Object.fromEntries(TUNABLE_INTEGERS.filter((key) => config[key] !== undefined).map((key) => [key, Number(config[key])]));
   return { ...config, ...numeric, PORT: port, JWT_ACCESS_TTL_SECONDS: accessTtl, REFRESH_TOKEN_TTL_DAYS: refreshDays,

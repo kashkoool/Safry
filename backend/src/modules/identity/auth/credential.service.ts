@@ -74,6 +74,12 @@ export class CredentialService {
     });
   }
 
+  /** A refused request for a known account leaves at most AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR rows per hour; the rest are only counted. */
+  private async auditSuppressed(tx: Prisma.TransactionClient, action: string, userId: string, ipAddress: string | undefined, metadata: Prisma.InputJsonObject): Promise<void> {
+    if (await this.security.hasAuditRoom(tx, userId, [action])) await this.audit(tx, action, userId, ipAddress, metadata);
+    else this.security.skippedAudit("account_budget");
+  }
+
   /**
    * Creates the token inside the user-row lock after applying the per-account send limits. Returns undefined when the limit
    * says "do not send" (the caller still answers as usual).
@@ -89,13 +95,13 @@ export class CredentialService {
       });
       const last = recent[0]?.createdAt;
       if (recent.length >= MAX_LINKS_PER_HOUR || (last && now.getTime() - last.getTime() < MIN_RESEND_INTERVAL_MS)) {
-        await this.audit(tx, `${action}.suppressed`, user.id, ipAddress, { reason: "rate_limited" });
+        await this.auditSuppressed(tx, `${action}.suppressed`, user.id, ipAddress, { reason: "rate_limited" });
         return undefined;
       }
       // Checked after the per-account limits (a refused request never uses the recipient's quota) and BEFORE any token is voided or
       // created, so a capped request leaves the last good link working.
       if (!(await mayMail())) {
-        await this.audit(tx, `${action}.suppressed`, user.id, ipAddress, { reason: "recipient_cap" });
+        await this.auditSuppressed(tx, `${action}.suppressed`, user.id, ipAddress, { reason: "recipient_cap" });
         return undefined;
       }
       await tx.credentialToken.updateMany({ where: { userId: user.id, purpose, usedAt: null }, data: { usedAt: now } });
@@ -115,9 +121,9 @@ export class CredentialService {
       const mayMail = await this.mail.allowAddress("reset", ipAddress);
       const user = await this.prisma.user.findUnique({ where: { emailNormalized: email.trim().toLowerCase() } });
       if (!this.eligible(user) || !mayMail) {
-        await this.prisma.$transaction(async (tx) => {
-          await this.audit(tx, "identity.password.reset_requested", null, ipAddress, mayMail ? { matched: false } : { suppressed: "address_cap" });
-        });
+        // No audit row: an unknown address has no account to attach it to, and an unauthenticated caller must not be able to add
+        // rows without limit. The request is in the access log and counted in a metric.
+        this.security.skippedAudit("unknown_address");
         return;
       }
       // A failure here must look like success: an unknown address answers 202, so a known one must too (no enumeration under failure).
@@ -138,9 +144,7 @@ export class CredentialService {
       const mayMail = await this.mail.allowAddress("reset", ipAddress);
       const user = await this.prisma.user.findUnique({ where: { emailNormalized: email.trim().toLowerCase() } });
       if (!this.eligible(user) || user.emailVerifiedAt !== null || !mayMail) {
-        await this.prisma.$transaction(async (tx) => {
-          await this.audit(tx, "identity.email.verification_requested", null, ipAddress, mayMail ? { matched: false } : { suppressed: "address_cap" });
-        });
+        this.security.skippedAudit("unknown_address");
         return;
       }
       await this.sendVerification(user, ipAddress);

@@ -19,6 +19,7 @@ export type ReadinessFailureReason = "database" | "draining";
 const EVENT_SERIES: Record<string, { help: string; label?: string; values?: readonly string[] }> = {
   safry_login_failures_total: { help: "Failed sign-ins by coarse reason", label: "reason", values: ["bad_credentials", "locked", "mfa_failed", "portal_denied"] },
   safry_account_lockouts_total: { help: "Sign-in blocks started on an account" },
+  safry_audit_skipped_total: { help: "Audit rows not written: unknown account (login or reset request) or the account's hourly budget was spent", label: "kind", values: ["unknown_login", "unknown_address", "account_budget"] },
   safry_session_rotations_total: { help: "Refresh tokens exchanged for a new session (routine rotation, not audited row by row)" },
   safry_refresh_reuse_detected_total: { help: "Refresh tokens presented again after rotation (session family revoked)" },
   safry_platform_admin_signins_total: { help: "Completed sign-ins of platform administrators" },
@@ -49,6 +50,7 @@ export class MetricsService {
 
   loginFailure(reason: LoginFailureReason): void { this.bump("safry_login_failures_total", reason); }
   accountLockout(): void { this.bump("safry_account_lockouts_total"); }
+  auditSkipped(kind: "unknown_login" | "unknown_address" | "account_budget"): void { this.bump("safry_audit_skipped_total", kind); }
   sessionRotated(): void { this.bump("safry_session_rotations_total"); }
   refreshReuse(): void { this.bump("safry_refresh_reuse_detected_total"); }
   platformAdminSignIn(): void { this.bump("safry_platform_admin_signins_total"); }
