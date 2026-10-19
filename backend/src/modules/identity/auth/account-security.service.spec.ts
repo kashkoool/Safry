@@ -112,7 +112,8 @@ describe("AccountSecurityService throttle", () => {
 describe("AccountSecurityService failure metrics", () => {
   const withMetrics = (): { service: AccountSecurityService; metrics: MetricsService } => {
     const metrics = new MetricsService();
-    const prisma = { auditEvent: { createMany: (): Promise<unknown> => Promise.resolve({}) } } as unknown as PrismaService;
+    const tx = { auditEvent: { groupBy: (): Promise<unknown[]> => Promise.resolve([]), createMany: (): Promise<unknown> => Promise.resolve({}) } };
+    const prisma = { $transaction: (work: (client: typeof tx) => Promise<unknown>): Promise<unknown> => work(tx) } as unknown as PrismaService;
     const config = { get: (_key: string, fallback: number) => fallback } as unknown as ConfigService;
     return { service: new AccountSecurityService(prisma, config, metrics), metrics };
   };
@@ -129,5 +130,7 @@ describe("AccountSecurityService failure metrics", () => {
     expect(text).toContain('safry_login_failures_total{reason="locked"} 1');
     expect(text).toContain('safry_login_failures_total{reason="mfa_failed"} 1');
     expect(text).toContain("safry_account_lockouts_total 1");
+    // The two unknown-account failures stored nothing and were counted instead.
+    expect(text).toContain('safry_audit_skipped_total{kind="unknown_login"} 2');
   });
 });
