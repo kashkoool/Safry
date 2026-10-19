@@ -3,9 +3,15 @@ import type { Prisma } from "../../../generated/prisma/client.js";
 import { AccountLinkingService } from "./account-linking.service.js";
 
 /** Which accounts start verified: tenant-created ones yes, self-registered ones no. */
-function fakeTx(): { tx: Prisma.TransactionClient; created: Array<Record<string, unknown>> } {
+function fakeTx(): { tx: Prisma.TransactionClient; created: Array<Record<string, unknown>>; flag: string[] } {
   const created: Array<Record<string, unknown>> = [];
+  const flag: string[] = [];
   const tx = {
+    // Tagged-template raw queries: the identity flag read (previous value) and its set/reset.
+    $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
+      if (strings.join("").includes("set_config")) flag.push(typeof values[0] === "string" ? values[0] : "on");
+      return Promise.resolve([{ value: "off" }]);
+    },
     user: {
       findUnique: () => Promise.resolve(null),
       create: ({ data }: { data: Record<string, unknown> }) => {
@@ -14,7 +20,7 @@ function fakeTx(): { tx: Prisma.TransactionClient; created: Array<Record<string,
       }
     }
   } as unknown as Prisma.TransactionClient;
-  return { tx, created };
+  return { tx, created, flag };
 }
 
 describe("account creation and e-mail verification", () => {
@@ -39,5 +45,13 @@ describe("account creation and e-mail verification", () => {
     const { tx, created } = fakeTx();
     await service.resolve(tx, "t1", { ...input, emailVerified: true });
     expect(created[0]!["emailVerifiedAt"]).toBeInstanceOf(Date);
+  });
+});
+
+describe("identity lookup under row-level security on users", () => {
+  it("raises the narrow identity flag around the lookup and the insert, and restores it", async () => {
+    const { tx, flag } = fakeTx();
+    await new AccountLinkingService({} as never).createOrInvite(tx, "t1", { email: "a@example.test", displayName: "A", password: "unit test only password" });
+    expect(flag).toEqual(["on", "off", "on", "off"]);
   });
 });

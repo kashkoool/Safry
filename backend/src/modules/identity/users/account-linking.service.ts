@@ -1,5 +1,6 @@
 import { ConflictException, Injectable } from "@nestjs/common";
 import { hashPassword } from "../../../common/security/password.js";
+import { withIdentityLookup } from "../../../database/identity-access.js";
 import { PrismaService } from "../../../database/prisma.service.js";
 import type { Prisma, User } from "../../../generated/prisma/client.js";
 
@@ -62,20 +63,23 @@ export class AccountLinkingService {
   }
 
   private async create(tx: Prisma.TransactionClient, email: string, input: NewAccount): Promise<User> {
-    return tx.user.create({
+    const passwordHash = await hashPassword(input.password);
+    // users is under row-level security: the new identity has no membership in this tenant yet.
+    return withIdentityLookup(tx, () => tx.user.create({
       data: {
         email,
         emailNormalized: email,
         displayName: input.displayName.trim(),
         phone: input.phone,
-        passwordHash: await hashPassword(input.password),
+        passwordHash,
         ...(input.emailVerified ? { emailVerifiedAt: new Date() } : {})
       }
-    });
+    }));
   }
 
   private async existing(tx: Prisma.TransactionClient, tenantId: string, email: string): Promise<User | null> {
-    const existing = await tx.user.findUnique({ where: { emailNormalized: email } });
+    // The identity may belong to another tenant only: look it up with the narrow identity flag (row-level security on users).
+    const existing = await withIdentityLookup(tx, () => tx.user.findUnique({ where: { emailNormalized: email } }));
     if (!existing) return null;
     if (!this.linkable(existing)) throw new ConflictException("البريد الإلكتروني مستخدم بالفعل");
     const membership = await tx.tenantMembership.findFirst({ where: { tenantId, userId: existing.id } });
