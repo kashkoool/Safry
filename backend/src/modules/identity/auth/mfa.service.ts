@@ -263,8 +263,8 @@ export class MfaService {
    * challenge must be the pending one and is consumed by this attempt, right or wrong.
    */
   async verifyCode(userId: string, code: string, challengeId?: string, allowRecovery = true): Promise<boolean> {
-    // The second-factor columns of users belong to the identity, not to a tenant: step-up checks reach here from a tenant session
-    // (row-level security on users), so the check runs in the explicit system scope like the other MFA changes.
+    // The second-factor columns of users belong to the identity, not to a tenant. Disable and recovery-code regeneration
+    // call this from a tenant session, where row-level security on users forbids these updates: run in the system scope.
     return runAsSystem(() => this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "users" WHERE "id"=${userId}::uuid FOR UPDATE`;
       const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });

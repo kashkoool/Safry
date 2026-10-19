@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { World, type Session, type TestTenant, type TestUser } from "./support/world.js";
 
@@ -14,6 +15,8 @@ describe("users row-level security", () => {
   let travelerA: TestUser;
   let travelerB: TestUser;
   let outsiderB: TestUser;
+  let invitedB: TestUser;
+  let revokedB: TestUser;
   let platformAdmin: TestUser;
   let sessionAdminA: Session;
 
@@ -27,6 +30,11 @@ describe("users row-level security", () => {
     travelerA = await world.createUser(a, { roles: ["traveler"] });
     travelerB = await world.createUser(b, { roles: ["traveler"] });
     outsiderB = await world.createUser(b, { roles: ["traveler"] });
+    // Identities of tenant B that tenant A holds only a not-yet-accepted invitation / a revoked membership for.
+    invitedB = await world.createUser(b, { roles: ["traveler"] });
+    revokedB = await world.createUser(b, { roles: ["traveler"] });
+    await world.prisma.tenantMembership.create({ data: { tenantId: a.id, userId: invitedB.userId, status: "INVITED", awaitingOwnerConsent: true } });
+    await world.prisma.tenantMembership.create({ data: { tenantId: a.id, userId: revokedB.userId, status: "REVOKED", awaitingOwnerConsent: false } });
     platformAdmin = await world.createUser(a, { roles: ["tenant-admin"], isPlatformAdmin: true });
     sessionAdminA = await world.session(adminA);
   });
@@ -98,6 +106,50 @@ describe("users row-level security", () => {
       expect(all.rows[0]?.n).toBe(2);
       const edited = await world.asRole({ bypass: true }, `UPDATE users SET "passwordHash" = "passwordHash" WHERE id = $1`, [travelerB.userId]);
       expect(edited.rowCount).toBe(1);
+    });
+  });
+
+  describe("only a consenting, non-revoked member can be edited", () => {
+    const rename = (userId: string, before: string[] = []) =>
+      world.asRole({ tenantId: a.id }, `UPDATE users SET "displayName" = 'by-a', phone = '9', locale = 'en-US' WHERE id = $1`, [userId], before);
+
+    it("an invited identity that has not accepted, and a revoked one, cannot be updated (0 rows), but are still listed", async () => {
+      expect((await rename(invitedB.userId)).rowCount).toBe(0);
+      expect((await rename(revokedB.userId)).rowCount).toBe(0);
+      const listed = await world.asRole({ tenantId: a.id }, `SELECT 1 FROM users WHERE id = ANY($1)`, [[invitedB.userId, revokedB.userId]]);
+      expect(listed.rowCount).toBe(2);
+    });
+
+    it("a consented, active member keeps its editable profile columns", async () => {
+      expect((await rename(travelerA.userId)).rowCount).toBe(1);
+    });
+
+    it("mutation: with the old, membership-only update policy the invited and revoked identities can be changed", async () => {
+      const loose = [
+        `DROP POLICY users_update ON users`,
+        `CREATE POLICY users_update ON users FOR UPDATE USING (EXISTS (SELECT 1 FROM tenant_memberships m WHERE m."userId" = users.id AND m."tenantId" = app_current_tenant())) WITH CHECK (EXISTS (SELECT 1 FROM tenant_memberships m WHERE m."userId" = users.id AND m."tenantId" = app_current_tenant()))`
+      ];
+      expect((await rename(invitedB.userId, loose)).rowCount).toBe(1);
+      expect((await rename(revokedB.userId, loose)).rowCount).toBe(1);
+    });
+  });
+
+  describe("rollback script", () => {
+    const rollback = readFileSync(new URL("../docs/rollback/users-row-level-security.sql", import.meta.url), "utf8");
+
+    it("restores the previous state: no RLS on users, the platform-admin flag still guarded", async () => {
+      const read = await world.asRole({ tenantId: a.id }, `SELECT 1 FROM users WHERE id = $1`, [travelerB.userId], [rollback]);
+      expect(read.rowCount).toBe(1);
+      const state = await world.asRole<{ relrowsecurity: boolean; relforcerowsecurity: boolean; fn: boolean }>({ tenantId: a.id },
+        `SELECT relrowsecurity, relforcerowsecurity, to_regprocedure('app_identity_system()') IS NOT NULL AS fn FROM pg_class WHERE oid = 'users'::regclass`, [], [rollback]);
+      expect(state.rows[0]).toEqual({ relrowsecurity: false, relforcerowsecurity: false, fn: false });
+      await expect(world.asRole({ tenantId: a.id }, `UPDATE users SET "isPlatformAdmin" = true WHERE id = $1`, [adminA.userId], [rollback]))
+        .rejects.toThrow(/only be changed by the platform/);
+    });
+
+    it("leaves the live database untouched (it ran inside a rolled-back transaction)", async () => {
+      const row = await world.sql.query<{ relrowsecurity: boolean }>(`SELECT relrowsecurity FROM pg_class WHERE oid = 'users'::regclass`);
+      expect(row.rows[0]?.relrowsecurity).toBe(true);
     });
   });
 

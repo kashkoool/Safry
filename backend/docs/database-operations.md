@@ -86,7 +86,9 @@ default 30. A missing or unknown token, an already used (rotated or revoked) tok
 - A tenant session may change only `displayName`, `phone` and `locale` of a member (trigger allow-list); e-mail, password hash, MFA state, status and `authVersion` change only in the system scope (login, password reset, MFA, platform administration).
 - Staff creation and invitations look an identity up by e-mail and create one before a membership exists. They do it inside `withIdentityLookup` (`src/database/identity-access.ts`), which raises the transaction-local flag `app.identity_system` for SELECT and INSERT on `users` only.
 - Operator scripts that run as a non-superuser owner need the system scope (`withRlsBypass`), as for every other forced table.
-- **Rolling out**: an image built before this change cannot create staff or invite from a tenant session once the migration is applied (the lookup is hidden). Roll the migration and the new image out together.
+- **Rolling out**: deploy the NEW IMAGE FIRST, then the migration. The new image works on the old schema (it only sets a transaction-local setting and runs the second-factor check in the system scope). An image built before this change on the new schema fails with 42501 (HTTP 500) for staff creation, invitations, MFA disable and recovery-code regeneration.
+- **Only a consenting, non-revoked member can be edited** from a tenant session (membership with `awaitingOwnerConsent = false` and status not `REVOKED`); SELECT still shows any member, including invited ones, because invitations list them.
+- **Rollback**: run [rollback/users-row-level-security.sql](rollback/users-row-level-security.sql) as the owner (it drops the policies, disables RLS on `users` and restores the previous trigger), then `prisma migrate resolve --rolled-back 20261018_authz_users_row_level_security`. `test/users-rls.int.spec.ts` runs this file and checks the result.
 
 ### Money columns (bigint minor units)
 

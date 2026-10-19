@@ -7,8 +7,9 @@
 --     narrow flag app.identity_system is raised for that single statement group (src/database/identity-access.ts).
 -- The explicit system scope (app.bypass_rls = on: login, registration, platform administration, operator scripts) sees all.
 -- The platform-admin flag trigger from 20261007/20261008 stays; it is extended below with a column allow-list.
--- Needs no data change. A running image from before this release cannot create staff or invite from a tenant session
--- until it is replaced (see backend/docs/database-operations.md): roll the migration and the new image out together.
+-- Needs no data change. Deploy the new image FIRST (it works on the old schema), then this migration: an image from
+-- before this release cannot create staff, invite, or change/regenerate MFA once it is applied
+-- (see backend/docs/database-operations.md, which also holds the rollback SQL).
 
 CREATE OR REPLACE FUNCTION app_identity_system() RETURNS boolean
   LANGUAGE sql STABLE
@@ -30,11 +31,15 @@ CREATE POLICY users_select ON "users" FOR SELECT
 CREATE POLICY users_insert ON "users" FOR INSERT
   WITH CHECK (app_rls_bypass() OR app_identity_system());
 
+-- Only a consenting, non-revoked member can be edited: an identity that was merely invited (owner has not accepted)
+-- or whose membership was revoked is not this tenant's to change.
 CREATE POLICY users_update ON "users" FOR UPDATE
   USING (app_rls_bypass() OR EXISTS (
-    SELECT 1 FROM "tenant_memberships" m WHERE m."userId" = "users"."id" AND m."tenantId" = app_current_tenant()))
+    SELECT 1 FROM "tenant_memberships" m WHERE m."userId" = "users"."id" AND m."tenantId" = app_current_tenant()
+      AND m."awaitingOwnerConsent" = false AND m."status" <> 'REVOKED'))
   WITH CHECK (app_rls_bypass() OR EXISTS (
-    SELECT 1 FROM "tenant_memberships" m WHERE m."userId" = "users"."id" AND m."tenantId" = app_current_tenant()));
+    SELECT 1 FROM "tenant_memberships" m WHERE m."userId" = "users"."id" AND m."tenantId" = app_current_tenant()
+      AND m."awaitingOwnerConsent" = false AND m."status" <> 'REVOKED'));
 
 CREATE POLICY users_delete ON "users" FOR DELETE
   USING (app_rls_bypass());
