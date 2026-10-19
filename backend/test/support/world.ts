@@ -363,17 +363,21 @@ export class World {
 
   /** Runs raw SQL the way the application does: as the restricted role, with an explicit tenant scope. */
   async asRole<T extends pg.QueryResultRow = pg.QueryResultRow>(
-    scope: { tenantId?: string; bypass?: boolean },
+    scope: { tenantId?: string; bypass?: boolean; identity?: boolean },
     statement: string,
-    values: unknown[] = []
+    values: unknown[] = [],
+    /** Statements run first as the connecting (owner) login inside the same rolled-back transaction, e.g. a mutation check. */
+    before: string[] = []
   ): Promise<pg.QueryResult<T>> {
     const client = new pg.Client({ connectionString: this.databaseUrl });
     await client.connect();
     try {
       await client.query("BEGIN");
-      await client.query("SELECT set_config('role', 'safry_app', true), set_config('app.tenant_id', $1, true), set_config('app.bypass_rls', $2, true)", [
+      for (const prelude of before) await client.query(prelude);
+      await client.query("SELECT set_config('role', 'safry_app', true), set_config('app.tenant_id', $1, true), set_config('app.bypass_rls', $2, true), set_config('app.identity_system', $3, true)", [
         scope.tenantId ?? "",
-        scope.bypass ? "on" : "off"
+        scope.bypass ? "on" : "off",
+        scope.identity ? "on" : "off"
       ]);
       const result = await client.query<T>(statement, values);
       await client.query("ROLLBACK");

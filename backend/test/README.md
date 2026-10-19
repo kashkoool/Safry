@@ -60,6 +60,7 @@ role, used to prove migrations and `db:bootstrap`/`db:seed`/`admin:bootstrap` wo
 | `api-success.int.spec.ts` | Success, duplicate, boundary and cross-tenant cases for routes the other suites do not reach (services, organization roles/departments/specialties, provider registration, platform administration). |
 | `api-extras.int.spec.ts` | Production boot refuses a privileged DB login (real roles), logout scope, refresh-token reuse and races, cursor pagination across tenants and with tampered cursors, the invitation consent state machine. |
 | `api-throttle*.int.spec.ts` | Account throttle keyed e-mail + address over real HTTP (trusted and untrusted proxy), Redis outage degrades to in-process limits. Booted as `NODE_ENV=development` because rate limiting is off in `test`. |
+| `users-rls.int.spec.ts` | Row-level security on `users`: tenant sessions see/update only member identities, cannot delete or create them, cannot rewrite identity columns; mutation checks (dropped policy/guard make the probes fail); login, registration, forgot-password, invitations, staff creation and platform flows still work. |
 | `auth-*.int.spec.ts`, `authorization`, `bookings`, `identity-management`, `tenant-isolation`, `migrations`, `perf` | Earlier suites per feature area. |
 
 ## Route-coverage gate
