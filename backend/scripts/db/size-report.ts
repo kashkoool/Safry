@@ -65,7 +65,7 @@ const GROUPS_SQL = `
   GROUP BY 1
   ORDER BY total DESC`;
 
-export async function collect(client: pg.Client): Promise<{ tables: TableReport[]; databaseBytes: number; partitions: Array<{ name: string; rows: number; bytes: number }> }> {
+export async function collect(client: pg.Client, withPartitions = false): Promise<{ tables: TableReport[]; databaseBytes: number; partitions: Array<{ name: string; rows: number; bytes: number }> }> {
   const groups = await client.query<{ grp: string; heap: string; toast: string; idx: string; total: string; dead: string; parts: number }>(GROUPS_SQL);
   const tables: TableReport[] = [];
   for (const g of groups.rows) {
@@ -85,12 +85,13 @@ export async function collect(client: pg.Client): Promise<{ tables: TableReport[
     tables.push({ table: g.grp, rows: Number(count.rows[0]!.n), heapBytes: Number(g.heap), toastBytes: Number(g.toast), indexBytes: Number(g.idx), totalBytes: Number(g.total), deadRows: Number(g.dead), oldest, oldestAgeDays: age });
   }
   const db = await client.query<{ size: string }>("SELECT pg_database_size(current_database())::text AS size");
+  const partitions: Array<{ name: string; rows: number; bytes: number }> = [];
+  if (!withPartitions) return { tables, databaseBytes: Number(db.rows[0]!.size), partitions };
   const parts = await client.query<{ name: string; bytes: string }>(
     `SELECT c.relname::text AS name, pg_total_relation_size(c.oid)::text AS bytes
      FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
      WHERE i.inhparent = 'public.audit_events'::regclass ORDER BY c.relname`
   );
-  const partitions: Array<{ name: string; rows: number; bytes: number }> = [];
   for (const p of parts.rows) {
     const n = await client.query<{ n: string }>(`SELECT count(*)::text AS n FROM public."${p.name}"`);
     partitions.push({ name: p.name, rows: Number(n.rows[0]!.n), bytes: Number(p.bytes) });
@@ -110,7 +111,7 @@ async function main(): Promise<number> {
   await client.connect();
   try {
     await client.query("SET default_transaction_read_only = on");
-    const report = await collect(client);
+    const report = await collect(client, args.includes("--partitions"));
     if (args.includes("--json")) {
       console.log(JSON.stringify(report, null, 2));
       return 0;

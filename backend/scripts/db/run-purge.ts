@@ -8,6 +8,7 @@
  */
 import { pathToFileURL } from "node:url";
 import pg from "pg";
+import { assertSafeTarget } from "../seed-history.js";
 
 export function purgeStatements(env: Record<string, string | undefined>): string[] {
   const integer = (name: string, fallback: string): string => {
@@ -17,7 +18,12 @@ export function purgeStatements(env: Record<string, string | undefined>): string
   };
   const sessions = integer("SESSION_RETENTION_DAYS", "30");
   const ahead = integer("AUDIT_PARTITIONS_AHEAD", "6");
-  const audit = env["AUDIT_RETENTION_DAYS"] ? `${integer("AUDIT_RETENTION_DAYS", "")} days` : "24 months";
+  const auditDays = env["AUDIT_RETENTION_DAYS"] ? integer("AUDIT_RETENTION_DAYS", "") : undefined;
+  // Same bounds as the procedures, checked before any of them runs (a late refusal would leave the first ones already applied).
+  if (Number(sessions) < 1) throw new Error("SESSION_RETENTION_DAYS must be at least 1");
+  if (Number(ahead) < 1 || Number(ahead) > 60) throw new Error("AUDIT_PARTITIONS_AHEAD must be between 1 and 60");
+  if (auditDays !== undefined && Number(auditDays) < 30) throw new Error("AUDIT_RETENTION_DAYS must be at least 30");
+  const audit = auditDays !== undefined ? `${auditDays} days` : "24 months";
   return [
     `CALL ensure_audit_event_partitions(0, ${ahead})`,
     `CALL purge_refresh_sessions(interval '${sessions} days')`,
@@ -34,10 +40,13 @@ async function main(): Promise<number> {
     console.error("Give the owner database with --url or DATABASE_MIGRATE_URL.");
     return 1;
   }
-  const host = new URL(url).hostname;
-  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(host) && !args.includes("--allow-remote")) {
-    console.error(`Refusing to purge "${host}" from this helper; use backend/scripts/db/purge.sh there (or pass --allow-remote).`);
-    return 1;
+  if (!args.includes("--allow-remote")) {
+    try {
+      assertSafeTarget({}, url);
+    } catch (error) {
+      console.error(`${error instanceof Error ? error.message : String(error)} Use backend/scripts/db/purge.sh for other hosts (or pass --allow-remote).`);
+      return 1;
+    }
   }
   const client = new pg.Client({ connectionString: url });
   await client.connect();
