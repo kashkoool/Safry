@@ -39,16 +39,30 @@ const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 export const SEED_TENANT_PREFIX = "hist-";
 export const SEED_EMAIL_DOMAIN = "example.test";
 
-/** Throws unless it is safe to write synthetic history to this database. Pure: tested in seed-history.spec.ts. */
+/** Connection-string parameters that can redirect the client to another server than the URL host shows. */
+const HOST_OVERRIDES = ["host", "hostaddr", "service", "options"];
+
+/**
+ * Throws unless it is safe to write to this database: not production, and the host the pg driver will really connect to
+ * (parsed by the driver's own parser, so PGHOST is honoured exactly as it does) is loopback. A host, hostaddr, service or
+ * options query parameter and a unix-socket path are refused. Pure: tested in seed-history.spec.ts.
+ */
 export function assertSafeTarget(env: Record<string, string | undefined>, url: string): void {
-  if (env["NODE_ENV"] === "production") throw new Error("Refusing to seed history with NODE_ENV=production.");
-  let host: string;
+  if (env["NODE_ENV"] === "production") throw new Error("Refusing to run with NODE_ENV=production.");
+  let parsed: URL;
   try {
-    host = new URL(url).hostname.toLowerCase();
+    parsed = new URL(url);
   } catch {
     throw new Error("The database URL is not a valid URL.");
   }
-  if (!LOCAL_HOSTS.has(host)) throw new Error(`Refusing to seed history into "${host}": only localhost, 127.0.0.1 and ::1 are accepted.`);
+  for (const name of HOST_OVERRIDES)
+    if (parsed.searchParams.has(name)) throw new Error(`Refusing: the database URL must not set "${name}" as a query parameter.`);
+  // The driver exposes its parsed settings at runtime but not in its type definitions.
+  const resolved = (new pg.Client({ connectionString: url }) as unknown as { connectionParameters: { host?: string } }).connectionParameters.host;
+  const host = (resolved ?? "localhost").toLowerCase();
+  if (host.startsWith("/")) throw new Error("Refusing: unix-socket hosts are not accepted.");
+  if (!LOCAL_HOSTS.has(host) || !LOCAL_HOSTS.has(parsed.hostname.toLowerCase()))
+    throw new Error(`Refusing to use "${host}": only localhost, 127.0.0.1 and ::1 are accepted.`);
 }
 
 export function parseArgs(argv: string[], env: Record<string, string | undefined>, now = new Date()): SeedOptions {
@@ -189,18 +203,18 @@ export async function seedHistory(client: pg.Client, opts: SeedOptions, log: (li
   const orgCount = tenantCount * 3;
   const servicesPerOrg = 10;
 
-  const existing = await client.query<{ hist: string; foreign: string }>(
-    `SELECT (SELECT count(*) FROM tenants WHERE code LIKE $1)::text AS hist,
-            (SELECT count(*) FROM users WHERE "emailNormalized" NOT LIKE $2)::text AS foreign`,
-    [`${SEED_TENANT_PREFIX}%`, `%@${SEED_EMAIL_DOMAIN}`]
-  );
-  if (Number(existing.rows[0]!.hist) > 0) throw new Error("This database already holds a history seed. Use a fresh database (pnpm db:embedded creates one).");
-  if (Number(existing.rows[0]!.foreign) > 0 && !opts.allowExisting)
-    throw new Error("This database holds users that are not @example.test addresses. Refusing; use a fresh database or pass --allow-existing.");
-
   await client.query("BEGIN");
   try {
     await client.query("SELECT set_config('app.bypass_rls', 'on', true)");
+    // Checked inside the transaction with the same row visibility as the inserts (tenants has forced row-level security).
+    const existing = await client.query<{ hist: string; foreign: string }>(
+      `SELECT (SELECT count(*) FROM tenants WHERE code LIKE $1)::text AS hist,
+              (SELECT count(*) FROM users WHERE "emailNormalized" NOT LIKE $2)::text AS foreign`,
+      [`${SEED_TENANT_PREFIX}%`, `%@${SEED_EMAIL_DOMAIN}`]
+    );
+    if (Number(existing.rows[0]!.hist) > 0) throw new Error("This database already holds a history seed. Use a fresh database (pnpm db:embedded creates one).");
+    if (Number(existing.rows[0]!.foreign) > 0 && !opts.allowExisting)
+      throw new Error("This database holds users that are not @example.test addresses. Refusing; use a fresh database or pass --allow-existing.");
     await client.query("SET LOCAL synchronous_commit = off");
     const B = (table: string, columns: Column[]): Batcher => new Batcher(client, table, columns, opts.batch);
     const c = (name: string, type: string): Column => ({ name, type });
@@ -255,7 +269,7 @@ export async function seedHistory(client: pg.Client, opts: SeedOptions, log: (li
       const roll = rand();
       const status = staff ? "ACTIVE" : roll < 0.02 ? "DISABLED" : roll < 0.05 ? "SUSPENDED" : roll < 0.07 ? "INVITED" : "ACTIVE";
       const deleted = !staff && status === "DISABLED" && rand() < 0.75;
-      const deletedAt = deleted ? Math.min(anchor - DAY, createdAt + Math.floor(rand() * 400) * DAY) : null;
+      const deletedAt = deleted ? Math.min(anchor, Math.max(createdAt + 60_000, Math.min(anchor - DAY, createdAt + Math.floor(rand() * 400) * DAY))) : null;
       const verified = status !== "INVITED" && (staff || rand() < 0.97);
       const email = `${staff ? "staff" : "user"}${String(i + 1).padStart(6, "0")}@${SEED_EMAIL_DOMAIN}`;
       userRows.push({ id: uid("user", i), email, tenant, membership: uid("membership", i), createdAt, status, deletedAt, verified, staffOrg: staff ? i : -1 });

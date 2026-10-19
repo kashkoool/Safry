@@ -12,6 +12,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import EmbeddedPostgres from "embedded-postgres";
+import pg from "pg";
 
 const root = resolve(import.meta.dirname, "../..");
 const dataDir = resolve(root, ".local-pg");
@@ -31,7 +32,12 @@ const server = new EmbeddedPostgres({
 });
 if (first) await server.initialise();
 await server.start();
-if (first) await server.createDatabase("safry_local");
+// Checked on every start, not only after the first initialisation: a first run stopped between initdb and createDatabase recovers.
+const admin = new pg.Client({ host: "127.0.0.1", port, user: "postgres", password: "postgres", database: "postgres" });
+await admin.connect();
+const found = await admin.query("SELECT 1 FROM pg_database WHERE datname = 'safry_local'");
+await admin.end();
+if (found.rowCount === 0) await server.createDatabase("safry_local");
 const url = `postgresql://postgres:postgres@127.0.0.1:${port}/safry_local`;
 execFileSync(process.execPath, [resolve(root, "node_modules/prisma/build/index.js"), "migrate", "deploy"], { cwd: root, env: { ...process.env, DATABASE_URL: url }, stdio: "pipe" });
 console.log(`local PostgreSQL ready (throw-away credentials, loopback only):\n  ${url}\nPress Ctrl+C to stop.`);

@@ -8,6 +8,7 @@
  */
 import { pathToFileURL } from "node:url";
 import pg from "pg";
+import { assertSafeTarget } from "../seed-history.js";
 
 export function purgeStatements(env: Record<string, string | undefined>): string[] {
   const integer = (name: string, fallback: string, min: number, max: number): string => {
@@ -42,10 +43,13 @@ async function main(): Promise<number> {
     console.error("Give the owner database with --url or DATABASE_MIGRATE_URL.");
     return 1;
   }
-  const host = new URL(url).hostname;
-  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(host) && !args.includes("--allow-remote")) {
-    console.error(`Refusing to purge "${host}" from this helper; use backend/scripts/db/purge.sh there (or pass --allow-remote).`);
-    return 1;
+  if (!args.includes("--allow-remote")) {
+    try {
+      assertSafeTarget({}, url);
+    } catch (error) {
+      console.error(`${error instanceof Error ? error.message : String(error)} Use backend/scripts/db/purge.sh for other hosts (or pass --allow-remote).`);
+      return 1;
+    }
   }
   const client = new pg.Client({ connectionString: url });
   await client.connect();

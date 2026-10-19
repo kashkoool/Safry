@@ -16,6 +16,17 @@ describe("history seed safety", () => {
       expect(() => assertSafeTarget({}, url), url).toThrow(/Refusing/);
     expect(() => assertSafeTarget({}, "not a url")).toThrow(/valid URL/);
   });
+  it("refuses URLs that redirect the driver to another server than the URL host", () => {
+    for (const url of [
+      "postgresql://u:p@localhost/safry?host=prod.example.com",
+      "postgresql://u:p@localhost/safry?hostaddr=10.1.2.3",
+      "postgresql://u:p@localhost/safry?service=prod",
+      "postgresql://u:p@localhost/safry?options=-c%20search_path%3Dx",
+      "postgresql://u:p@localhost/safry?host=%2Fvar%2Frun%2Fpostgresql",
+      "postgresql://u:p@localhost/safry?host=/var/run/postgresql"
+    ])
+      expect(() => assertSafeTarget({}, url), url).toThrow(/Refusing/);
+  });
   it("accepts localhost, 127.0.0.1 and ::1 outside production", () => {
     for (const url of [local, "postgresql://u:p@localhost:5432/safry", "postgresql://u:p@[::1]:5432/safry"]) expect(() => assertSafeTarget({ NODE_ENV: "development" }, url), url).not.toThrow();
   });
@@ -52,6 +63,9 @@ describe("maintenance helpers", () => {
     expect(purgeStatements({ AUDIT_RETENTION_DAYS: "90" })[5]).toContain("90 days");
     expect(() => purgeStatements({ SESSION_RETENTION_DAYS: "1; DROP TABLE users" })).toThrow(/integer/);
     expect(() => purgeStatements({ AUDIT_RETENTION_DAYS: "5" })).toThrow(/from 30 to 3650/);
+    expect(() => purgeStatements({ AUDIT_RETENTION_DAYS: "1" })).toThrow(/from 30 to 3650/);
+    expect(() => purgeStatements({ SESSION_RETENTION_DAYS: "0" })).toThrow(/from 1 to 3650/);
+    expect(() => purgeStatements({ AUDIT_PARTITIONS_AHEAD: "61" })).toThrow(/from 1 to 60/);
     expect(() => purgeStatements({ PURGE_BATCH_SIZE: "1" })).toThrow(/from 100 to 100000/);
   });
   it("purge.sh runs the same procedures in the same order as the Node helper", () => {
