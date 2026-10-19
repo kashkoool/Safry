@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { purgeStatements } from "../scripts/db/run-purge.js";
 import { World, type Json, type Session, type TestTenant, type TestUser } from "./support/world.js";
 
 /**
@@ -57,6 +58,15 @@ describe("retention maintenance", () => {
         expect(value(`safry_table_live_tuples{table="${table}"}`)).toBeGreaterThanOrEqual(0);
         expect(value(`safry_table_dead_tuples{table="${table}"}`)).toBeGreaterThanOrEqual(0);
       }
+    });
+  });
+
+  describe("the whole job", () => {
+    it("every statement purge.sh runs exists with that signature and the run ends with a fresh heartbeat", async () => {
+      await world.sql.query(`UPDATE maintenance_runs SET "lastSuccessAt" = now() - interval '3 days' WHERE job = 'purge'`);
+      for (const statement of purgeStatements({ SESSION_RETENTION_DAYS: "30", AUDIT_RETENTION_DAYS: "730", PURGE_BATCH_SIZE: "200" })) await world.sql.query(statement);
+      const age = await world.sql.query(`SELECT extract(epoch FROM now() - "lastSuccessAt") AS s FROM maintenance_runs WHERE job = 'purge'`);
+      expect(Number(age.rows[0].s)).toBeLessThan(60);
     });
   });
 

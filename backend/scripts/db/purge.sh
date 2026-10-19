@@ -48,6 +48,6 @@ psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_refresh_sessions(interval '$sessio
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_credential_tokens(interval '$tokens days', $batch)"
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_login_throttles(interval '$throttles hours', $batch)"
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL sweep_expired_bookings(interval '$pending hours', $batch)"
-psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_audit_events(interval '$audit_retention', $batch)"
+psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_audit_events(interval '$audit_retention')"
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL record_maintenance_run('purge')"
 echo "purge done"

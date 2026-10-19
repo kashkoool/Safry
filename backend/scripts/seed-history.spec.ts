@@ -46,7 +46,7 @@ describe("maintenance helpers", () => {
       "CALL purge_credential_tokens(interval '7 days', 5000)",
       "CALL purge_login_throttles(interval '24 hours', 5000)",
       "CALL sweep_expired_bookings(interval '48 hours', 5000)",
-      "CALL purge_audit_events(interval '24 months', 5000)",
+      "CALL purge_audit_events(interval '24 months')",
       "CALL record_maintenance_run('purge')"
     ]);
     expect(purgeStatements({ AUDIT_RETENTION_DAYS: "90" })[5]).toContain("90 days");

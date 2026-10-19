@@ -29,7 +29,7 @@ export function purgeStatements(env: Record<string, string | undefined>): string
     `CALL purge_credential_tokens(interval '${tokens} days', ${batch})`,
     `CALL purge_login_throttles(interval '${throttles} hours', ${batch})`,
     `CALL sweep_expired_bookings(interval '${pending} hours', ${batch})`,
-    `CALL purge_audit_events(interval '${audit}', ${batch})`,
+    `CALL purge_audit_events(interval '${audit}')`,
     "CALL record_maintenance_run('purge')"
   ];
 }
