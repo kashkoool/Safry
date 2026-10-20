@@ -109,7 +109,7 @@ export function assertMailConfig(config: Environment): void {
   const attempts = config["MAIL_RETRY_ATTEMPTS"];
   if (attempts !== undefined && (!Number.isInteger(Number(attempts)) || Number(attempts) < 1 || Number(attempts) > 5))
     throw new Error("MAIL_RETRY_ATTEMPTS must be an integer from 1 (no retry) to 5");
-  for (const [key, min, max] of [["BOOKING_MAX_PENDING_PER_TRAVELER", 1, 1000], ["BOOKING_MAX_DAYS_AHEAD", 1, 1825], ["BOOKING_PENDING_TTL_HOURS", 1, 720]] as const) {
+  for (const [key, min, max] of [["BOOKING_MAX_PENDING_PER_TRAVELER", 1, 1000], ["BOOKING_MAX_DAYS_AHEAD", 1, 1825]] as const) {
     const raw = config[key];
     if (raw !== undefined && (!Number.isInteger(Number(raw)) || Number(raw) < min || Number(raw) > max))
       throw new Error(`${key} must be an integer from ${min} to ${max}`);
@@ -223,6 +223,7 @@ export function validateEnvironment(config: Environment): Environment {
   assertMailConfig(config);
   // Retention and growth limits. The maintenance job (backend/scripts/db/purge.sh) reads the same names with the same ranges.
   integerInRange(config, "AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR", 1, 1000);
+  integerInRange(config, "BOOKING_PENDING_TTL_HOURS", 1, 720);
   integerInRange(config, "SESSION_RETENTION_DAYS", 1, 3650);
   // Empty means "use the default" (compose passes an empty value through), exactly as purge.sh reads it.
   if (config["AUDIT_RETENTION_DAYS"] !== "") integerInRange(config, "AUDIT_RETENTION_DAYS", 30, 3650);

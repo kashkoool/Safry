@@ -46,7 +46,7 @@ describe("validateEnvironment", () => {
       .toMatchObject({ AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR: 30, SESSION_RETENTION_DAYS: 45, PURGE_BATCH_SIZE: 200, LOGIN_THROTTLE_RETENTION_HOURS: 12, CREDENTIAL_TOKEN_RETENTION_DAYS: 3 });
     expect(() => validateEnvironment({ ...valid, AUDIT_RETENTION_DAYS: "" })).not.toThrow();
     for (const [key, value] of [["AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR", "0"], ["AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR", "1e1"], ["SESSION_RETENTION_DAYS", "20.0"], ["SESSION_RETENTION_DAYS", "0"],
-      ["AUDIT_RETENTION_DAYS", "29"], ["AUDIT_RETENTION_DAYS", "0x40"], ["PURGE_BATCH_SIZE", "99"], ["LOGIN_THROTTLE_RETENTION_HOURS", "721"], ["CREDENTIAL_TOKEN_RETENTION_DAYS", "-1"]] as [string, string][])
+      ["AUDIT_RETENTION_DAYS", "29"], ["AUDIT_RETENTION_DAYS", "0x40"], ["PURGE_BATCH_SIZE", "99"], ["LOGIN_THROTTLE_RETENTION_HOURS", "721"], ["CREDENTIAL_TOKEN_RETENTION_DAYS", "-1"], ["BOOKING_PENDING_TTL_HOURS", "0x30"], ["BOOKING_PENDING_TTL_HOURS", "48.0"], ["BOOKING_PENDING_TTL_HOURS", "721"]] as [string, string][])
       expect(() => validateEnvironment({ ...valid, [key]: value }), `${key}=${value}`).toThrow(key);
   });
 

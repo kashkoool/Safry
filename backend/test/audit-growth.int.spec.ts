@@ -65,11 +65,14 @@ describe("audit growth from unauthenticated requests", () => {
 
   it("parallel failures cannot overshoot the budget or write the capped marker twice", async () => {
     const user = await world.createUser(tenant, { roles: ["traveler"] });
+    // Spend the budget first, so every parallel request below races for the single capped marker.
+    for (let i = 0; i < BUDGET; i++) await login(user, "Wrong-Password-1");
+    expect(await rows(`"actorUserId" = $1 AND action = 'identity.login.failed'`, [user.userId])).toBe(BUDGET);
     const replies = await Promise.all(Array.from({ length: 16 }, () => login(user, "Wrong-Password-1")));
     expect(replies.every((reply) => reply.status === 401 || reply.status === 503)).toBe(true);
-    expect(await rows(`"actorUserId" = $1 AND action = 'identity.login.failed'`, [user.userId])).toBeLessThanOrEqual(BUDGET);
-    expect(await rows(`"actorUserId" = $1 AND action = 'identity.login.failed_capped'`, [user.userId])).toBeLessThanOrEqual(1);
+    expect(replies.some((reply) => reply.status === 401)).toBe(true);
     expect(await rows(`"actorUserId" = $1 AND action = 'identity.login.failed'`, [user.userId])).toBe(BUDGET);
+    expect(await rows(`"actorUserId" = $1 AND action = 'identity.login.failed_capped'`, [user.userId])).toBe(1);
   });
 
   it("the budget is per account and per hour: another account is not affected, and rows older than an hour free it", async () => {
@@ -138,6 +141,20 @@ describe("audit growth from unauthenticated requests", () => {
     expect(unknownReplies.every((reply) => reply.status === known.status && reply.status === 202)).toBe(true);
     expect(await rows(`"actorUserId" IS NULL AND action IN ('identity.password.reset_requested', 'identity.email.verification_requested')`)).toBe(0);
     expect((await metric('safry_audit_skipped_total{kind="unknown_address"}')) - before).toBe(8);
+  });
+
+  it("failed sign-ins and refused reset or verification requests share ONE budget per account", async () => {
+    const user = await world.createUser(tenant, { roles: ["traveler"] });
+    for (let i = 0; i < 2; i++) await login(user, "Wrong-Password-1");
+    await post("/auth/password/forgot", { email: user.email }); // issues the link
+    for (let i = 0; i < 6; i++) await post("/auth/password/forgot", { email: user.email }); // refused (one link per minute)
+    for (let i = 0; i < 6; i++) await post("/auth/email/resend", { email: user.email }); // user is verified: nothing to resend, no row
+    for (let i = 0; i < 4; i++) await login(user, "Wrong-Password-1");
+    const total = await rows(
+      `"actorUserId" = $1 AND action IN ('identity.login.failed', 'identity.password.reset_requested.suppressed', 'identity.email.verification_requested.suppressed')`,
+      [user.userId]
+    );
+    expect(total).toBe(BUDGET);
   });
 
   it("refused reset requests for a known account leave at most the hourly budget of rows", async () => {

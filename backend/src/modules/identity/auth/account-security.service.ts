@@ -30,6 +30,12 @@ export interface Attempt {
 export type ThrottleScope = "login" | "register";
 
 const FAILED = "identity.login.failed";
+/** Every audit action an unauthenticated caller can cause for a KNOWN account; together they share ONE hourly budget per account. */
+export const UNAUTH_BUDGET_ACTIONS = [
+  FAILED,
+  "identity.password.reset_requested.suppressed",
+  "identity.email.verification_requested.suppressed"
+] as const;
 const CAPPED = "identity.login.failed_capped";
 const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 /** Thrown inside the transaction to roll back the insert made for an unknown account (see recordFailure). */
@@ -213,13 +219,20 @@ export class AccountSecurityService {
   }
 
   /**
-   * True while `userId` has fewer than the per-hour budget of audit rows with these actions. Unauthenticated callers (failed
-   * logins, reset or verification requests for a known account) can repeat a request up to the per-IP rate limit, so each such row
-   * is gated here. The caller must serialise count-then-insert for the account (recordFailure takes an advisory lock; the credential
-   * flows already hold the user row lock), so the budget is exact.
+   * Serialises count-then-insert of the per-account audit budget (an advisory lock held to the end of the transaction, so it never
+   * blocks the user row that sign-in and refresh use). Every writer of a budgeted row takes it first, with the same key. A random key
+   * (unknown account) costs the same and never contends.
    */
-  async hasAuditRoom(db: Pick<Prisma.TransactionClient, "auditEvent">, userId: string, actions: string[]): Promise<boolean> {
-    const used = await db.auditEvent.count({ where: { actorUserId: userId, action: { in: actions }, occurredAt: { gte: new Date(Date.now() - 3_600_000) } } });
+  async lockAuditBudget(tx: Pick<Prisma.TransactionClient, "$executeRaw">, userId: string | undefined): Promise<void> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${userId ?? randomUUID()}::text, 0::bigint))`;
+  }
+
+  /**
+   * True while `userId` has fewer than the per-hour budget of audit rows caused by unauthenticated requests (failed sign-ins and
+   * refused reset or verification requests share one budget). Call after lockAuditBudget in the same transaction, so the budget is exact.
+   */
+  async hasAuditRoom(db: Pick<Prisma.TransactionClient, "auditEvent">, userId: string): Promise<boolean> {
+    const used = await db.auditEvent.count({ where: { actorUserId: userId, action: { in: [...UNAUTH_BUDGET_ACTIONS] }, occurredAt: { gte: new Date(Date.now() - 3_600_000) } } });
     return used < this.auditRowsPerAccountHour;
   }
 
@@ -256,16 +269,14 @@ export class AccountSecurityService {
     const known = Boolean(context.userId);
     await this.prisma
       .$transaction(async (tx) => {
-        // Serialise the count-then-insert per account (an advisory lock held to the end of the transaction, so it never blocks the
-        // user row that sign-in and refresh use). The unknown-account path takes a lock on a random key: same work, no contention.
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${context.userId ?? randomUUID()}::text, 0::bigint))`;
+        await this.lockAuditBudget(tx, context.userId ?? undefined);
         const rows = await tx.auditEvent.groupBy({
           by: ["action"],
-          where: { actorUserId: context.userId ?? NIL_UUID, action: { in: [FAILED, CAPPED] }, occurredAt: { gte: new Date(Date.now() - 3_600_000) } },
+          where: { actorUserId: context.userId ?? NIL_UUID, action: { in: [...UNAUTH_BUDGET_ACTIONS, CAPPED] }, occurredAt: { gte: new Date(Date.now() - 3_600_000) } },
           _count: { _all: true }
         });
         const count = (action: string): number => rows.find((row) => row.action === action)?._count._all ?? 0;
-        const room = count(FAILED) < this.auditRowsPerAccountHour;
+        const room = UNAUTH_BUDGET_ACTIONS.reduce((sum, action) => sum + count(action), 0) < this.auditRowsPerAccountHour;
         const data = [
           ...(room ? [{ ...base, action: FAILED }] : []),
           ...(!room && known && count(CAPPED) === 0

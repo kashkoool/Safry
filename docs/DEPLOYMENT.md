@@ -33,7 +33,11 @@ Two database logins (see `backend/docs/database-operations.md` section 1):
   login the API has.
 - `safry_maintenance` (`DATABASE_MAINTENANCE_PASSWORD`): `NOSUPERUSER NOBYPASSRLS`, member of `safry_maintenance_ops`. The only
   login the always-on `maintenance` container has. It holds no table privilege and can only execute the seven retention
-  procedures (which run with the owner's rights), so the owner password is never kept in a running container. Created by `db-roles`.
+  routines (which run with the owner's rights), so the owner password is never kept in a running container. Created by `db-roles`.
+  It cannot shorten retention below the owner-set floors (`maintenance_policy`: audit 24 months, sessions 30 days, links 7 days,
+  sign-in counters 24 hours, PENDING booking lifetime 48 hours); to configure a shorter retention than a default, the owner first runs
+  `CALL set_maintenance_policy(...)` (see `backend/docs/database-operations.md`). It can write a false heartbeat, so the
+  `PurgeJobStale` alert is a safety net, not proof.
 
 ## 2. First deployment
 

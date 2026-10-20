@@ -76,7 +76,8 @@ export class CredentialService {
 
   /** A refused request for a known account leaves at most AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR rows per hour; the rest are only counted. */
   private async auditSuppressed(tx: Prisma.TransactionClient, action: string, userId: string, ipAddress: string | undefined, metadata: Prisma.InputJsonObject): Promise<void> {
-    if (await this.security.hasAuditRoom(tx, userId, [action])) await this.audit(tx, action, userId, ipAddress, metadata);
+    await this.security.lockAuditBudget(tx, userId);
+    if (await this.security.hasAuditRoom(tx, userId)) await this.audit(tx, action, userId, ipAddress, metadata);
     else this.security.skippedAudit("account_budget", ipAddress);
   }
 

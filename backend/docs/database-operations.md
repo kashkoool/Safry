@@ -159,7 +159,15 @@ expire or are used; idle sign-in counters after 24 hours; audit events are kept 
 **The job runs by default.** The compose `maintenance` service has no profile, so `docker compose up -d` starts it and it runs once a
 day (a failed run is retried hourly). It connects as `safry_maintenance` (`scripts/db/create-maintenance-role.sql`, created by the
 `db-roles` job): not a superuser, no table privilege, only EXECUTE on the seven maintenance procedures, which are `SECURITY DEFINER`
-with a pinned `search_path` (migration `20261020_maintenance_role`). A leaked password can run retention and nothing else. Each successful run writes a heartbeat row (`maintenance_runs`, job `purge`); the API exports it as
+with a pinned `search_path` (migration `20261020_maintenance_role`). What a leaked password can and cannot do: it cannot read or change any table directly, and it cannot make retention
+shorter than the owner-set policy floors (table `maintenance_policy`, defaults: audit 24 months, sessions 30 days, reset / verification
+links 7 days, sign-in counters 24 hours, PENDING booking lifetime 48 hours; the routines use the greater of the argument and the floor, and
+batch sizes are capped at 100,000). It can still run those routines early and often (delete what is already due, cancel bookings that
+are already expired), and it can write a false heartbeat row, which would hide a stopped job from `PurgeJobStale` until someone checks the
+job log. To keep data for a shorter time than a default (for example `AUDIT_RETENTION_DAYS=90`), the owner lowers the floor first:
+`CALL set_maintenance_policy('audit_retention', interval '90 days');` (settings: `audit_retention`, `session_retention`,
+`credential_token_retention`, `login_throttle_retention`, `booking_pending_ttl`); until then the job keeps data for the floor, never less.
+Each successful run writes a heartbeat row (`maintenance_runs`, job `purge`); the API exports it as
 `safry_maintenance_last_success_timestamp_seconds` and `PurgeJobStale` fires after 36 hours. On a managed database without compose,
 schedule `backend/scripts/db/purge.sh` once a day with the owner login (cron, scheduler job) and keep the same alert. Companion alerts:
 `AuditDefaultPartitionHasRows` (the safety-net partition holds rows) and `RefreshSessionsPastRetention` (a session is older than its

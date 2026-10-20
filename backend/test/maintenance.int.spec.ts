@@ -118,11 +118,71 @@ describe("retention maintenance", () => {
       // Even a hostile search_path or a temp table named like a real one cannot redirect the procedures.
       await asMaintenance(async () => {
         await world.sql.query(`SET search_path = pg_temp, public`);
-        await world.sql.query(`CREATE TEMP TABLE login_throttles (key text, "updatedAt" timestamptz, "blockedUntil" timestamptz, "trustedUntil" timestamptz)`);
-        await world.sql.query(`SELECT purge_login_throttles_batch(interval '24 hours')`);
-        await world.sql.query(`DROP TABLE pg_temp.login_throttles`);
-        await world.sql.query(`RESET search_path`);
+        try {
+          await world.sql.query(`CREATE TEMP TABLE login_throttles (key text, "updatedAt" timestamptz, "blockedUntil" timestamptz, "trustedUntil" timestamptz)`);
+          await world.sql.query(`SELECT purge_login_throttles_batch(interval '24 hours')`);
+        } finally {
+          try {
+            await world.sql.query(`DROP TABLE IF EXISTS pg_temp.login_throttles`);
+          } finally {
+            await world.sql.query(`RESET search_path`);
+          }
+        }
       });
+    });
+  });
+
+  describe("policy floors for the maintenance login", () => {
+    const asMaintenance = async <T>(work: () => Promise<T>): Promise<T> => {
+      await world.sql.query("SET ROLE safry_maintenance_ops");
+      try {
+        return await work();
+      } finally {
+        await world.sql.query("RESET ROLE");
+      }
+    };
+    const partition = async (name: string): Promise<boolean> => (await world.sql.query(`SELECT to_regclass('public.${name}') AS r`)).rows[0].r !== null;
+
+    it("cannot drop audit partitions younger than the policy retention, whatever it asks for", async () => {
+      await world.sql.query(`CALL ensure_audit_event_partitions(5, 1)`);
+      const old = (await world.sql.query(`SELECT 'audit_events_' || to_char(date_trunc('month', now() AT TIME ZONE 'UTC') - interval '5 months', 'YYYY_MM') AS n`)).rows[0].n as string;
+      expect(await partition(old)).toBe(true);
+      await asMaintenance(() => world.sql.query(`CALL purge_audit_events(interval '30 days')`));
+      expect(await partition(old)).toBe(true);
+      // The owner can lower the floor on purpose; then the same call drops it. Restore the default afterwards.
+      await world.sql.query(`CALL set_maintenance_policy('audit_retention', interval '30 days')`);
+      try {
+        await asMaintenance(() => world.sql.query(`CALL purge_audit_events(interval '30 days')`));
+        expect(await partition(old)).toBe(false);
+      } finally {
+        await world.sql.query(`CALL set_maintenance_policy('audit_retention', interval '24 months')`);
+      }
+    });
+
+    it("cannot cancel a PENDING booking before the policy lifetime, or delete sessions and links before the policy retention", async () => {
+      const serviceId = await world.createService(tenant, provider, { capacity: 100 });
+      const t = await traveler();
+      const reply = await book(t, serviceId);
+      const id = String(reply.body["id"]);
+      await ageMinutes(id, 10 * 60); // 10 hours old, policy lifetime is 48 hours
+      await asMaintenance(() => runStatements(world.sql, ["SELECT sweep_expired_bookings_batch(interval '1 hour', 1000)"]));
+      expect((await world.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe("PENDING");
+
+      const user = await world.createUser(tenant, { roles: ["traveler"] });
+      const sessionId = randomUUID();
+      await world.sql.query(
+        `INSERT INTO refresh_sessions ("id", "tokenHash", "userId", "tenantId", "membershipId", "familyId", "authenticatedAt", "expiresAt", "revokedAt", "createdAt")
+         VALUES ($1, $2, $3, $4, $5, $6, now() - interval '12 days', now() - interval '10 days', now() - interval '10 days', now() - interval '12 days')`,
+        [sessionId, randomUUID().replaceAll("-", "").repeat(2), user.userId, tenant.id, user.membershipId, randomUUID()]
+      );
+      await asMaintenance(() => runStatements(world.sql, ["SELECT purge_refresh_sessions_batch(interval '1 day', 100000)"]));
+      expect((await world.sql.query(`SELECT 1 FROM refresh_sessions WHERE id = $1`, [sessionId])).rowCount).toBe(1);
+      await world.sql.query(`DELETE FROM refresh_sessions WHERE id = $1`, [sessionId]);
+    });
+
+    it("the policy table and the policy procedure are closed to the maintenance login", async () => {
+      for (const sql of [`SELECT * FROM maintenance_policy`, `UPDATE maintenance_policy SET minimum = interval '1 day'`, `CALL set_maintenance_policy('audit_retention', interval '30 days')`, `SELECT maintenance_policy_floor('audit_retention')`])
+        await expect(asMaintenance(() => world.sql.query(sql)), sql).rejects.toThrow(/permission denied/);
     });
   });
 

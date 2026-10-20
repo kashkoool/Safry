@@ -424,6 +424,14 @@ model MaintenanceRun {
   @@map("maintenance_runs")
 }
 
+/// Owner-written floors for the retention routines the maintenance login can run (migration 20261020_maintenance_role).
+model MaintenancePolicy {
+  setting String                   @id @db.VarChar(60)
+  minimum Unsupported("interval")
+
+  @@map("maintenance_policy")
+}
+
 /// Single-use links mailed to an identity (password reset, e-mail verification). Only the SHA-256 of the 32-byte token is stored.
 /// Identity-level (an identity spans tenants), so there is no tenant column: row-level security allows only the explicit system scope.
 model CredentialToken {
