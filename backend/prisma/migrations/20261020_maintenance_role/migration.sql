@@ -19,7 +19,8 @@ $$;
 -- Policy floors. The maintenance login chooses the arguments it passes, so the routines it can reach never go below a floor that only the
 -- owner can change (set_maintenance_policy): a leaked password cannot shorten audit retention, expire bookings early or delete
 -- sessions and links sooner than the policy. The floors default to the documented defaults; the effective value is
--- greatest(argument, floor). To keep data for a shorter time than a default, the owner lowers the floor first, for example
+-- the OLDER of (now - argument) and (now - floor), compared as dates (calendar months differ from 30 days, so intervals are not compared
+-- directly). To keep data for a shorter time than a default, the owner lowers the floor first, for example
 --   CALL set_maintenance_policy('audit_retention', interval '90 days');
 CREATE TABLE "maintenance_policy" (
   "setting" VARCHAR(60) NOT NULL,
@@ -56,18 +57,19 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
   removed bigint;
+  cutoff timestamptz;
 BEGIN
   IF retention < interval '1 day' THEN
     RAISE EXCEPTION 'refresh session retention must be at least 1 day';
   END IF;
-  retention := greatest(retention, maintenance_policy_floor('session_retention'));
+  cutoff := least(now() - retention, now() - maintenance_policy_floor('session_retention'));
   batch_size := least(batch_size, 100000);
   PERFORM set_config('app.bypass_rls', 'on', true);
   DELETE FROM "refresh_sessions"
   WHERE "id" IN (
     SELECT "id" FROM "refresh_sessions"
-    WHERE "expiresAt" < now() - retention
-       OR ("revokedAt" IS NOT NULL AND "revokedAt" < now() - retention)
+    WHERE "expiresAt" < cutoff
+       OR ("revokedAt" IS NOT NULL AND "revokedAt" < cutoff)
     LIMIT batch_size
   );
   GET DIAGNOSTICS removed = ROW_COUNT;
@@ -80,18 +82,19 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
   removed bigint;
+  cutoff timestamptz;
 BEGIN
   IF retention < interval '1 day' THEN
     RAISE EXCEPTION 'credential token retention must be at least 1 day';
   END IF;
-  retention := greatest(retention, maintenance_policy_floor('credential_token_retention'));
+  cutoff := least(now() - retention, now() - maintenance_policy_floor('credential_token_retention'));
   batch_size := least(batch_size, 100000);
   PERFORM set_config('app.bypass_rls', 'on', true);
   DELETE FROM "credential_tokens"
   WHERE "id" IN (
     SELECT "id" FROM "credential_tokens"
-    WHERE "expiresAt" < now() - retention
-       OR ("usedAt" IS NOT NULL AND "usedAt" < now() - retention)
+    WHERE "expiresAt" < cutoff
+       OR ("usedAt" IS NOT NULL AND "usedAt" < cutoff)
     LIMIT batch_size
   );
   GET DIAGNOSTICS removed = ROW_COUNT;
@@ -104,16 +107,17 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
   removed bigint;
+  cutoff timestamptz;
 BEGIN
   IF retention < interval '1 hour' THEN
     RAISE EXCEPTION 'login throttle retention must be at least 1 hour';
   END IF;
-  retention := greatest(retention, maintenance_policy_floor('login_throttle_retention'));
+  cutoff := least(now() - retention, now() - maintenance_policy_floor('login_throttle_retention'));
   batch_size := least(batch_size, 100000);
   DELETE FROM "login_throttles"
   WHERE "key" IN (
     SELECT "key" FROM "login_throttles"
-    WHERE "updatedAt" < now() - retention
+    WHERE "updatedAt" < cutoff
       AND ("blockedUntil" IS NULL OR "blockedUntil" < now())
       AND ("trustedUntil" IS NULL OR "trustedUntil" < now())
     LIMIT batch_size
@@ -132,20 +136,21 @@ AS $$
 DECLARE
   tenant uuid;
   remaining integer;
+  cutoff timestamptz;
   swept bigint;
   total bigint := 0;
 BEGIN
   IF pending_ttl < interval '1 hour' THEN
     RAISE EXCEPTION 'pending booking lifetime must be at least 1 hour';
   END IF;
-  pending_ttl := greatest(pending_ttl, maintenance_policy_floor('booking_pending_ttl'));
+  cutoff := least(now() - pending_ttl, now() - maintenance_policy_floor('booking_pending_ttl'));
   remaining := least(batch_size, 100000);
   PERFORM set_config('app.bypass_rls', 'on', true);
   FOR tenant IN SELECT "id" FROM "tenants" LOOP
     EXIT WHEN remaining <= 0;
     WITH stale AS (
       SELECT "id" FROM "bookings"
-      WHERE "tenantId" = tenant AND "status" = 'PENDING' AND "createdAt" < now() - pending_ttl
+      WHERE "tenantId" = tenant AND "status" = 'PENDING' AND "createdAt" < cutoff
       ORDER BY "createdAt"
       LIMIT remaining
       FOR UPDATE SKIP LOCKED
@@ -237,8 +242,7 @@ BEGIN
   IF retention IS NULL OR retention < interval '30 days' THEN
     RAISE EXCEPTION 'audit retention must be at least 30 days';
   END IF;
-  retention := greatest(retention, maintenance_policy_floor('audit_retention'));
-  cutoff := now() - retention;
+  cutoff := least(now() - retention, now() - maintenance_policy_floor('audit_retention'));
   PERFORM set_config('lock_timeout', '500ms', true);
   FOR r IN
     SELECT c.relname::text AS name,
@@ -274,7 +278,30 @@ BEGIN
   END IF;
 END
 $$;
-ALTER PROCEDURE record_maintenance_run(text, jsonb) SECURITY DEFINER SET search_path = public, pg_temp;
+CREATE OR REPLACE PROCEDURE record_maintenance_run(job_name text, run_details jsonb DEFAULT '{}')
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF job_name IS DISTINCT FROM 'purge' THEN
+    RAISE EXCEPTION 'unknown maintenance job';
+  END IF;
+  IF pg_column_size(run_details) > 2048 THEN
+    RAISE EXCEPTION 'maintenance run details too large';
+  END IF;
+  INSERT INTO "maintenance_runs" ("job", "lastSuccessAt", "details") VALUES (job_name, now(), run_details)
+  ON CONFLICT ("job") DO UPDATE SET "lastSuccessAt" = now(), "details" = EXCLUDED."details";
+END
+$$;
+
+-- The maintenance login gets this wrapper instead of the raw partition procedure: no backfill into the past, at most 24 months ahead.
+CREATE OR REPLACE PROCEDURE maintenance_ensure_partitions(months_ahead integer DEFAULT 6)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  CALL ensure_audit_event_partitions(0, least(greatest(coalesce(months_ahead, 6), 1), 24));
+END
+$$;
+REVOKE ALL ON PROCEDURE maintenance_ensure_partitions(integer) FROM PUBLIC, safry_app;
 
 REVOKE ALL ON FUNCTION purge_refresh_sessions_batch(interval, integer) FROM PUBLIC, safry_app;
 REVOKE ALL ON FUNCTION purge_credential_tokens_batch(interval, integer) FROM PUBLIC, safry_app;
@@ -288,6 +315,6 @@ GRANT EXECUTE ON FUNCTION purge_refresh_sessions_batch(interval, integer) TO saf
 GRANT EXECUTE ON FUNCTION purge_credential_tokens_batch(interval, integer) TO safry_maintenance_ops;
 GRANT EXECUTE ON FUNCTION purge_login_throttles_batch(interval, integer) TO safry_maintenance_ops;
 GRANT EXECUTE ON FUNCTION sweep_expired_bookings_batch(interval, integer) TO safry_maintenance_ops;
-GRANT EXECUTE ON PROCEDURE ensure_audit_event_partitions(integer, integer) TO safry_maintenance_ops;
+GRANT EXECUTE ON PROCEDURE maintenance_ensure_partitions(integer) TO safry_maintenance_ops;
 GRANT EXECUTE ON PROCEDURE purge_audit_events(interval) TO safry_maintenance_ops;
 GRANT EXECUTE ON PROCEDURE record_maintenance_run(text, jsonb) TO safry_maintenance_ops;

@@ -180,6 +180,70 @@ describe("retention maintenance", () => {
       await world.sql.query(`DELETE FROM refresh_sessions WHERE id = $1`, [sessionId]);
     });
 
+    it("compares dates, not intervals: 721 days does not beat a 24-month floor, 1 month does not undercut 30 days", async () => {
+      // Audit: a partition whose upper bound is a few days newer than (now - floor) must survive a call that asks for a slightly shorter
+      // retention measured in days. Built on a 36-month floor in a range no other partition uses (the legacy partition is dropped first).
+      await world.sql.query(`DROP TABLE IF EXISTS audit_events_legacy`);
+      await world.sql.query(`DROP TABLE IF EXISTS audit_events_boundary_test`);
+      await world.sql.query(
+        `CREATE TABLE audit_events_boundary_test PARTITION OF audit_events FOR VALUES FROM (now() - interval '36 months' - interval '2 days') TO (now() - interval '36 months' + interval '3 days')`
+      );
+      await world.sql.query(`CALL set_maintenance_policy('audit_retention', interval '36 months')`);
+      try {
+        // 1090 days is "longer" than 36 months as an interval (36 months counts as 1080 days) but a calendar 36 months is 1095-1096 days.
+        await asMaintenance(() => world.sql.query(`CALL purge_audit_events(interval '1090 days')`));
+        expect(await partition("audit_events_boundary_test")).toBe(true);
+        await world.sql.query(`CALL set_maintenance_policy('audit_retention', interval '30 days')`);
+        await asMaintenance(() => world.sql.query(`CALL purge_audit_events(interval '1090 days')`));
+        expect(await partition("audit_events_boundary_test")).toBe(false);
+      } finally {
+        await world.sql.query(`CALL set_maintenance_policy('audit_retention', interval '24 months')`);
+        await world.sql.query(`DROP TABLE IF EXISTS audit_events_boundary_test`);
+      }
+
+      // Sessions: revoked 28 days ago survives "1 month" under the 30-day floor, in any month length.
+      const user = await world.createUser(tenant, { roles: ["traveler"] });
+      const sessionId = randomUUID();
+      await world.sql.query(
+        `INSERT INTO refresh_sessions ("id", "tokenHash", "userId", "tenantId", "membershipId", "familyId", "authenticatedAt", "expiresAt", "revokedAt", "createdAt")
+         VALUES ($1, $2, $3, $4, $5, $6, now() - interval '40 days', now() - interval '28 days', now() - interval '28 days', now() - interval '40 days')`,
+        [sessionId, randomUUID().replaceAll("-", "").repeat(2), user.userId, tenant.id, user.membershipId, randomUUID()]
+      );
+      await asMaintenance(() => runStatements(world.sql, ["SELECT purge_refresh_sessions_batch(interval '1 month', 1000)"]));
+      expect((await world.sql.query(`SELECT 1 FROM refresh_sessions WHERE id = $1`, [sessionId])).rowCount).toBe(1);
+      await world.sql.query(`DELETE FROM refresh_sessions WHERE id = $1`, [sessionId]);
+    });
+
+    it("the booking floor follows the configured lifetime: with 168 hours a 100-hour-old PENDING booking is kept, a 200-hour-old one is cancelled", async () => {
+      const serviceId = await world.createService(tenant, provider, { capacity: 100 });
+      const t = await traveler();
+      const young = String((await book(t, serviceId, { serviceDate: world.futureDate(20) })).body["id"]);
+      const old = String((await book(t, serviceId, { serviceDate: world.futureDate(21) })).body["id"]);
+      await ageMinutes(young, 100 * 60);
+      await ageMinutes(old, 200 * 60);
+      await world.sql.query(`CALL set_maintenance_policy('booking_pending_ttl', interval '168 hours')`);
+      try {
+        await asMaintenance(() => runStatements(world.sql, ["SELECT sweep_expired_bookings_batch(interval '1 hour', 1000)"]));
+        await runStatements(world.sql, ["SELECT sweep_expired_bookings_batch(interval '168 hours', 1000)"]);
+      } finally {
+        await world.sql.query(`CALL set_maintenance_policy('booking_pending_ttl', interval '48 hours')`);
+      }
+      expect((await world.prisma.booking.findUniqueOrThrow({ where: { id: young } })).status).toBe("PENDING");
+      expect((await world.prisma.booking.findUniqueOrThrow({ where: { id: old } })).status).toBe("CANCELLED");
+    });
+
+    it("partition creation is capped at 24 months ahead for the login, and the heartbeat accepts only the purge job with a small payload", async () => {
+      await asMaintenance(() => world.sql.query(`CALL maintenance_ensure_partitions(100)`));
+      const month = async (plus: number): Promise<string> =>
+        (await world.sql.query(`SELECT 'audit_events_' || to_char(date_trunc('month', now() AT TIME ZONE 'UTC') + make_interval(months => $1::int), 'YYYY_MM') AS n`, [plus])).rows[0].n as string;
+      expect(await partition(await month(24))).toBe(true);
+      expect(await partition(await month(25))).toBe(false);
+      await expect(asMaintenance(() => world.sql.query(`CALL ensure_audit_event_partitions(0, 1)`))).rejects.toThrow(/permission denied/);
+      await expect(asMaintenance(() => world.sql.query(`CALL record_maintenance_run('other')`))).rejects.toThrow(/unknown maintenance job/);
+      await expect(asMaintenance(() => world.sql.query(`CALL record_maintenance_run('purge', jsonb_build_object('x', repeat('a', 5000)))`))).rejects.toThrow(/too large/);
+      await asMaintenance(() => world.sql.query(`CALL record_maintenance_run('purge')`));
+    });
+
     it("the policy table and the policy procedure are closed to the maintenance login", async () => {
       for (const sql of [`SELECT * FROM maintenance_policy`, `UPDATE maintenance_policy SET minimum = interval '1 day'`, `CALL set_maintenance_policy('audit_retention', interval '30 days')`, `SELECT maintenance_policy_floor('audit_retention')`])
         await expect(asMaintenance(() => world.sql.query(sql)), sql).rejects.toThrow(/permission denied/);

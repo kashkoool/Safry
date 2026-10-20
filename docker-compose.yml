@@ -87,7 +87,8 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       RUNTIME_PASSWORD: ${DATABASE_RUNTIME_PASSWORD:?Set DATABASE_RUNTIME_PASSWORD in .env}
       MAINTENANCE_PASSWORD: ${DATABASE_MAINTENANCE_PASSWORD:?Set DATABASE_MAINTENANCE_PASSWORD in .env}
-    entrypoint: ["sh", "-c", "psql -v runtime_password=\"$$RUNTIME_PASSWORD\" -f /sql/create-runtime-role.sql && psql -v maintenance_password=\"$$MAINTENANCE_PASSWORD\" -f /sql/create-maintenance-role.sql"]
+      BOOKING_TTL_HOURS: ${BOOKING_PENDING_TTL_HOURS:-48}
+    entrypoint: ["sh", "-c", "psql -v runtime_password=\"$$RUNTIME_PASSWORD\" -f /sql/create-runtime-role.sql && psql -v maintenance_password=\"$$MAINTENANCE_PASSWORD\" -v booking_ttl_hours=\"$$BOOKING_TTL_HOURS\" -f /sql/create-maintenance-role.sql"]
 
   # Opt-in demo seed (creates known demo accounts). Refuses to run unless ALLOW_DEMO_SEED_IN_PRODUCTION=true.
   # Never part of a real deployment: docker compose run --rm seed
@@ -226,7 +227,7 @@ services:
   # runbook always purges. Daily: audit_events partitions created ahead, expired refresh sessions, credential links and idle login
   # counters purged, expired PENDING bookings cancelled, audit partitions older than 24 months dropped, then a heartbeat is written
   # (the API exports its age; the PurgeJobStale alert fires after 36 hours). A failed run is retried hourly. Retention settings and
-  # their ranges: docs/DEPLOYMENT.md. Script: backend/scripts/db/purge.sh (owner-only procedures).
+  # their ranges: docs/DEPLOYMENT.md. Script: backend/scripts/db/purge.sh (calls routines that run with the owner's rights; this service logs in as the procedures-only safry_maintenance role).
   maintenance:
     <<: *hardening
     image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24

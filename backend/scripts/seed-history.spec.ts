@@ -52,7 +52,7 @@ describe("history seed determinism", () => {
 describe("maintenance helpers", () => {
   it("builds the same calls as purge.sh and rejects non-numbers and out-of-range values", () => {
     expect(purgeStatements({})).toEqual([
-      "CALL ensure_audit_event_partitions(0, 6)",
+      "CALL maintenance_ensure_partitions(6)",
       "SELECT purge_refresh_sessions_batch(interval '30 days', 5000)",
       "SELECT purge_credential_tokens_batch(interval '7 days', 5000)",
       "SELECT purge_login_throttles_batch(interval '24 hours', 5000)",
@@ -65,7 +65,7 @@ describe("maintenance helpers", () => {
     expect(() => purgeStatements({ AUDIT_RETENTION_DAYS: "5" })).toThrow(/from 30 to 3650/);
     expect(() => purgeStatements({ AUDIT_RETENTION_DAYS: "1" })).toThrow(/from 30 to 3650/);
     expect(() => purgeStatements({ SESSION_RETENTION_DAYS: "0" })).toThrow(/from 1 to 3650/);
-    expect(() => purgeStatements({ AUDIT_PARTITIONS_AHEAD: "61" })).toThrow(/from 1 to 60/);
+    expect(() => purgeStatements({ AUDIT_PARTITIONS_AHEAD: "25" })).toThrow(/from 1 to 24/);
     expect(() => purgeStatements({ PURGE_BATCH_SIZE: "1" })).toThrow(/from 100 to 100000/);
   });
   it("purge.sh runs the same procedures in the same order as the Node helper", () => {

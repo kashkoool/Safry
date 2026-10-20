@@ -21,11 +21,11 @@ export function purgeStatements(env: Record<string, string | undefined>): string
   const tokens = integer("CREDENTIAL_TOKEN_RETENTION_DAYS", "7", 1, 3650);
   const throttles = integer("LOGIN_THROTTLE_RETENTION_HOURS", "24", 1, 720);
   const pending = integer("BOOKING_PENDING_TTL_HOURS", "48", 1, 720);
-  const ahead = integer("AUDIT_PARTITIONS_AHEAD", "6", 1, 60);
+  const ahead = integer("AUDIT_PARTITIONS_AHEAD", "6", 1, 24);
   const batch = integer("PURGE_BATCH_SIZE", "5000", 100, 100_000);
   const audit = env["AUDIT_RETENTION_DAYS"] ? `${integer("AUDIT_RETENTION_DAYS", "", 30, 3650)} days` : "24 months";
   return [
-    `CALL ensure_audit_event_partitions(0, ${ahead})`,
+    `CALL maintenance_ensure_partitions(${ahead})`,
     `SELECT purge_refresh_sessions_batch(interval '${sessions} days', ${batch})`,
     `SELECT purge_credential_tokens_batch(interval '${tokens} days', ${batch})`,
     `SELECT purge_login_throttles_batch(interval '${throttles} hours', ${batch})`,

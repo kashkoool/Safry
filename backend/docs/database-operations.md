@@ -167,6 +167,21 @@ are already expired), and it can write a false heartbeat row, which would hide a
 job log. To keep data for a shorter time than a default (for example `AUDIT_RETENTION_DAYS=90`), the owner lowers the floor first:
 `CALL set_maintenance_policy('audit_retention', interval '90 days');` (settings: `audit_retention`, `session_retention`,
 `credential_token_retention`, `login_throttle_retention`, `booking_pending_ttl`); until then the job keeps data for the floor, never less.
+Details of the bounds:
+- A floor is compared as a date, not as an interval: the routines use the older of (now minus the argument) and (now minus the floor), so
+  `721 days` does not beat a 24-month floor and `1 month` does not undercut `30 days`.
+- The booking floor must follow the lifetime the API uses. The compose `db-roles` job writes `BOOKING_PENDING_TTL_HOURS` into it; **when you
+  raise `BOOKING_PENDING_TTL_HOURS`, run `db-roles` again** (or `CALL set_maintenance_policy('booking_pending_ttl', make_interval(hours => N))`),
+  otherwise the floor stays lower than the API's lifetime. The job still passes the configured value, so the job itself never cancels early.
+- The login gets `maintenance_ensure_partitions(n)` (at most 24 months ahead, never into the past) instead of the raw partition procedure,
+  and `record_maintenance_run` accepts only the job `purge` with a payload under 2 KB. Residual: it can still write a false heartbeat.
+- Failed attempts by signed-in users (password change, re-authentication, second factor) are written through the same path as failed
+  sign-ins, so they share the per-account hourly budget (`AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR`, default 20) with failed sign-ins and
+  refused reset / verification requests. After the budget is spent, one `identity.login.failed_capped` row marks the hour and further
+  per-attempt rows for that account are not written until the hour passes; they are counted in `safry_audit_skipped_total{kind="account_budget"}`
+  and logged. What still survives in the audit trail: successful sign-ins, sign-outs, password and MFA changes, lock-outs
+  (`identity.account.locked`), session revocations, the capped marker and every administrator action.
+
 Each successful run writes a heartbeat row (`maintenance_runs`, job `purge`); the API exports it as
 `safry_maintenance_last_success_timestamp_seconds` and `PurgeJobStale` fires after 36 hours. On a managed database without compose,
 schedule `backend/scripts/db/purge.sh` once a day with the owner login (cron, scheduler job) and keep the same alert. Companion alerts:

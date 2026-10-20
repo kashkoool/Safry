@@ -1,6 +1,6 @@
 #!/bin/sh
 # Daily database maintenance. Owner-only procedures, safe to repeat:
-#   1. ensure_audit_event_partitions: creates the monthly audit_events partitions for the next AUDIT_PARTITIONS_AHEAD months
+#   1. maintenance_ensure_partitions (wraps ensure_audit_event_partitions, at most 24 months ahead): creates the monthly audit_events partitions for the next AUDIT_PARTITIONS_AHEAD months
 #      (migration 20261012_db_audit_partitioning). If this job stops for longer, rows land in audit_events_default (never lost)
 #      and are moved into their month the next time the partition is created.
 #   2. purge_refresh_sessions_batch (repeated until 0 rows): batched removal of expired or revoked refresh sessions.
@@ -20,7 +20,7 @@
 #   LOGIN_THROTTLE_RETENTION_HOURS  default 24, 1..720 (hours without activity)
 #   BOOKING_PENDING_TTL_HOURS       default 48, 1..720: must equal the API's setting of the same name
 #   AUDIT_RETENTION_DAYS            unset = 24 months; otherwise 30..3650 days
-#   AUDIT_PARTITIONS_AHEAD          months of audit partitions to keep ready, default 6 (1..60)
+#   AUDIT_PARTITIONS_AHEAD          months of audit partitions to keep ready, default 6 (1..24)
 #   PURGE_BATCH_SIZE                rows per committed batch, default 5000 (100..100000)
 set -eu
 url="${DATABASE_MAINTENANCE_URL:-${DATABASE_MIGRATE_URL:-${DATABASE_URL:-}}}"
@@ -38,7 +38,7 @@ sessions="$(integer SESSION_RETENTION_DAYS 30 1 3650)"
 tokens="$(integer CREDENTIAL_TOKEN_RETENTION_DAYS 7 1 3650)"
 throttles="$(integer LOGIN_THROTTLE_RETENTION_HOURS 24 1 720)"
 pending="$(integer BOOKING_PENDING_TTL_HOURS 48 1 720)"
-ahead="$(integer AUDIT_PARTITIONS_AHEAD 6 1 60)"
+ahead="$(integer AUDIT_PARTITIONS_AHEAD 6 1 24)"
 batch="$(integer PURGE_BATCH_SIZE 5000 100 100000)"
 if [ -n "${AUDIT_RETENTION_DAYS:-}" ]; then
   audit_retention="$(integer AUDIT_RETENTION_DAYS 30 30 3650) days"
@@ -53,7 +53,7 @@ drain() {
     [ "$handled" -gt 0 ] || break
   done
 }
-psql "$url" -v ON_ERROR_STOP=1 -c "CALL ensure_audit_event_partitions(0, $ahead)"
+psql "$url" -v ON_ERROR_STOP=1 -c "CALL maintenance_ensure_partitions($ahead)"
 drain "SELECT purge_refresh_sessions_batch(interval '$sessions days', $batch)"
 drain "SELECT purge_credential_tokens_batch(interval '$tokens days', $batch)"
 drain "SELECT purge_login_throttles_batch(interval '$throttles hours', $batch)"

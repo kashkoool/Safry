@@ -19,3 +19,10 @@ ALTER ROLE safry_maintenance SET statement_timeout = '30min';
 
 SELECT current_database() AS db \gset
 GRANT CONNECT ON DATABASE :"db" TO safry_maintenance;
+
+-- The booking sweep floor follows the lifetime the API uses (BOOKING_PENDING_TTL_HOURS): pass it with -v booking_ttl_hours=48 (the compose
+-- db-roles job does). Run this script again whenever BOOKING_PENDING_TTL_HOURS changes; without it the floor stays at the last value
+-- (default 48 h), which only ever makes the sweep more cautious when the TTL is lower and is overridden by the job's own larger argument.
+\if :{?booking_ttl_hours}
+  CALL set_maintenance_policy('booking_pending_ttl', make_interval(hours => (:'booking_ttl_hours')::integer));
+\endif
