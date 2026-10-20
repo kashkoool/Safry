@@ -15,10 +15,11 @@ are detailed in `backend/docs/database-operations.md`.
 | `api` | `backend/Dockerfile` target `runtime` (Alpine, production deps only) | `node` (uid 1000) | `data` + `app` | never | long-running |
 | `web` | `frontend/Dockerfile` (nginx-unprivileged 1.31) | uid 101 | `app` | `WEB_BIND:WEB_PORT` (loopback by default) | long-running |
 | `migrate` | target `migrate` | `node` | `data` | no | one-off (`run --rm`) |
-| `db-roles` | `postgres:17.11-alpine` + `backend/scripts/db/create-runtime-role.sql` | postgres | `data` | no | one-off |
+| `db-roles` | `postgres:17.11-alpine` + `backend/scripts/db/create-runtime-role.sql` and `create-maintenance-role.sql` | postgres | `data` | no | one-off |
 | `seed` | target `migrate` | `node` | `data` | no | one-off, demo only, profile `seed` |
 | `proxy` | `caddy:2.11.7-alpine` | root without capabilities except NET_BIND_SERVICE | `app` | 80, 443 (tcp+udp) | optional, profile `tls` |
 | `backup` | `postgres:17.11-alpine` + `backend/scripts/backup/backup.sh` | postgres | `data` | no | optional, profile `backup` |
+| `maintenance` | `postgres:17.11-alpine` + `backend/scripts/db/purge.sh` | postgres, logs in as `safry_maintenance` (procedures only) | `data` | no | long-running (daily loop), default stack |
 
 Every long-running service: read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, memory/PID limits,
 log rotation (10 MB x 5). The one-off jobs (`migrate`, `db-roles`, `seed`) have the read-only root filesystem, `cap_drop: ALL`,
@@ -30,6 +31,13 @@ Two database logins (see `backend/docs/database-operations.md` section 1):
   `db-roles`, `seed` and `backup`.
 - `safry_runtime` (`DATABASE_RUNTIME_PASSWORD`): `NOSUPERUSER NOBYPASSRLS`, member of `safry_app`. The only
   login the API has.
+- `safry_maintenance` (`DATABASE_MAINTENANCE_PASSWORD`): `NOSUPERUSER NOBYPASSRLS`, member of `safry_maintenance_ops`. The only
+  login the always-on `maintenance` container has. It holds no table privilege and can only execute the seven retention
+  routines (which run with the owner's rights), so the owner password is never kept in a running container. Created by `db-roles`.
+  It cannot shorten retention below the owner-set floors (`maintenance_policy`: audit 24 months, sessions 30 days, links 7 days,
+  sign-in counters 24 hours, PENDING booking lifetime 48 hours); to configure a shorter retention than a default, the owner first runs
+  `CALL set_maintenance_policy(...)` (see `backend/docs/database-operations.md`). It can write a false heartbeat, so the
+  `PurgeJobStale` alert is a safety net, not proof.
 
 ## 2. First deployment
 
@@ -42,9 +50,14 @@ docker compose build                # api + web (add --profile ops for the migra
 docker compose --profile ops build migrate
 docker compose up -d --wait postgres
 docker compose run --rm migrate     # prisma migrate deploy with the owner login
-docker compose run --rm db-roles    # creates safry_runtime with DATABASE_RUNTIME_PASSWORD
-docker compose up -d --wait         # api + web
+docker compose run --rm db-roles    # creates safry_runtime and safry_maintenance (DATABASE_RUNTIME_PASSWORD, DATABASE_MAINTENANCE_PASSWORD)
+docker compose up -d --wait         # api + web + the daily maintenance (retention) job
 ```
+
+The maintenance service is part of the default stack, so this command starts it; there is no separate step to remember. Go-live check
+for it: after the first day, `docker compose logs maintenance` ends with `purge done`, and the API metric
+`safry_maintenance_last_success_timestamp_seconds` is within the last 24 hours (the `PurgeJobStale` alert fires after 36 hours without a
+successful run; `docs/ALERTING.md`). Without it, sessions, links and audit events pile up forever.
 
 A fresh database has no tenant or administrator yet. `backend/prisma/bootstrap.ts` (`pnpm db:bootstrap`)
 creates the first tenant and administrator without any demo data and is safe in production. There is no
@@ -230,6 +243,7 @@ Operational consequences:
 |---|---|---|
 | `POSTGRES_PASSWORD` | yes | owner login; URL-safe (`openssl rand -hex 32`) |
 | `DATABASE_RUNTIME_PASSWORD` | yes | API login; URL-safe, different from the owner password |
+| `DATABASE_MAINTENANCE_PASSWORD` | yes | maintenance-job login (procedures only); URL-safe, different from the owner and runtime passwords. An existing deployment adds it, then runs `migrate` and `db-roles` once before `up -d` |
 | `JWT_ACCESS_SECRET` | yes | 32+ random characters; placeholders rejected at boot |
 | `MFA_ENCRYPTION_KEY` | yes | different from `JWT_ACCESS_SECRET` |
 | `WEB_BIND`, `WEB_PORT` | no | default `127.0.0.1:3001` |
@@ -240,7 +254,8 @@ Operational consequences:
 | `RESEND_API_KEY`, `MAIL_FROM`, `APP_BASE_URL` | yes | transactional e-mail, see section 5a; `MAIL_TRANSPORT` is fixed to `resend` by compose |
 | `SITE_ADDRESS`, `HTTP_PORT`, `HTTPS_PORT`, `HTTP_BIND` | tls profile | public host name and published ports |
 | `BACKUP_INTERVAL_SECONDS`, `BACKUP_KEEP_DAYS` | backup profile | default daily, keep 14 days |
-| `SESSION_RETENTION_DAYS`, `AUDIT_RETENTION_DAYS` | maintenance profile | daily maintenance job (`backend/scripts/db/purge.sh`): creates audit partitions ahead, purges sessions 30 days after expiry (default), drops `audit_events` partitions older than 24 months (default; `AUDIT_RETENTION_DAYS` overrides, min 30) |
+| `SESSION_RETENTION_DAYS` (30, 1-3650), `CREDENTIAL_TOKEN_RETENTION_DAYS` (7, 1-3650), `LOGIN_THROTTLE_RETENTION_HOURS` (24, 1-720), `AUDIT_RETENTION_DAYS` (unset = 24 months, else 30-3650), `PURGE_BATCH_SIZE` (5000, 100-100000) | no | daily maintenance job (`backend/scripts/db/purge.sh`, runs in the default stack): creates audit partitions ahead, purges refresh sessions, reset / verification links and idle sign-in counters, cancels expired PENDING bookings, drops `audit_events` partitions older than the retention, then writes its heartbeat. Out-of-range values stop the job (and the API for the names it reads) with a clear message |
+| `AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR` | no | default 20 (1-1000): most audit rows unauthenticated requests (failed sign-ins, refused reset or verification requests) may add to ONE known account per hour; further attempts are counted in `safry_audit_skipped_total`. Unknown accounts store no audit row |
 | `API_MEM_LIMIT`, `API_CPUS`, `POSTGRES_MEM_LIMIT`, `POSTGRES_CPUS` | no | resource limits |
 | `IMAGE_PREFIX`, `IMAGE_TAG` | no | image names `<prefix>-api:<tag>` etc. Default prefix `safry`: two checkouts on one host share image names, so set a distinct `IMAGE_PREFIX` (and `COMPOSE_PROJECT_NAME`) in each `.env`. |
 
@@ -270,7 +285,7 @@ Settings (API container; compose already wires them, `scripts/check-env.sh` chec
 | `MAIL_ADDRESS_REGISTRATION_PER_DAY`, `MAIL_ADDRESS_RESET_PER_DAY` | optional: how many sign-ups (default 10), and how many forgot-password or resend-verification requests (default 10), one client address may make a day before further ones send no mail (an IPv6 address counts as its whole /64; counted across replicas with `RATE_LIMIT_REDIS_URL`). The request is still answered with the same neutral reply and timing, so nothing about an account leaks; `safry_mail_address_capped_total{scope}` counts the skipped mails. Behind a proxy `TRUST_PROXY` must be set, or every visitor shares the proxy address. A bot-check on sign-up (Cloudflare Turnstile) is a separate deployment step, not part of this setting |
 | `BOOKING_MAX_PENDING_PER_TRAVELER` | optional: open PENDING bookings one traveler may hold (1-1000, default 10); more answers 409 `BOOKING_PENDING_LIMIT` |
 | `BOOKING_MAX_DAYS_AHEAD` | optional: furthest bookable service date in days from today (1-1825, default 365); later answers 400 `BOOKING_DATE_TOO_FAR` |
-| `BOOKING_PENDING_TTL_HOURS` | optional: hours until an unconfirmed PENDING booking expires (1-720, default 48). Expiry is computed from `createdAt`: expired bookings free capacity at once, cannot be confirmed (409 `BOOKING_EXPIRED`), are listed as CANCELLED with `expired: true`, and are cancelled in the database lazily when touched; no scheduler needed |
+| `BOOKING_PENDING_TTL_HOURS` | optional: hours until an unconfirmed PENDING booking expires (1-720, default 48). Expiry is computed from `createdAt`: expired bookings free capacity at once, cannot be confirmed (409 `BOOKING_EXPIRED`), are listed as CANCELLED with `expired: true`, and are cancelled in the database when touched or by the daily maintenance job. Set it identically for the API and the maintenance job (compose passes the same value to both) |
 
 ### One-time setup
 

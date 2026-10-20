@@ -243,3 +243,75 @@ groups:
           description: "Password-reset and verification mails are not being delivered (at least 3 failures in 30 minutes, over 25% of attempts)."
           first_action: "Check the mail provider status page and the API key; look at the API log lines 'mail ... not delivered' for the provider answer."
           runbook: "docs/ALERTING.md#mailfailurerate"
+
+  - name: safry-storage
+    rules:
+      - alert: PurgeJobStale
+        # The daily retention job (backend/scripts/db/purge.sh, compose service "maintenance") writes a heartbeat after every successful run; the API exports it.
+        # A migration seeds a baseline, so a job that never ran is stale 36 hours after the deploy. 129600 s = 36 h. Omitted while the database is down (DatabaseUnreachable covers that).
+        expr: (time() - max(safry_maintenance_last_success_timestamp_seconds)) > 129600
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The daily retention job has not succeeded for 36 hours"
+          description: "Sessions, reset links, sign-in counters and audit events are not being purged, expired bookings are not being cancelled and audit partitions are not being created ahead."
+          first_action: "Run 'docker compose logs --tail 100 maintenance' (or the scheduler job log) and fix the error shown; then 'docker compose restart maintenance' to run it now. Make sure the maintenance service is up: 'docker compose ps maintenance'."
+          runbook: "docs/ALERTING.md#purgejobstale"
+
+      - alert: StorageSignalsMissing
+        # The four storage alerts below and PurgeJobStale are silent when their gauges are missing, so this one watches the gauges themselves:
+        # the heartbeat series is absent, or reading it failed (safry_storage_signal_errors_total grew) for 6 hours. Also fires if the API stays unreachable (ApiDown pages first).
+        expr: absent(safry_maintenance_last_success_timestamp_seconds) or (sum(increase(safry_storage_signal_errors_total[30m])) > 0)
+        for: 6h
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Storage-health gauges are missing, so the retention alerts cannot fire"
+          description: "For 6 hours the API has not exported the retention heartbeat (database read failing, or the metrics scrape itself missing). PurgeJobStale, AuditDefaultPartitionHasRows, RefreshSessionsPastRetention and TableDeadTuplesHigh are blind meanwhile."
+          first_action: "Check ApiDown and DatabaseUnreachable first. If both are quiet, read the API log for the failing read and check that the runtime login can execute audit_default_partition_rows() and read maintenance_runs (migration 20261019_retention_maintenance)."
+          runbook: "docs/ALERTING.md#storagesignalsmissing"
+
+      - alert: AuditDefaultPartitionHasRows
+        # audit_events_default only receives rows that fit no monthly partition: the job that creates partitions ahead has stopped for longer than the months kept ready (default 6, the migration made 12).
+        expr: max(safry_audit_default_partition_rows) > 0
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Audit events are landing in the safety-net partition"
+          description: "audit_events_default holds rows, so a month has no partition of its own and those rows are never purged by age until the partition exists."
+          first_action: "Run the maintenance job now ('docker compose restart maintenance'); it creates the missing months and moves the rows. If it keeps failing, run CALL ensure_audit_event_partitions(0, 6) as the database owner."
+          runbook: "docs/ALERTING.md#auditdefaultpartitionhasrows"
+
+      - alert: RefreshSessionsPastRetention
+        # 1 when some refresh session expired or was revoked more than SESSION_RETENTION_DAYS + 3 days ago (default 30 + 3), so the purge is not keeping up.
+        expr: max(safry_refresh_sessions_overdue) > 0
+        for: 6h
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Refresh sessions older than their retention are still stored"
+          description: "At least one refresh session is more than 3 days older than the retention (default 30 days after expiry); the purge is not running or not keeping up, and the table keeps growing."
+          first_action: "Check PurgeJobStale and the maintenance log. If the job runs but the sessions remain, a long transaction may block the delete: look at pg_stat_activity, then run CALL purge_refresh_sessions(interval '30 days') as the owner."
+          runbook: "docs/ALERTING.md#refreshsessionspastretention"
+
+      - alert: TableDeadTuplesHigh
+        # Dead rows (deleted, not yet vacuumed) over 100000 AND over 30% of the table for 2 hours: autovacuum is blocked (long transaction, replication slot) or cannot keep up.
+        # Migration 20261019_retention_maintenance lowers the autovacuum threshold of the churn tables to about 2%, so this should be rare. Tune: raise 100000 for larger tables.
+        expr: |
+          (max by (table) (safry_table_dead_tuples) > 100000)
+          and
+          (
+            max by (table) (safry_table_dead_tuples)
+            /
+            (max by (table) (safry_table_dead_tuples) + max by (table) (safry_table_live_tuples))
+          ) > 0.3
+        for: 2h
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Table {{ $labels.table }} is mostly dead rows"
+          description: "More than 100000 rows of {{ $labels.table }} are deleted but not yet reclaimed (over 30% of the table); disk use grows and queries slow down."
+          first_action: "Look for a long-running transaction or a stale replication slot (pg_stat_activity, pg_replication_slots), then run VACUUM (ANALYZE) on the table as the owner. Docs: backend/docs/database-operations.md, 'Disk space after a purge'."
+          runbook: "docs/ALERTING.md#tabledeadtupleshigh"

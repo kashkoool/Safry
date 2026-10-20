@@ -323,7 +323,9 @@ export class AuthService {
         current.user.email,
         current.membership,
         metadata,
-        "identity.session.refresh",
+        // Rotation is routine (up to 4 per hour per active browser): counted in a metric, not audited row by row. Sign-in, sign-out,
+        // reuse detection and session revocation keep their audit rows.
+        null,
         current.user.authVersion,
         { familyId: current.familyId, authenticatedAt: current.authenticatedAt },
         current.lastUsedAt ?? current.createdAt
@@ -505,7 +507,7 @@ export class AuthService {
     email: string,
     membership: IssuableMembership,
     metadata: ClientMetadata,
-    auditAction: string,
+    auditAction: string | null,
     expectedAuthVersion: number,
     family?: SessionFamily,
     lastActivityAt?: Date
@@ -566,17 +568,19 @@ export class AuthService {
       issuer: ACCESS_TOKEN.issuer,
       audience: ACCESS_TOKEN.audience
     });
-    await tx.auditEvent.create({
-      data: {
-        tenantId: membership.tenantId,
-        actorUserId: userId,
-        requestId: requestContext.getStore()?.requestId,
-        action: auditAction,
-        entityType: "refresh_session",
-        entityId: session.id,
-        ipAddress: metadata.ipAddress
-      }
-    });
+    if (auditAction)
+      await tx.auditEvent.create({
+        data: {
+          tenantId: membership.tenantId,
+          actorUserId: userId,
+          requestId: requestContext.getStore()?.requestId,
+          action: auditAction,
+          entityType: "refresh_session",
+          entityId: session.id,
+          ipAddress: metadata.ipAddress
+        }
+      });
+    else this.metrics.sessionRotated();
     return { accessToken, refreshToken, refreshExpiresAt: expiresAt, expiresIn,
       idleTimeoutSeconds: this.idleMs / 1000, user };
   }

@@ -5,7 +5,7 @@ type Environment = Record<string, unknown>;
 
 function integerInRange(config: Environment, key: string, min: number, max: number): void {
   const raw = config[key];
-  if (raw !== undefined && (!Number.isInteger(Number(raw)) || Number(raw) < min || Number(raw) > max)) throw new Error(`${key} must be an integer from ${min} to ${max}`);
+  if (raw !== undefined && ((typeof raw !== "string" && typeof raw !== "number") || !/^\d+$/.test(String(raw)) || Number(raw) < min || Number(raw) > max)) throw new Error(`${key} must be an integer from ${min} to ${max}`);
 }
 
 function requiredString(config: Environment, key: string, minimumLength = 1): string {
@@ -21,7 +21,8 @@ const TUNABLE_INTEGERS = ["DATABASE_CONNECT_TIMEOUT_MS", "DATABASE_IDLE_TIMEOUT_
     "DATABASE_IDLE_IN_TRANSACTION_TIMEOUT_MS", "DATABASE_TX_MAX_WAIT_MS", "DATABASE_TX_TIMEOUT_MS", "AUTH_CACHE_TTL_MS",
     "AUTH_CACHE_MAX_ENTRIES", "RATE_LIMIT_IP_PER_MINUTE", "RATE_LIMIT_ACCOUNT_PER_MINUTE", "RATE_LIMIT_USER_PER_MINUTE", "RATE_LIMIT_REFRESH_SESSION_PER_MINUTE", "RATE_LIMIT_REFRESH_INVALID_PER_MINUTE",
     "SHUTDOWN_DRAIN_MS", "SHUTDOWN_DEADLINE_MS", "HTTP_KEEP_ALIVE_TIMEOUT_MS", "HTTP_REQUEST_TIMEOUT_MS", "ACTIVITY_WRITE_INTERVAL_MS", "MAIL_TIMEOUT_MS", "AUTH_MAIL_MIN_RESPONSE_MS", "MAIL_RETRY_ATTEMPTS", "MAIL_RETRY_BASE_MS", "MAIL_BUDGET_REGISTRATION_PER_HOUR", "MAIL_BUDGET_REGISTRATION_PER_DAY", "MAIL_BUDGET_RESET_PER_HOUR", "MAIL_BUDGET_RESET_PER_DAY", "MAIL_BUDGET_SECURITY_PER_HOUR", "MAIL_BUDGET_SECURITY_PER_DAY", "MAIL_ADDRESS_REGISTRATION_PER_DAY", "MAIL_ADDRESS_RESET_PER_DAY",
-    "BOOKING_MAX_PENDING_PER_TRAVELER", "BOOKING_MAX_DAYS_AHEAD", "BOOKING_PENDING_TTL_HOURS"];
+    "BOOKING_MAX_PENDING_PER_TRAVELER", "BOOKING_MAX_DAYS_AHEAD", "BOOKING_PENDING_TTL_HOURS",
+    "AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR", "SESSION_RETENTION_DAYS", "CREDENTIAL_TOKEN_RETENTION_DAYS", "LOGIN_THROTTLE_RETENTION_HOURS", "PURGE_BATCH_SIZE"];
 
 /**
  * Shannon estimate of the bits in a secret (length x per-character entropy). It catches repeated,
@@ -108,7 +109,7 @@ export function assertMailConfig(config: Environment): void {
   const attempts = config["MAIL_RETRY_ATTEMPTS"];
   if (attempts !== undefined && (!Number.isInteger(Number(attempts)) || Number(attempts) < 1 || Number(attempts) > 5))
     throw new Error("MAIL_RETRY_ATTEMPTS must be an integer from 1 (no retry) to 5");
-  for (const [key, min, max] of [["BOOKING_MAX_PENDING_PER_TRAVELER", 1, 1000], ["BOOKING_MAX_DAYS_AHEAD", 1, 1825], ["BOOKING_PENDING_TTL_HOURS", 1, 720]] as const) {
+  for (const [key, min, max] of [["BOOKING_MAX_PENDING_PER_TRAVELER", 1, 1000], ["BOOKING_MAX_DAYS_AHEAD", 1, 1825]] as const) {
     const raw = config[key];
     if (raw !== undefined && (!Number.isInteger(Number(raw)) || Number(raw) < min || Number(raw) > max))
       throw new Error(`${key} must be an integer from ${min} to ${max}`);
@@ -220,6 +221,15 @@ export function validateEnvironment(config: Environment): Environment {
   if (!Number.isInteger(sessionAbsoluteHours) || sessionAbsoluteHours < 1 || sessionAbsoluteHours > 720)
     throw new Error("SESSION_ABSOLUTE_TIMEOUT_HOURS is invalid (1-720)");
   assertMailConfig(config);
+  // Retention and growth limits. The maintenance job (backend/scripts/db/purge.sh) reads the same names with the same ranges.
+  integerInRange(config, "AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR", 1, 1000);
+  integerInRange(config, "BOOKING_PENDING_TTL_HOURS", 1, 720);
+  integerInRange(config, "SESSION_RETENTION_DAYS", 1, 3650);
+  // Empty means "use the default" (compose passes an empty value through), exactly as purge.sh reads it.
+  if (config["AUDIT_RETENTION_DAYS"] !== "") integerInRange(config, "AUDIT_RETENTION_DAYS", 30, 3650);
+  integerInRange(config, "CREDENTIAL_TOKEN_RETENTION_DAYS", 1, 3650);
+  integerInRange(config, "LOGIN_THROTTLE_RETENTION_HOURS", 1, 720);
+  integerInRange(config, "PURGE_BATCH_SIZE", 100, 100000);
 
   const numeric = Object.fromEntries(TUNABLE_INTEGERS.filter((key) => config[key] !== undefined).map((key) => [key, Number(config[key])]));
   return { ...config, ...numeric, PORT: port, JWT_ACCESS_TTL_SECONDS: accessTtl, REFRESH_TOKEN_TTL_DAYS: refreshDays,

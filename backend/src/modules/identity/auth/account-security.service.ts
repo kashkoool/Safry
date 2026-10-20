@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { Injectable, Optional } from "@nestjs/common";
+import { createHash, randomUUID } from "node:crypto";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { MetricsService } from "../../../common/http/metrics.js";
 import { ConfigService } from "@nestjs/config";
 import { requestContext } from "../../../common/context/request-context.js";
@@ -29,6 +29,18 @@ export interface Attempt {
  */
 export type ThrottleScope = "login" | "register";
 
+const FAILED = "identity.login.failed";
+/** Every audit action an unauthenticated caller can cause for a KNOWN account; together they share ONE hourly budget per account. */
+export const UNAUTH_BUDGET_ACTIONS = [
+  FAILED,
+  "identity.password.reset_requested.suppressed",
+  "identity.email.verification_requested.suppressed"
+] as const;
+const CAPPED = "identity.login.failed_capped";
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+/** Thrown inside the transaction to roll back the insert made for an unknown account (see recordFailure). */
+class DiscardAudit extends Error {}
+
 const PRUNE_EVERY_MS = 10 * 60_000;
 const PRUNE_AFTER_MS = 24 * 3_600_000;
 const TRUST_MS = 30 * 86_400_000;
@@ -53,6 +65,7 @@ const ACCOUNT_FACTOR = 4;
 @Injectable()
 export class AccountSecurityService {
   private lastPrune = 0;
+  private readonly logger = new Logger(AccountSecurityService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -200,7 +213,47 @@ export class AccountSecurityService {
     });
   }
 
-  /** Audits a failed or refused attempt. Unknown e-mails are audited too (without the e-mail), so both paths do the same work. */
+  /** Rows an unauthenticated caller may add to ONE account's audit trail per rolling hour (AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR). */
+  get auditRowsPerAccountHour(): number {
+    return this.config.get<number>("AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR", 20);
+  }
+
+  /**
+   * Serialises count-then-insert of the per-account audit budget (an advisory lock held to the end of the transaction, so it never
+   * blocks the user row that sign-in and refresh use). Every writer of a budgeted row takes it first, with the same key. A random key
+   * (unknown account) costs the same and never contends.
+   */
+  async lockAuditBudget(tx: Pick<Prisma.TransactionClient, "$executeRaw">, userId: string | undefined): Promise<void> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${userId ?? randomUUID()}::text, 0::bigint))`;
+  }
+
+  /**
+   * True while `userId` has fewer than the per-hour budget of audit rows caused by unauthenticated requests (failed sign-ins and
+   * refused reset or verification requests share one budget). Call after lockAuditBudget in the same transaction, so the budget is exact.
+   */
+  async hasAuditRoom(db: Pick<Prisma.TransactionClient, "auditEvent">, userId: string): Promise<boolean> {
+    const used = await db.auditEvent.count({ where: { actorUserId: userId, action: { in: [...UNAUTH_BUDGET_ACTIONS] }, occurredAt: { gte: new Date(Date.now() - 3_600_000) } } });
+    return used < this.auditRowsPerAccountHour;
+  }
+
+  /** An audit row that was not written because nobody can act on it (unknown account) or the account's hourly budget was spent. */
+  skippedAudit(kind: "unknown_login" | "unknown_address" | "account_budget", ipAddress: string | undefined): void {
+    this.metrics?.auditSkipped(kind);
+    // One structured line per skipped row (reason and client address only, never an e-mail), so a flood against unknown accounts or
+    // an exhausted account budget stays visible in the logs although it no longer fills the audit table.
+    this.logger.warn(JSON.stringify({ event: "audit_row_skipped", reason: kind, ip: ipAddress ?? null, requestId: requestContext.getStore()?.requestId ?? null }));
+  }
+
+  /**
+   * Audits a failed or refused attempt.
+   * - Known account: one row per failure, but at most AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR per account per hour; the first failure past
+   *   the budget writes a single "capped" row and the rest are only counted (metric), so a flood against one account adds a bounded
+   *   number of rows. Lock-out rows are written as before (an account-wide block limits how many can start).
+   * - Unknown account: nothing is stored (there is no account to attach it to; the address is in the request log and the failure
+   *   metric). The same queries and an insert that is rolled back still run, so the work done, the reply and the timing do not
+   *   reveal whether the account exists. Measured residual difference (a commit against a rollback): about 3-5 ms on a local
+   *   PostgreSQL, against tens of ms of password hashing with jitter of the same order (audit-growth.int.spec.ts).
+   */
   async recordFailure(context: FailureContext): Promise<void> {
     const base = {
       tenantId: context.tenantId ?? null,
@@ -213,12 +266,32 @@ export class AccountSecurityService {
     };
     this.metrics?.loginFailure(context.reason.startsWith("throttled") ? "locked" : context.reason === "bad_mfa_code" ? "mfa_failed" : "bad_credentials");
     if (context.blocked && context.userId) this.metrics?.accountLockout();
-    await this.prisma.auditEvent.createMany({
-      data: [
-        { ...base, action: "identity.login.failed" },
-        ...(context.blocked && context.userId ? [{ ...base, action: "identity.account.locked" }] : [])
-      ]
-    });
+    const known = Boolean(context.userId);
+    await this.prisma
+      .$transaction(async (tx) => {
+        await this.lockAuditBudget(tx, context.userId ?? undefined);
+        const rows = await tx.auditEvent.groupBy({
+          by: ["action"],
+          where: { actorUserId: context.userId ?? NIL_UUID, action: { in: [...UNAUTH_BUDGET_ACTIONS, CAPPED] }, occurredAt: { gte: new Date(Date.now() - 3_600_000) } },
+          _count: { _all: true }
+        });
+        const count = (action: string): number => rows.find((row) => row.action === action)?._count._all ?? 0;
+        const room = UNAUTH_BUDGET_ACTIONS.reduce((sum, action) => sum + count(action), 0) < this.auditRowsPerAccountHour;
+        const data = [
+          ...(room ? [{ ...base, action: FAILED }] : []),
+          ...(!room && known && count(CAPPED) === 0
+            ? [{ ...base, action: CAPPED, metadata: { reason: "account_budget", perHour: this.auditRowsPerAccountHour } }]
+            : []),
+          ...(context.blocked && known ? [{ ...base, action: "identity.account.locked" }] : [])
+        ];
+        if (!room && known) this.skippedAudit("account_budget", context.ipAddress);
+        if (!known) this.skippedAudit("unknown_login", context.ipAddress);
+        if (data.length > 0) await tx.auditEvent.createMany({ data });
+        if (!known) throw new DiscardAudit();
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof DiscardAudit)) throw error;
+      });
   }
 
   /** Ends every session of the user except `keepSessionId` (after a credential or MFA change). */
@@ -230,7 +303,7 @@ export class AccountSecurityService {
   private async prune(now: Date): Promise<void> {
     if (now.getTime() - this.lastPrune < PRUNE_EVERY_MS) return;
     this.lastPrune = now.getTime();
-    const cutoff = new Date(now.getTime() - PRUNE_AFTER_MS);
+    const cutoff = new Date(now.getTime() - this.config.get<number>("LOGIN_THROTTLE_RETENTION_HOURS", PRUNE_AFTER_MS / 3_600_000) * 3_600_000);
     await this.prisma.loginThrottle
       .deleteMany({
         where: {

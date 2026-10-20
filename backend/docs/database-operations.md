@@ -151,9 +151,49 @@ after every Postgres major upgrade and at least quarterly; record date and resul
 
 ## 4. Retention and audit partitions
 
-**Defaults:** refresh sessions are purged 30 days after they expire or are revoked; audit events are kept
-24 months. Both are the defaults of `backend/scripts/db/purge.sh`; `SESSION_RETENTION_DAYS` and `AUDIT_RETENTION_DAYS` override them
-(the audit procedure refuses less than 30 days).
+**Defaults:** refresh sessions are purged 30 days after they expire or are revoked; reset and verification links 7 days after they
+expire or are used; idle sign-in counters after 24 hours; audit events are kept 24 months. These are the defaults of
+`backend/scripts/db/purge.sh`; `SESSION_RETENTION_DAYS`, `CREDENTIAL_TOKEN_RETENTION_DAYS`, `LOGIN_THROTTLE_RETENTION_HOURS` and
+`AUDIT_RETENTION_DAYS` override them (ranges in `docs/DEPLOYMENT.md`; the audit procedure refuses less than 30 days).
+
+**The job runs by default.** The compose `maintenance` service has no profile, so `docker compose up -d` starts it and it runs once a
+day (a failed run is retried hourly). It connects as `safry_maintenance` (`scripts/db/create-maintenance-role.sql`, created by the
+`db-roles` job): not a superuser, no table privilege, only EXECUTE on the seven maintenance procedures, which are `SECURITY DEFINER`
+with a pinned `search_path` (migration `20261020_maintenance_role`). What a leaked password can and cannot do: it cannot read or change any table directly, and it cannot make retention
+shorter than the owner-set policy floors (table `maintenance_policy`, defaults: audit 24 months, sessions 30 days, reset / verification
+links 7 days, sign-in counters 24 hours, PENDING booking lifetime 48 hours; the routines use the greater of the argument and the floor, and
+batch sizes are capped at 100,000). It can still run those routines early and often (delete what is already due, cancel bookings that
+are already expired), and it can write a false heartbeat row, which would hide a stopped job from `PurgeJobStale` until someone checks the
+job log. To keep data for a shorter time than a default (for example `AUDIT_RETENTION_DAYS=90`), the owner lowers the floor first:
+`CALL set_maintenance_policy('audit_retention', interval '90 days');` (settings: `audit_retention`, `session_retention`,
+`credential_token_retention`, `login_throttle_retention`, `booking_pending_ttl`); until then the job keeps data for the floor, never less.
+Details of the bounds:
+- A floor is compared as a date, not as an interval: the routines use the older of (now minus the argument) and (now minus the floor), so
+  `721 days` does not beat a 24-month floor and `1 month` does not undercut `30 days`.
+- The booking floor must follow the lifetime the API uses. The compose `db-roles` job writes `BOOKING_PENDING_TTL_HOURS` into it; **when you
+  raise `BOOKING_PENDING_TTL_HOURS`, run `db-roles` again** (or `CALL set_maintenance_policy('booking_pending_ttl', make_interval(hours => N))`),
+  otherwise the floor stays lower than the API's lifetime. The job still passes the configured value, so the job itself never cancels early.
+- The login gets `maintenance_ensure_partitions(n)` (at most 24 months ahead, never into the past) instead of the raw partition procedure,
+  and `record_maintenance_run` accepts only the job `purge` with a payload under 2 KB. Residual: it can still write a false heartbeat.
+- Failed attempts by signed-in users (password change, re-authentication, second factor) are written through the same path as failed
+  sign-ins, so they share the per-account hourly budget (`AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR`, default 20) with failed sign-ins and
+  refused reset / verification requests. After the budget is spent, one `identity.login.failed_capped` row marks the hour and further
+  per-attempt rows for that account are not written until the hour passes; they are counted in `safry_audit_skipped_total{kind="account_budget"}`
+  and logged. What still survives in the audit trail: successful sign-ins, sign-outs, password and MFA changes, lock-outs
+  (`identity.account.locked`), session revocations, the capped marker and every administrator action.
+
+Each successful run writes a heartbeat row (`maintenance_runs`, job `purge`); the API exports it as
+`safry_maintenance_last_success_timestamp_seconds` and `PurgeJobStale` fires after 36 hours. On a managed database without compose,
+schedule `backend/scripts/db/purge.sh` once a day with the owner login (cron, scheduler job) and keep the same alert. Companion alerts:
+`AuditDefaultPartitionHasRows` (the safety-net partition holds rows) and `RefreshSessionsPastRetention` (a session is older than its
+retention plus 3 days).
+
+In the same run `sweep_expired_bookings` cancels PENDING bookings older than `BOOKING_PENDING_TTL_HOURS` (the rule the API computes
+for expiry; give the API and the job the same value) and records a `booking.expire` audit event per booking. The job never cancels earlier
+than the policy floor `booking_pending_ttl` (default 48 hours): it uses the greater of `BOOKING_PENDING_TTL_HOURS` and the floor. If you set
+`BOOKING_PENDING_TTL_HOURS` **below** the floor (for example 24), the API reports bookings as expired after 24 hours while the job leaves
+them PENDING in the database until 48 hours, and it still reports success. Lower the floor to match: rerun `db-roles` (it writes
+`BOOKING_PENDING_TTL_HOURS` into the floor) or `CALL set_maintenance_policy('booking_pending_ttl', make_interval(hours => 24));`.
 
 `audit_events` is partitioned by month on `occurredAt` (migration `20261012_db_audit_partitioning`, UTC month boundaries):
 
@@ -175,15 +215,43 @@ Owner-only procedures (execute revoked from `PUBLIC` and `safry_app`):
 CALL ensure_audit_event_partitions(0, 6);          -- create missing months, now .. +6 (idempotent; 1..60 months ahead)
 CALL purge_audit_events(interval '24 months');     -- DROP partitions wholly older than the retention; minimum 30 days
 CALL purge_refresh_sessions(interval '30 days');   -- batched row delete, each batch commits separately
+CALL purge_credential_tokens(interval '7 days');
+CALL purge_login_throttles(interval '24 hours');   -- idle, not blocked, not trusted
+CALL sweep_expired_bookings(interval '48 hours');  -- PENDING older than the pending lifetime -> CANCELLED (+ audit)
+CALL record_maintenance_run('purge');              -- heartbeat, last step
 ```
 
-`backend/scripts/db/purge.sh` runs all three daily (compose profile `maintenance`). Retention has month granularity: audit rows
+`backend/scripts/db/purge.sh` runs all of them daily (default compose stack). Retention has month granularity: audit rows
 live up to one month longer than the retention. Each drop is recorded as an `audit.retention.partitions_dropped` event.
 `ensure_audit_event_partitions` sets `lock_timeout = 10s`. `purge_audit_events` waits at most 500 ms per DROP attempt and retries
 5 times (PostgreSQL refuses `DETACH PARTITION ... CONCURRENTLY` inside a procedure), so audit writers never queue behind it for
-more than about 500 ms; a long application transaction makes the job fail and retry the next day. Both migrations of 2026-10-12
+more than about 500 ms; a long application transaction makes the job fail, and compose retries it an hour later. Both migrations of 2026-10-12
 run as one transaction each and lock their tables until commit: use a maintenance window on a large table. The first purge
 after the migration drops `audit_events_legacy` (history older than the retention): export it first if it must be kept. To keep audit rows longer than the retention, export or detach the partition before purging.
+
+### Disk space after a purge (vacuum policy)
+
+Deleting rows does not shrink PostgreSQL files: `DELETE` leaves dead rows, `VACUUM` makes their space reusable, and only
+`VACUUM FULL` (ACCESS EXCLUSIVE lock) returns it to the operating system. Policy:
+
+- Steady state needs no shrinking. New sessions and links refill the freed pages, so the files stay at the high-water mark of one
+  retention window. Plan disk for that, not for the sum of everything ever written.
+- Migration `20261019_retention_maintenance` sets per-table autovacuum parameters on `refresh_sessions` and `credential_tokens`
+  (vacuum after 2% dead rows, threshold 1000 / 500) and `login_throttles` (5%, 200), instead of the default 20%. Check with
+  `SELECT relname, reloptions FROM pg_class WHERE relname IN ('refresh_sessions','credential_tokens','login_throttles')`.
+- Alert `TableDeadTuplesHigh` (from `pg_stat_user_tables`, exported as `safry_table_dead_tuples` / `safry_table_live_tuples`) fires
+  when more than 100,000 dead rows make up over 30% of a churn table for 2 hours: autovacuum is blocked (a long transaction, a
+  replication slot) or cannot keep up.
+- Reclaiming disk after a one-off mass purge (for example the first run on a table that never was purged): do it in a quiet window with
+  `pg_repack` (online, needs the extension) or `VACUUM FULL refresh_sessions` (locks the table; sign-in and refresh wait, so a short
+  maintenance window). Measured on 99,108 sessions of which 88,229 were purged: 56.8 MiB before, 56.9 MiB after plain vacuum (space
+  reusable), 6 MiB after `VACUUM FULL`.
+- Why `refresh_sessions` is not partitioned by month (so a purge would be a `DROP`): the lookup key `tokenHash` must stay unique and
+  PostgreSQL cannot enforce a unique index on a partitioned table unless it includes the partition column, so the rotation
+  race protection (unique token hash) and `findUnique` by token would have to be replaced; a session row lives up to 30 days plus 30
+  days of retention, so a monthly partition could only be dropped about two months after its month ended and still needs row
+  deletes for revoked rows in younger partitions; and it is a rewrite of the hottest auth table. The audit table does not have these
+  constraints (append-only, never looked up by a unique key). Revisit if one retention window of sessions exceeds a few GB.
 
 Rewriting the table in the migration (copy into partitions, drop the old table) suits today's volume. For a large production
 table, create the partitioned table beside the old one, copy in batches, then swap names in one short transaction.

@@ -54,18 +54,15 @@ describe("auth login throttling", () => {
     expect(shape(unknown)).toEqual(shape(wrong));
   });
 
-  it("does the same database work for unknown e-mails (failure audited, throttle row written)", async () => {
+  it("does the same throttle work for unknown e-mails (throttle rows written, no audit row stored)", async () => {
     const email = `${world.unique("ghost")}@example.test`;
     const before = await world.prisma.loginThrottle.count();
+    const audits = await world.prisma.auditEvent.count({ where: { action: "identity.login.failed", actorUserId: null } });
     const reply = await loginFrom(nextIp(), { email, tenant }, "Wrong-Password-1");
     expect(reply.status).toBe(401);
     expect(await world.prisma.loginThrottle.count()).toBe(before + 2);
-    const audit = await world.prisma.auditEvent.findFirst({
-      where: { action: "identity.login.failed", actorUserId: null },
-      orderBy: { occurredAt: "desc" }
-    });
-    expect(audit).not.toBeNull();
-    expect(JSON.stringify(audit!.metadata)).not.toContain(email);
+    // An unknown account has nothing to attach the row to: it is counted in a metric instead (see audit-growth.int.spec.ts).
+    expect(await world.prisma.auditEvent.count({ where: { action: "identity.login.failed", actorUserId: null } })).toBe(audits);
   });
 
   it("checks and counts atomically: a burst of parallel guesses cannot exceed the limit", async () => {

@@ -610,3 +610,174 @@ tests:
   - eval_time: 9m
     alertname: ProcessRestarting
     exp_alerts: []
+- interval: 1m
+  name: PurgeJobStale fires when the heartbeat is older than 36 hours
+  input_series:
+  - series: safry_maintenance_last_success_timestamp_seconds{job="safry-api", instance="a"}
+    values: 1000x2400
+  alert_rule_test:
+  - eval_time: 120m
+    alertname: PurgeJobStale
+    exp_alerts: []
+  - eval_time: 2200m
+    alertname: PurgeJobStale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: The daily retention job has not succeeded for 36 hours
+        description: Sessions, reset links, sign-in counters and audit events are not being purged, expired bookings are not being cancelled and audit partitions are not being created ahead.
+        first_action: "Run 'docker compose logs --tail 100 maintenance' (or the scheduler job log) and fix the error shown; then 'docker compose restart maintenance' to run it now. Make sure the maintenance service is up: 'docker compose ps maintenance'."
+        runbook: docs/ALERTING.md#purgejobstale
+- interval: 1m
+  name: PurgeJobStale stays silent for a recent heartbeat
+  input_series:
+  - series: safry_maintenance_last_success_timestamp_seconds{job="safry-api", instance="a"}
+    values: 86400x2000
+  alert_rule_test:
+  - eval_time: 2000m
+    alertname: PurgeJobStale
+    exp_alerts: []
+- interval: 1m
+  name: PurgeJobStale stays silent while the series is absent (database outage is another alert)
+  input_series:
+  - series: safry_process_start_time_seconds{job="safry-api", instance="a"}
+    values: 1000x2400
+  alert_rule_test:
+  - eval_time: 2300m
+    alertname: PurgeJobStale
+    exp_alerts: []
+- interval: 1m
+  name: StorageSignalsMissing fires when the heartbeat series is absent for 6 hours
+  input_series:
+  - series: safry_process_start_time_seconds{job="safry-api", instance="a"}
+    values: 1000x500
+  alert_rule_test:
+  - eval_time: 300m
+    alertname: StorageSignalsMissing
+    exp_alerts: []
+  - eval_time: 400m
+    alertname: StorageSignalsMissing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Storage-health gauges are missing, so the retention alerts cannot fire
+        description: For 6 hours the API has not exported the retention heartbeat (database read failing, or the metrics scrape itself missing). PurgeJobStale, AuditDefaultPartitionHasRows, RefreshSessionsPastRetention and TableDeadTuplesHigh are blind meanwhile.
+        first_action: Check ApiDown and DatabaseUnreachable first. If both are quiet, read the API log for the failing read and check that the runtime login can execute audit_default_partition_rows() and read maintenance_runs (migration 20261019_retention_maintenance).
+        runbook: docs/ALERTING.md#storagesignalsmissing
+- interval: 1m
+  name: StorageSignalsMissing fires when the gauge read keeps failing although the series is cached as present
+  input_series:
+  - series: safry_maintenance_last_success_timestamp_seconds{job="safry-api", instance="a"}
+    values: 86400x500
+  - series: safry_storage_signal_errors_total{job="safry-api", instance="a"}
+    values: 0+1x500
+  alert_rule_test:
+  - eval_time: 400m
+    alertname: StorageSignalsMissing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Storage-health gauges are missing, so the retention alerts cannot fire
+        description: For 6 hours the API has not exported the retention heartbeat (database read failing, or the metrics scrape itself missing). PurgeJobStale, AuditDefaultPartitionHasRows, RefreshSessionsPastRetention and TableDeadTuplesHigh are blind meanwhile.
+        first_action: Check ApiDown and DatabaseUnreachable first. If both are quiet, read the API log for the failing read and check that the runtime login can execute audit_default_partition_rows() and read maintenance_runs (migration 20261019_retention_maintenance).
+        runbook: docs/ALERTING.md#storagesignalsmissing
+- interval: 1m
+  name: StorageSignalsMissing is silent while the gauge is exported and reads succeed
+  input_series:
+  - series: safry_maintenance_last_success_timestamp_seconds{job="safry-api", instance="a"}
+    values: 86400x500
+  - series: safry_storage_signal_errors_total{job="safry-api", instance="a"}
+    values: 3x500
+  alert_rule_test:
+  - eval_time: 450m
+    alertname: StorageSignalsMissing
+    exp_alerts: []
+- interval: 1m
+  name: AuditDefaultPartitionHasRows fires after 30 minutes with rows
+  input_series:
+  - series: safry_audit_default_partition_rows{job="safry-api", instance="a"}
+    values: 0x10 5x60
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: AuditDefaultPartitionHasRows
+    exp_alerts: []
+  - eval_time: 50m
+    alertname: AuditDefaultPartitionHasRows
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Audit events are landing in the safety-net partition
+        description: audit_events_default holds rows, so a month has no partition of its own and those rows are never purged by age until the partition exists.
+        first_action: Run the maintenance job now ('docker compose restart maintenance'); it creates the missing months and moves the rows. If it keeps failing, run CALL ensure_audit_event_partitions(0, 6) as the database owner.
+        runbook: docs/ALERTING.md#auditdefaultpartitionhasrows
+- interval: 1m
+  name: AuditDefaultPartitionHasRows is silent when the partition is empty
+  input_series:
+  - series: safry_audit_default_partition_rows{job="safry-api", instance="a"}
+    values: 0x100
+  alert_rule_test:
+  - eval_time: 90m
+    alertname: AuditDefaultPartitionHasRows
+    exp_alerts: []
+- interval: 1m
+  name: RefreshSessionsPastRetention fires after 6 hours
+  input_series:
+  - series: safry_refresh_sessions_overdue{job="safry-api", instance="a"}
+    values: 1x500
+  alert_rule_test:
+  - eval_time: 300m
+    alertname: RefreshSessionsPastRetention
+    exp_alerts: []
+  - eval_time: 400m
+    alertname: RefreshSessionsPastRetention
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Refresh sessions older than their retention are still stored
+        description: At least one refresh session is more than 3 days older than the retention (default 30 days after expiry); the purge is not running or not keeping up, and the table keeps growing.
+        first_action: "Check PurgeJobStale and the maintenance log. If the job runs but the sessions remain, a long transaction may block the delete: look at pg_stat_activity, then run CALL purge_refresh_sessions(interval '30 days') as the owner."
+        runbook: docs/ALERTING.md#refreshsessionspastretention
+- interval: 1m
+  name: RefreshSessionsPastRetention is silent when nothing is overdue
+  input_series:
+  - series: safry_refresh_sessions_overdue{job="safry-api", instance="a"}
+    values: 0x500
+  alert_rule_test:
+  - eval_time: 450m
+    alertname: RefreshSessionsPastRetention
+    exp_alerts: []
+- interval: 1m
+  name: TableDeadTuplesHigh fires for a mostly-dead big table only
+  input_series:
+  - series: safry_table_dead_tuples{job="safry-api", instance="a", table="refresh_sessions"}
+    values: 120000x200
+  - series: safry_table_live_tuples{job="safry-api", instance="a", table="refresh_sessions"}
+    values: 10000x200
+  - series: safry_table_dead_tuples{job="safry-api", instance="a", table="credential_tokens"}
+    values: 5000x200
+  - series: safry_table_live_tuples{job="safry-api", instance="a", table="credential_tokens"}
+    values: 100x200
+  - series: safry_table_dead_tuples{job="safry-api", instance="a", table="bookings"}
+    values: 150000x200
+  - series: safry_table_live_tuples{job="safry-api", instance="a", table="bookings"}
+    values: 1000000x200
+  alert_rule_test:
+  - eval_time: 100m
+    alertname: TableDeadTuplesHigh
+    exp_alerts: []
+  - eval_time: 150m
+    alertname: TableDeadTuplesHigh
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        table: refresh_sessions
+      exp_annotations:
+        summary: Table refresh_sessions is mostly dead rows
+        description: More than 100000 rows of refresh_sessions are deleted but not yet reclaimed (over 30% of the table); disk use grows and queries slow down.
+        first_action: "Look for a long-running transaction or a stale replication slot (pg_stat_activity, pg_replication_slots), then run VACUUM (ANALYZE) on the table as the owner. Docs: backend/docs/database-operations.md, 'Disk space after a purge'."
+        runbook: docs/ALERTING.md#tabledeadtupleshigh

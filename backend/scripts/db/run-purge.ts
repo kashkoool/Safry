@@ -11,25 +11,47 @@ import pg from "pg";
 import { assertSafeTarget } from "../seed-history.js";
 
 export function purgeStatements(env: Record<string, string | undefined>): string[] {
-  const integer = (name: string, fallback: string): string => {
+  const integer = (name: string, fallback: string, min: number, max: number): string => {
     const value = env[name] || fallback;
     if (!/^\d+$/.test(value)) throw new Error(`${name} must be an integer`);
+    if (Number(value) < min || Number(value) > max) throw new Error(`${name} must be from ${min} to ${max}`);
     return value;
   };
-  const sessions = integer("SESSION_RETENTION_DAYS", "30");
-  const ahead = integer("AUDIT_PARTITIONS_AHEAD", "6");
-  const auditDays = env["AUDIT_RETENTION_DAYS"] ? integer("AUDIT_RETENTION_DAYS", "") : undefined;
-  // Same bounds as the procedures, checked before any of them runs (a late refusal would leave the first ones already applied).
-  if (Number(sessions) < 1) throw new Error("SESSION_RETENTION_DAYS must be at least 1");
-  if (Number(ahead) < 1 || Number(ahead) > 60) throw new Error("AUDIT_PARTITIONS_AHEAD must be between 1 and 60");
-  if (auditDays !== undefined && Number(auditDays) < 30) throw new Error("AUDIT_RETENTION_DAYS must be at least 30");
-  const audit = auditDays !== undefined ? `${auditDays} days` : "24 months";
+  const sessions = integer("SESSION_RETENTION_DAYS", "30", 1, 3650);
+  const tokens = integer("CREDENTIAL_TOKEN_RETENTION_DAYS", "7", 1, 3650);
+  const throttles = integer("LOGIN_THROTTLE_RETENTION_HOURS", "24", 1, 720);
+  const pending = integer("BOOKING_PENDING_TTL_HOURS", "48", 1, 720);
+  const ahead = integer("AUDIT_PARTITIONS_AHEAD", "6", 1, 24);
+  const batch = integer("PURGE_BATCH_SIZE", "5000", 100, 100_000);
+  const audit = env["AUDIT_RETENTION_DAYS"] ? `${integer("AUDIT_RETENTION_DAYS", "", 30, 3650)} days` : "24 months";
   return [
-    `CALL ensure_audit_event_partitions(0, ${ahead})`,
-    `CALL purge_refresh_sessions(interval '${sessions} days')`,
-    "CALL purge_credential_tokens(interval '7 days')",
-    `CALL purge_audit_events(interval '${audit}')`
+    `CALL maintenance_ensure_partitions(${ahead})`,
+    `SELECT purge_refresh_sessions_batch(interval '${sessions} days', ${batch})`,
+    `SELECT purge_credential_tokens_batch(interval '${tokens} days', ${batch})`,
+    `SELECT purge_login_throttles_batch(interval '${throttles} hours', ${batch})`,
+    `SELECT sweep_expired_bookings_batch(interval '${pending} hours', ${batch})`,
+    `CALL purge_audit_events(interval '${audit}')`,
+    "CALL record_maintenance_run('purge')"
   ];
+}
+
+/** Runs the statements in order on an open connection. A "SELECT x_batch(...)" is repeated (each call its own transaction) until it handles 0 rows, like purge.sh. */
+export async function runStatements(client: { query(sql: string): Promise<{ rows: Record<string, unknown>[] }> }, statements: string[], log: (line: string) => void = () => undefined): Promise<void> {
+  for (const sql of statements) {
+    const started = Date.now();
+    if (/^SELECT \w+_batch\(/.test(sql)) {
+      let total = 0;
+      for (;;) {
+        const handled = Number(Object.values((await client.query(sql)).rows[0] ?? {})[0] ?? 0);
+        if (!(handled > 0)) break;
+        total += handled;
+      }
+      log(`${sql}  (${total} rows, ${Date.now() - started} ms)`);
+    } else {
+      await client.query(sql);
+      log(`${sql}  (${Date.now() - started} ms)`);
+    }
+  }
 }
 
 async function main(): Promise<number> {
@@ -51,11 +73,7 @@ async function main(): Promise<number> {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   try {
-    for (const sql of purgeStatements(process.env)) {
-      const started = Date.now();
-      await client.query(sql);
-      console.log(`${sql}  (${Date.now() - started} ms)`);
-    }
+    await runStatements(client, purgeStatements(process.env), console.log);
     console.log("purge done");
     return 0;
   } finally {
