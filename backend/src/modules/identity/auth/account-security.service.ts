@@ -258,7 +258,7 @@ export class AccountSecurityService {
       .$transaction(async (tx) => {
         // Serialise the count-then-insert per account (an advisory lock held to the end of the transaction, so it never blocks the
         // user row that sign-in and refresh use). The unknown-account path takes a lock on a random key: same work, no contention.
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${context.userId ?? randomUUID()}, 0))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${context.userId ?? randomUUID()}::text, 0::bigint))`;
         const rows = await tx.auditEvent.groupBy({
           by: ["action"],
           where: { actorUserId: context.userId ?? NIL_UUID, action: { in: [FAILED, CAPPED] }, occurredAt: { gte: new Date(Date.now() - 3_600_000) } },
