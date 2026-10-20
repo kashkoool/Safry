@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { purgeStatements } from "../scripts/db/run-purge.js";
+import { purgeStatements, runStatements } from "../scripts/db/run-purge.js";
 import { World, type Json, type Session, type TestTenant, type TestUser } from "./support/world.js";
 
 /**
@@ -64,9 +64,65 @@ describe("retention maintenance", () => {
   describe("the whole job", () => {
     it("every statement purge.sh runs exists with that signature and the run ends with a fresh heartbeat", async () => {
       await world.sql.query(`UPDATE maintenance_runs SET "lastSuccessAt" = now() - interval '3 days' WHERE job = 'purge'`);
-      for (const statement of purgeStatements({ SESSION_RETENTION_DAYS: "30", AUDIT_RETENTION_DAYS: "730", PURGE_BATCH_SIZE: "200" })) await world.sql.query(statement);
+      await runStatements(world.sql, purgeStatements({ SESSION_RETENTION_DAYS: "30", AUDIT_RETENTION_DAYS: "730", PURGE_BATCH_SIZE: "200" }));
       const age = await world.sql.query(`SELECT extract(epoch FROM now() - "lastSuccessAt") AS s FROM maintenance_runs WHERE job = 'purge'`);
       expect(Number(age.rows[0].s)).toBeLessThan(60);
+    });
+  });
+
+  describe("the maintenance login", () => {
+    const asMaintenance = async <T>(work: () => Promise<T>): Promise<T> => {
+      await world.sql.query("SET ROLE safry_maintenance_ops");
+      try {
+        return await work();
+      } finally {
+        await world.sql.query("RESET ROLE");
+      }
+    };
+
+    it("is not a superuser, does not bypass row-level security and is not the table owner", async () => {
+      const role = await world.sql.query(`SELECT rolsuper, rolbypassrls, rolcreaterole, rolcreatedb, rolcanlogin FROM pg_roles WHERE rolname = 'safry_maintenance_ops'`);
+      expect(role.rows).toEqual([{ rolsuper: false, rolbypassrls: false, rolcreaterole: false, rolcreatedb: false, rolcanlogin: false }]);
+      const owned = await world.sql.query(`SELECT count(*)::int AS n FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner WHERE r.rolname = 'safry_maintenance_ops'`);
+      expect(owned.rows[0].n).toBe(0);
+    });
+
+    it("runs every statement of the job, so the heartbeat advances, with only that privilege", async () => {
+      await world.sql.query(`UPDATE maintenance_runs SET "lastSuccessAt" = now() - interval '3 days' WHERE job = 'purge'`);
+      await asMaintenance(async () => {
+        await runStatements(world.sql, purgeStatements({ PURGE_BATCH_SIZE: "200" }));
+      });
+      const age = await world.sql.query(`SELECT extract(epoch FROM now() - "lastSuccessAt") AS s FROM maintenance_runs WHERE job = 'purge'`);
+      expect(Number(age.rows[0].s)).toBeLessThan(60);
+    });
+
+    it("sweeps and purges for real while connected as that role", async () => {
+      const serviceId = await world.createService(tenant, provider, { capacity: 100 });
+      const t = await traveler();
+      const reply = await book(t, serviceId);
+      const id = String(reply.body["id"]);
+      await ageMinutes(id, 3 * 24 * 60);
+      await asMaintenance(() => runStatements(world.sql, ["SELECT sweep_expired_bookings_batch(interval '48 hours', 1000)"]));
+      expect((await world.prisma.booking.findUniqueOrThrow({ where: { id } })).status).toBe("CANCELLED");
+      expect(await world.prisma.auditEvent.count({ where: { entityId: id, action: "booking.expire" } })).toBe(1);
+    });
+
+    it("cannot read or change application data, or run other things", async () => {
+      for (const sql of [
+        `SELECT 1 FROM users LIMIT 1`, `SELECT 1 FROM refresh_sessions LIMIT 1`, `SELECT 1 FROM bookings LIMIT 1`, `SELECT 1 FROM audit_events LIMIT 1`,
+        `SELECT 1 FROM maintenance_runs LIMIT 1`, `DELETE FROM login_throttles`, `UPDATE bookings SET notes = 'x'`, `CREATE TABLE public.leak (a int)`,
+        `TRUNCATE audit_events`, `CREATE ROLE evil`, `SELECT audit_default_partition_rows()`,
+        `CALL sweep_expired_bookings(interval '48 hours')`, `CALL purge_refresh_sessions(interval '30 days')`
+      ])
+        await expect(asMaintenance(() => world.sql.query(sql)), sql).rejects.toThrow(/permission denied|must be owner/);
+      // Even a hostile search_path or a temp table named like a real one cannot redirect the procedures.
+      await asMaintenance(async () => {
+        await world.sql.query(`SET search_path = pg_temp, public`);
+        await world.sql.query(`CREATE TEMP TABLE login_throttles (key text, "updatedAt" timestamptz, "blockedUntil" timestamptz, "trustedUntil" timestamptz)`);
+        await world.sql.query(`SELECT purge_login_throttles_batch(interval '24 hours')`);
+        await world.sql.query(`DROP TABLE pg_temp.login_throttles`);
+        await world.sql.query(`RESET search_path`);
+      });
     });
   });
 

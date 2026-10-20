@@ -259,6 +259,19 @@ groups:
           first_action: "Run 'docker compose logs --tail 100 maintenance' (or the scheduler job log) and fix the error shown; then 'docker compose restart maintenance' to run it now. Make sure the maintenance service is up: 'docker compose ps maintenance'."
           runbook: "docs/ALERTING.md#purgejobstale"
 
+      - alert: StorageSignalsMissing
+        # The four storage alerts below and PurgeJobStale are silent when their gauges are missing, so this one watches the gauges themselves:
+        # the heartbeat series is absent, or reading it failed (safry_storage_signal_errors_total grew) for 6 hours. Also fires if the API stays unreachable (ApiDown pages first).
+        expr: absent(safry_maintenance_last_success_timestamp_seconds) or (sum(increase(safry_storage_signal_errors_total[30m])) > 0)
+        for: 6h
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Storage-health gauges are missing, so the retention alerts cannot fire"
+          description: "For 6 hours the API has not exported the retention heartbeat (database read failing, or the metrics scrape itself missing). PurgeJobStale, AuditDefaultPartitionHasRows, RefreshSessionsPastRetention and TableDeadTuplesHigh are blind meanwhile."
+          first_action: "Check ApiDown and DatabaseUnreachable first. If both are quiet, read the API log for the failing read and check that the runtime login can execute audit_default_partition_rows() and read maintenance_runs (migration 20261019_retention_maintenance)."
+          runbook: "docs/ALERTING.md#storagesignalsmissing"
+
       - alert: AuditDefaultPartitionHasRows
         # audit_events_default only receives rows that fit no monthly partition: the job that creates partitions ahead has stopped for longer than the months kept ready (default 6, the migration made 12).
         expr: max(safry_audit_default_partition_rows) > 0

@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { Injectable, Optional } from "@nestjs/common";
+import { createHash, randomUUID } from "node:crypto";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import { MetricsService } from "../../../common/http/metrics.js";
 import { ConfigService } from "@nestjs/config";
 import { requestContext } from "../../../common/context/request-context.js";
@@ -59,6 +59,7 @@ const ACCOUNT_FACTOR = 4;
 @Injectable()
 export class AccountSecurityService {
   private lastPrune = 0;
+  private readonly logger = new Logger(AccountSecurityService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -214,8 +215,8 @@ export class AccountSecurityService {
   /**
    * True while `userId` has fewer than the per-hour budget of audit rows with these actions. Unauthenticated callers (failed
    * logins, reset or verification requests for a known account) can repeat a request up to the per-IP rate limit, so each such row
-   * is gated here. Check-then-insert is not locked: concurrent requests can overshoot by at most the number of requests in flight,
-   * which the sign-in capacity limit and the per-IP limits already bound.
+   * is gated here. The caller must serialise count-then-insert for the account (recordFailure takes an advisory lock; the credential
+   * flows already hold the user row lock), so the budget is exact.
    */
   async hasAuditRoom(db: Pick<Prisma.TransactionClient, "auditEvent">, userId: string, actions: string[]): Promise<boolean> {
     const used = await db.auditEvent.count({ where: { actorUserId: userId, action: { in: actions }, occurredAt: { gte: new Date(Date.now() - 3_600_000) } } });
@@ -223,8 +224,11 @@ export class AccountSecurityService {
   }
 
   /** An audit row that was not written because nobody can act on it (unknown account) or the account's hourly budget was spent. */
-  skippedAudit(kind: "unknown_login" | "unknown_address" | "account_budget"): void {
+  skippedAudit(kind: "unknown_login" | "unknown_address" | "account_budget", ipAddress: string | undefined): void {
     this.metrics?.auditSkipped(kind);
+    // One structured line per skipped row (reason and client address only, never an e-mail), so a flood against unknown accounts or
+    // an exhausted account budget stays visible in the logs although it no longer fills the audit table.
+    this.logger.warn(JSON.stringify({ event: "audit_row_skipped", reason: kind, ip: ipAddress ?? null, requestId: requestContext.getStore()?.requestId ?? null }));
   }
 
   /**
@@ -234,7 +238,8 @@ export class AccountSecurityService {
    *   number of rows. Lock-out rows are written as before (an account-wide block limits how many can start).
    * - Unknown account: nothing is stored (there is no account to attach it to; the address is in the request log and the failure
    *   metric). The same queries and an insert that is rolled back still run, so the work done, the reply and the timing do not
-   *   reveal whether the account exists.
+   *   reveal whether the account exists. Measured residual difference (a commit against a rollback): about 3-5 ms on a local
+   *   PostgreSQL, against tens of ms of password hashing with jitter of the same order (audit-growth.int.spec.ts).
    */
   async recordFailure(context: FailureContext): Promise<void> {
     const base = {
@@ -251,6 +256,9 @@ export class AccountSecurityService {
     const known = Boolean(context.userId);
     await this.prisma
       .$transaction(async (tx) => {
+        // Serialise the count-then-insert per account (an advisory lock held to the end of the transaction, so it never blocks the
+        // user row that sign-in and refresh use). The unknown-account path takes a lock on a random key: same work, no contention.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${context.userId ?? randomUUID()}, 0))`;
         const rows = await tx.auditEvent.groupBy({
           by: ["action"],
           where: { actorUserId: context.userId ?? NIL_UUID, action: { in: [FAILED, CAPPED] }, occurredAt: { gte: new Date(Date.now() - 3_600_000) } },
@@ -265,8 +273,8 @@ export class AccountSecurityService {
             : []),
           ...(context.blocked && known ? [{ ...base, action: "identity.account.locked" }] : [])
         ];
-        if (!room && known) this.skippedAudit("account_budget");
-        if (!known) this.skippedAudit("unknown_login");
+        if (!room && known) this.skippedAudit("account_budget", context.ipAddress);
+        if (!known) this.skippedAudit("unknown_login", context.ipAddress);
         if (data.length > 0) await tx.auditEvent.createMany({ data });
         if (!known) throw new DiscardAudit();
       })

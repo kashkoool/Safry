@@ -77,7 +77,7 @@ export class CredentialService {
   /** A refused request for a known account leaves at most AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR rows per hour; the rest are only counted. */
   private async auditSuppressed(tx: Prisma.TransactionClient, action: string, userId: string, ipAddress: string | undefined, metadata: Prisma.InputJsonObject): Promise<void> {
     if (await this.security.hasAuditRoom(tx, userId, [action])) await this.audit(tx, action, userId, ipAddress, metadata);
-    else this.security.skippedAudit("account_budget");
+    else this.security.skippedAudit("account_budget", ipAddress);
   }
 
   /**
@@ -123,7 +123,7 @@ export class CredentialService {
       if (!this.eligible(user) || !mayMail) {
         // No audit row: an unknown address has no account to attach it to, and an unauthenticated caller must not be able to add
         // rows without limit. The request is in the access log and counted in a metric.
-        this.security.skippedAudit("unknown_address");
+        this.security.skippedAudit("unknown_address", ipAddress);
         return;
       }
       // A failure here must look like success: an unknown address answers 202, so a known one must too (no enumeration under failure).
@@ -144,7 +144,7 @@ export class CredentialService {
       const mayMail = await this.mail.allowAddress("reset", ipAddress);
       const user = await this.prisma.user.findUnique({ where: { emailNormalized: email.trim().toLowerCase() } });
       if (!this.eligible(user) || user.emailVerifiedAt !== null || !mayMail) {
-        this.security.skippedAudit("unknown_address");
+        this.security.skippedAudit("unknown_address", ipAddress);
         return;
       }
       await this.sendVerification(user, ipAddress);

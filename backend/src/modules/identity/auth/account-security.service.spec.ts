@@ -112,7 +112,7 @@ describe("AccountSecurityService throttle", () => {
 describe("AccountSecurityService failure metrics", () => {
   const withMetrics = (): { service: AccountSecurityService; metrics: MetricsService } => {
     const metrics = new MetricsService();
-    const tx = { auditEvent: { groupBy: (): Promise<unknown[]> => Promise.resolve([]), createMany: (): Promise<unknown> => Promise.resolve({}) } };
+    const tx = { $queryRaw: (): Promise<unknown[]> => Promise.resolve([]), auditEvent: { groupBy: (): Promise<unknown[]> => Promise.resolve([]), createMany: (): Promise<unknown> => Promise.resolve({}) } };
     const prisma = { $transaction: (work: (client: typeof tx) => Promise<unknown>): Promise<unknown> => work(tx) } as unknown as PrismaService;
     const config = { get: (_key: string, fallback: number) => fallback } as unknown as ConfigService;
     return { service: new AccountSecurityService(prisma, config, metrics), metrics };

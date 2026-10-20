@@ -648,6 +648,54 @@ tests:
     alertname: PurgeJobStale
     exp_alerts: []
 - interval: 1m
+  name: StorageSignalsMissing fires when the heartbeat series is absent for 6 hours
+  input_series:
+  - series: safry_process_start_time_seconds{job="safry-api", instance="a"}
+    values: 1000x500
+  alert_rule_test:
+  - eval_time: 300m
+    alertname: StorageSignalsMissing
+    exp_alerts: []
+  - eval_time: 400m
+    alertname: StorageSignalsMissing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Storage-health gauges are missing, so the retention alerts cannot fire
+        description: For 6 hours the API has not exported the retention heartbeat (database read failing, or the metrics scrape itself missing). PurgeJobStale, AuditDefaultPartitionHasRows, RefreshSessionsPastRetention and TableDeadTuplesHigh are blind meanwhile.
+        first_action: Check ApiDown and DatabaseUnreachable first. If both are quiet, read the API log for the failing read and check that the runtime login can execute audit_default_partition_rows() and read maintenance_runs (migration 20261019_retention_maintenance).
+        runbook: docs/ALERTING.md#storagesignalsmissing
+- interval: 1m
+  name: StorageSignalsMissing fires when the gauge read keeps failing although the series is cached as present
+  input_series:
+  - series: safry_maintenance_last_success_timestamp_seconds{job="safry-api", instance="a"}
+    values: 86400x500
+  - series: safry_storage_signal_errors_total{job="safry-api", instance="a"}
+    values: 0+1x500
+  alert_rule_test:
+  - eval_time: 400m
+    alertname: StorageSignalsMissing
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Storage-health gauges are missing, so the retention alerts cannot fire
+        description: For 6 hours the API has not exported the retention heartbeat (database read failing, or the metrics scrape itself missing). PurgeJobStale, AuditDefaultPartitionHasRows, RefreshSessionsPastRetention and TableDeadTuplesHigh are blind meanwhile.
+        first_action: Check ApiDown and DatabaseUnreachable first. If both are quiet, read the API log for the failing read and check that the runtime login can execute audit_default_partition_rows() and read maintenance_runs (migration 20261019_retention_maintenance).
+        runbook: docs/ALERTING.md#storagesignalsmissing
+- interval: 1m
+  name: StorageSignalsMissing is silent while the gauge is exported and reads succeed
+  input_series:
+  - series: safry_maintenance_last_success_timestamp_seconds{job="safry-api", instance="a"}
+    values: 86400x500
+  - series: safry_storage_signal_errors_total{job="safry-api", instance="a"}
+    values: 3x500
+  alert_rule_test:
+  - eval_time: 450m
+    alertname: StorageSignalsMissing
+    exp_alerts: []
+- interval: 1m
   name: AuditDefaultPartitionHasRows fires after 30 minutes with rows
   input_series:
   - series: safry_audit_default_partition_rows{job="safry-api", instance="a"}

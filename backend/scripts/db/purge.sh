@@ -3,16 +3,18 @@
 #   1. ensure_audit_event_partitions: creates the monthly audit_events partitions for the next AUDIT_PARTITIONS_AHEAD months
 #      (migration 20261012_db_audit_partitioning). If this job stops for longer, rows land in audit_events_default (never lost)
 #      and are moved into their month the next time the partition is created.
-#   2. purge_refresh_sessions: batched removal of expired or revoked refresh sessions.
+#   2. purge_refresh_sessions_batch (repeated until 0 rows): batched removal of expired or revoked refresh sessions.
 #   3. purge_credential_tokens: removes password-reset and verification links after they expired or were used.
 #   4. purge_login_throttles: removes idle sign-in attempt counters (not blocked, not trusted).
 #   5. sweep_expired_bookings: cancels PENDING bookings older than BOOKING_PENDING_TTL_HOURS (the rule the API computes).
 #   6. purge_audit_events: DROPs audit_events partitions that lie wholly older than the retention (default 24 months).
 #   7. record_maintenance_run: heartbeat. Written only when every step above succeeded; the API turns it into a metric and an
 #      alert fires when it is older than 36 hours.
-# Keep the CALL list in sync with backend/scripts/db/run-purge.ts (a unit test compares them).
+# Keep the statement list in sync with backend/scripts/db/run-purge.ts (a unit test compares them).
 #
-#   DATABASE_MIGRATE_URL            owner connection string (falls back to DATABASE_URL). Required.
+#   DATABASE_MAINTENANCE_URL        connection string of the safry_maintenance login (backend/scripts/db/create-maintenance-role.sql):
+#                                   it can only execute the procedures. Falls back to DATABASE_MIGRATE_URL, then DATABASE_URL
+#                                   (the owner login, for a one-off manual run). Required.
 #   SESSION_RETENTION_DAYS          default 30, 1..3650 (days after expiry or revocation)
 #   CREDENTIAL_TOKEN_RETENTION_DAYS default 7, 1..3650 (days after expiry or use)
 #   LOGIN_THROTTLE_RETENTION_HOURS  default 24, 1..720 (hours without activity)
@@ -21,8 +23,8 @@
 #   AUDIT_PARTITIONS_AHEAD          months of audit partitions to keep ready, default 6 (1..60)
 #   PURGE_BATCH_SIZE                rows per committed batch, default 5000 (100..100000)
 set -eu
-url="${DATABASE_MIGRATE_URL:-${DATABASE_URL:-}}"
-[ -n "$url" ] || { echo "DATABASE_MIGRATE_URL or DATABASE_URL is required" >&2; exit 1; }
+url="${DATABASE_MAINTENANCE_URL:-${DATABASE_MIGRATE_URL:-${DATABASE_URL:-}}}"
+[ -n "$url" ] || { echo "DATABASE_MAINTENANCE_URL (or DATABASE_MIGRATE_URL / DATABASE_URL) is required" >&2; exit 1; }
 
 # integer NAME DEFAULT MIN MAX: prints the validated value of $NAME (or the default)
 integer() {
@@ -43,11 +45,19 @@ if [ -n "${AUDIT_RETENTION_DAYS:-}" ]; then
 else
   audit_retention="24 months"
 fi
+# drain <batch query>: repeats one committed batch (one psql call = one transaction) until it handles 0 rows.
+drain() {
+  while :; do
+    handled="$(psql "$url" -v ON_ERROR_STOP=1 -At -c "$1")" || exit 1
+    case "$handled" in ''|*[!0-9]*) echo "unexpected answer from the batch function: $handled" >&2; exit 1;; esac
+    [ "$handled" -gt 0 ] || break
+  done
+}
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL ensure_audit_event_partitions(0, $ahead)"
-psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_refresh_sessions(interval '$sessions days', $batch)"
-psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_credential_tokens(interval '$tokens days', $batch)"
-psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_login_throttles(interval '$throttles hours', $batch)"
-psql "$url" -v ON_ERROR_STOP=1 -c "CALL sweep_expired_bookings(interval '$pending hours', $batch)"
+drain "SELECT purge_refresh_sessions_batch(interval '$sessions days', $batch)"
+drain "SELECT purge_credential_tokens_batch(interval '$tokens days', $batch)"
+drain "SELECT purge_login_throttles_batch(interval '$throttles hours', $batch)"
+drain "SELECT sweep_expired_bookings_batch(interval '$pending hours', $batch)"
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_audit_events(interval '$audit_retention')"
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL record_maintenance_run('purge')"
 echo "purge done"

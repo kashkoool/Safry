@@ -157,7 +157,9 @@ expire or are used; idle sign-in counters after 24 hours; audit events are kept 
 `AUDIT_RETENTION_DAYS` override them (ranges in `docs/DEPLOYMENT.md`; the audit procedure refuses less than 30 days).
 
 **The job runs by default.** The compose `maintenance` service has no profile, so `docker compose up -d` starts it and it runs once a
-day (a failed run is retried hourly). Each successful run writes a heartbeat row (`maintenance_runs`, job `purge`); the API exports it as
+day (a failed run is retried hourly). It connects as `safry_maintenance` (`scripts/db/create-maintenance-role.sql`, created by the
+`db-roles` job): not a superuser, no table privilege, only EXECUTE on the seven maintenance procedures, which are `SECURITY DEFINER`
+with a pinned `search_path` (migration `20261020_maintenance_role`). A leaked password can run retention and nothing else. Each successful run writes a heartbeat row (`maintenance_runs`, job `purge`); the API exports it as
 `safry_maintenance_last_success_timestamp_seconds` and `PurgeJobStale` fires after 36 hours. On a managed database without compose,
 schedule `backend/scripts/db/purge.sh` once a day with the owner login (cron, scheduler job) and keep the same alert. Companion alerts:
 `AuditDefaultPartitionHasRows` (the safety-net partition holds rows) and `RefreshSessionsPastRetention` (a session is older than its
@@ -196,7 +198,7 @@ CALL record_maintenance_run('purge');              -- heartbeat, last step
 live up to one month longer than the retention. Each drop is recorded as an `audit.retention.partitions_dropped` event.
 `ensure_audit_event_partitions` sets `lock_timeout = 10s`. `purge_audit_events` waits at most 500 ms per DROP attempt and retries
 5 times (PostgreSQL refuses `DETACH PARTITION ... CONCURRENTLY` inside a procedure), so audit writers never queue behind it for
-more than about 500 ms; a long application transaction makes the job fail and retry the next day. Both migrations of 2026-10-12
+more than about 500 ms; a long application transaction makes the job fail, and compose retries it an hour later. Both migrations of 2026-10-12
 run as one transaction each and lock their tables until commit: use a maintenance window on a large table. The first purge
 after the migration drops `audit_events_legacy` (history older than the retention): export it first if it must be kept. To keep audit rows longer than the retention, export or detach the partition before purging.
 

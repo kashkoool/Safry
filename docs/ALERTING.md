@@ -31,6 +31,7 @@ Counters added for alerting (labels are fixed words, never an e-mail, address, u
 | `safry_session_rotations_total` | Refresh tokens exchanged for a new session. Routine rotation is counted here and not written to the audit trail (sign-in, sign-out, reuse detection and revocation still are). |
 | `safry_audit_skipped_total{kind}` | Audit rows deliberately not written: `unknown_login` (failed sign-in for an account that does not exist), `unknown_address` (reset or verification request for an unknown or ineligible address, or past its address cap), `account_budget` (a known account already has `AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR` such rows this hour). A rise is an attack signal, not a fault. |
 | `safry_maintenance_last_success_timestamp_seconds` (gauge) | Unix time of the last successful retention run (heartbeat in `maintenance_runs`). Read from the database every 2 minutes; omitted while it is unreachable. |
+| `safry_storage_signal_errors_total` | Reads of the storage gauges that failed (their series are missing while it grows). |
 | `safry_audit_default_partition_rows`, `safry_refresh_sessions_overdue` (gauges) | Rows in the audit safety-net partition; 1 when a refresh session is more than 3 days past its retention. |
 | `safry_table_dead_tuples{table}`, `safry_table_live_tuples{table}` (gauges) | PostgreSQL's estimate of dead and live rows for `refresh_sessions`, `credential_tokens`, `login_throttles`, `bookings`. |
 | `safry_process_start_time_seconds` (gauge) | Unix time the API process started; it changes on every restart, which the `ProcessRestarting` alert counts. |
@@ -97,6 +98,9 @@ First action: look at failed-login audit events by address and reason; block a d
 
 ### PurgeJobStale
 *ticket.* The daily retention job (compose service `maintenance`, script `backend/scripts/db/purge.sh`) has not finished successfully for 36 hours. It writes a heartbeat row (`maintenance_runs`) as its last step; the API exports it as `safry_maintenance_last_success_timestamp_seconds`. A migration seeds a baseline, so a job that never ran alerts 36 hours after the deploy. While it is down, expired sessions, reset links, sign-in counters and audit events are kept, expired bookings stay PENDING in the database and audit partitions are not created ahead. First action: `docker compose logs --tail 100 maintenance`, fix the error, `docker compose restart maintenance`. A failed run is retried by itself every hour.
+
+### StorageSignalsMissing
+*ticket.* For 6 hours the API did not export the retention heartbeat gauge, or reading the storage gauges kept failing (`safry_storage_signal_errors_total`). The other four storage alerts treat a missing gauge as "nothing to report", so this one makes that blindness visible. First action: ApiDown and DatabaseUnreachable first; then the API log for the failing read, and check the runtime login can execute `audit_default_partition_rows()` and read `maintenance_runs`.
 
 ### AuditDefaultPartitionHasRows
 *ticket.* `audit_events_default` (the safety-net partition) holds rows for 30 minutes: a month had no partition. Same root cause as PurgeJobStale. First action: restart the maintenance job; it creates the missing months and moves the rows.

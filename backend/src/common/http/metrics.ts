@@ -1,4 +1,4 @@
-import { Controller, Get, Header, Headers, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { Controller, Get, Header, Headers, Injectable, Logger, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { SkipThrottle } from "@nestjs/throttler";
 import { timingSafeEqual } from "node:crypto";
@@ -19,6 +19,7 @@ export type ReadinessFailureReason = "database" | "draining";
 const EVENT_SERIES: Record<string, { help: string; label?: string; values?: readonly string[] }> = {
   safry_login_failures_total: { help: "Failed sign-ins by coarse reason", label: "reason", values: ["bad_credentials", "locked", "mfa_failed", "portal_denied"] },
   safry_account_lockouts_total: { help: "Sign-in blocks started on an account" },
+  safry_storage_signal_errors_total: { help: "Reads of the storage-health gauges (heartbeat, partitions, dead rows) that failed; their series are missing while this grows" },
   safry_audit_skipped_total: { help: "Audit rows not written: unknown account (login or reset request) or the account's hourly budget was spent", label: "kind", values: ["unknown_login", "unknown_address", "account_budget"] },
   safry_session_rotations_total: { help: "Refresh tokens exchanged for a new session (routine rotation, not audited row by row)" },
   safry_refresh_reuse_detected_total: { help: "Refresh tokens presented again after rotation (session family revoked)" },
@@ -50,6 +51,7 @@ export class MetricsService {
 
   loginFailure(reason: LoginFailureReason): void { this.bump("safry_login_failures_total", reason); }
   accountLockout(): void { this.bump("safry_account_lockouts_total"); }
+  storageSignalError(): void { this.bump("safry_storage_signal_errors_total"); }
   auditSkipped(kind: "unknown_login" | "unknown_address" | "account_budget"): void { this.bump("safry_audit_skipped_total", kind); }
   sessionRotated(): void { this.bump("safry_session_rotations_total"); }
   refreshReuse(): void { this.bump("safry_refresh_reuse_detected_total"); }
@@ -137,6 +139,7 @@ export class MetricsController {
     return { safry_platform_admin_mfa_resets_24h: this.mfaResets.value };
   }
 
+  private readonly logger = new Logger(MetricsController.name);
   private maintenance: { at: number; values: Record<string, number> } = { at: 0, values: {} };
 
   /**
@@ -177,7 +180,10 @@ export class MetricsController {
       );
       this.maintenance = { at: now, values };
       return values;
-    } catch {
+    } catch (error) {
+      // Class name only (no message: it can carry connection details); the counter below feeds the StorageSignalsMissing alert.
+      this.logger.warn(`storage signals unavailable: ${error instanceof Error ? error.name : "unknown error"}`);
+      this.metrics.storageSignalError();
       this.maintenance = { at: now, values: {} };
       return {};
     }

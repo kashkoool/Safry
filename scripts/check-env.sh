@@ -39,6 +39,7 @@ secret() { # name min_length url_safe(0/1)
 }
 secret POSTGRES_PASSWORD 24 1
 secret DATABASE_RUNTIME_PASSWORD 24 1
+secret DATABASE_MAINTENANCE_PASSWORD 24 1
 secret JWT_ACCESS_SECRET 32 0
 secret MFA_ENCRYPTION_KEY 32 0
 secret RESEND_API_KEY 16 0
@@ -54,6 +55,10 @@ if [ -n "$base_url" ]; then
 fi
 [ -n "$(get JWT_ACCESS_SECRET)" ] && [ "$(get JWT_ACCESS_SECRET)" = "$(get MFA_ENCRYPTION_KEY)" ] && problem MFA_ENCRYPTION_KEY "must differ from JWT_ACCESS_SECRET"
 [ -n "$(get POSTGRES_PASSWORD)" ] && [ "$(get POSTGRES_PASSWORD)" = "$(get DATABASE_RUNTIME_PASSWORD)" ] && problem DATABASE_RUNTIME_PASSWORD "must differ from POSTGRES_PASSWORD"
+if [ -n "$(get DATABASE_MAINTENANCE_PASSWORD)" ]; then
+  [ "$(get DATABASE_MAINTENANCE_PASSWORD)" = "$(get POSTGRES_PASSWORD)" ] && problem DATABASE_MAINTENANCE_PASSWORD "must differ from POSTGRES_PASSWORD"
+  [ "$(get DATABASE_MAINTENANCE_PASSWORD)" = "$(get DATABASE_RUNTIME_PASSWORD)" ] && problem DATABASE_MAINTENANCE_PASSWORD "must differ from DATABASE_RUNTIME_PASSWORD"
+fi
 
 # 3. HTTP settings.
 cors="$(get CORS_ORIGINS)"

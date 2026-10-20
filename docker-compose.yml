@@ -86,7 +86,8 @@ services:
       PGUSER: safry
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       RUNTIME_PASSWORD: ${DATABASE_RUNTIME_PASSWORD:?Set DATABASE_RUNTIME_PASSWORD in .env}
-    entrypoint: ["sh", "-c", "psql -v runtime_password=\"$$RUNTIME_PASSWORD\" -f /sql/create-runtime-role.sql"]
+      MAINTENANCE_PASSWORD: ${DATABASE_MAINTENANCE_PASSWORD:?Set DATABASE_MAINTENANCE_PASSWORD in .env}
+    entrypoint: ["sh", "-c", "psql -v runtime_password=\"$$RUNTIME_PASSWORD\" -f /sql/create-runtime-role.sql && psql -v maintenance_password=\"$$MAINTENANCE_PASSWORD\" -f /sql/create-maintenance-role.sql"]
 
   # Opt-in demo seed (creates known demo accounts). Refuses to run unless ALLOW_DEMO_SEED_IN_PRODUCTION=true.
   # Never part of a real deployment: docker compose run --rm seed
@@ -235,7 +236,8 @@ services:
     volumes:
       - ./backend/scripts/db:/scripts:ro
     environment:
-      DATABASE_MIGRATE_URL: postgresql://safry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/safry
+      # Not the owner: a login that can only execute the maintenance procedures (created by the db-roles job).
+      DATABASE_MAINTENANCE_URL: postgresql://safry_maintenance:${DATABASE_MAINTENANCE_PASSWORD:?Set DATABASE_MAINTENANCE_PASSWORD in .env}@postgres:5432/safry
       SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-30}
       CREDENTIAL_TOKEN_RETENTION_DAYS: ${CREDENTIAL_TOKEN_RETENTION_DAYS:-7}
       LOGIN_THROTTLE_RETENTION_HOURS: ${LOGIN_THROTTLE_RETENTION_HOURS:-24}

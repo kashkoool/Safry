@@ -15,10 +15,11 @@ are detailed in `backend/docs/database-operations.md`.
 | `api` | `backend/Dockerfile` target `runtime` (Alpine, production deps only) | `node` (uid 1000) | `data` + `app` | never | long-running |
 | `web` | `frontend/Dockerfile` (nginx-unprivileged 1.31) | uid 101 | `app` | `WEB_BIND:WEB_PORT` (loopback by default) | long-running |
 | `migrate` | target `migrate` | `node` | `data` | no | one-off (`run --rm`) |
-| `db-roles` | `postgres:17.11-alpine` + `backend/scripts/db/create-runtime-role.sql` | postgres | `data` | no | one-off |
+| `db-roles` | `postgres:17.11-alpine` + `backend/scripts/db/create-runtime-role.sql` and `create-maintenance-role.sql` | postgres | `data` | no | one-off |
 | `seed` | target `migrate` | `node` | `data` | no | one-off, demo only, profile `seed` |
 | `proxy` | `caddy:2.11.7-alpine` | root without capabilities except NET_BIND_SERVICE | `app` | 80, 443 (tcp+udp) | optional, profile `tls` |
 | `backup` | `postgres:17.11-alpine` + `backend/scripts/backup/backup.sh` | postgres | `data` | no | optional, profile `backup` |
+| `maintenance` | `postgres:17.11-alpine` + `backend/scripts/db/purge.sh` | postgres, logs in as `safry_maintenance` (procedures only) | `data` | no | long-running (daily loop), default stack |
 
 Every long-running service: read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, memory/PID limits,
 log rotation (10 MB x 5). The one-off jobs (`migrate`, `db-roles`, `seed`) have the read-only root filesystem, `cap_drop: ALL`,
@@ -30,6 +31,9 @@ Two database logins (see `backend/docs/database-operations.md` section 1):
   `db-roles`, `seed` and `backup`.
 - `safry_runtime` (`DATABASE_RUNTIME_PASSWORD`): `NOSUPERUSER NOBYPASSRLS`, member of `safry_app`. The only
   login the API has.
+- `safry_maintenance` (`DATABASE_MAINTENANCE_PASSWORD`): `NOSUPERUSER NOBYPASSRLS`, member of `safry_maintenance_ops`. The only
+  login the always-on `maintenance` container has. It holds no table privilege and can only execute the seven retention
+  procedures (which run with the owner's rights), so the owner password is never kept in a running container. Created by `db-roles`.
 
 ## 2. First deployment
 
@@ -42,7 +46,7 @@ docker compose build                # api + web (add --profile ops for the migra
 docker compose --profile ops build migrate
 docker compose up -d --wait postgres
 docker compose run --rm migrate     # prisma migrate deploy with the owner login
-docker compose run --rm db-roles    # creates safry_runtime with DATABASE_RUNTIME_PASSWORD
+docker compose run --rm db-roles    # creates safry_runtime and safry_maintenance (DATABASE_RUNTIME_PASSWORD, DATABASE_MAINTENANCE_PASSWORD)
 docker compose up -d --wait         # api + web + the daily maintenance (retention) job
 ```
 
@@ -235,6 +239,7 @@ Operational consequences:
 |---|---|---|
 | `POSTGRES_PASSWORD` | yes | owner login; URL-safe (`openssl rand -hex 32`) |
 | `DATABASE_RUNTIME_PASSWORD` | yes | API login; URL-safe, different from the owner password |
+| `DATABASE_MAINTENANCE_PASSWORD` | yes | maintenance-job login (procedures only); URL-safe, different from the owner and runtime passwords. An existing deployment adds it, then runs `migrate` and `db-roles` once before `up -d` |
 | `JWT_ACCESS_SECRET` | yes | 32+ random characters; placeholders rejected at boot |
 | `MFA_ENCRYPTION_KEY` | yes | different from `JWT_ACCESS_SECRET` |
 | `WEB_BIND`, `WEB_PORT` | no | default `127.0.0.1:3001` |
