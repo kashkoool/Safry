@@ -116,11 +116,16 @@ describe("retention maintenance", () => {
       ])
         await expect(asMaintenance(() => world.sql.query(sql)), sql).rejects.toThrow(/permission denied|must be owner/);
       // Even a hostile search_path or a temp table named like a real one cannot redirect the procedures.
+      const dueKey = `z${randomUUID().replaceAll("-", "")}`.padEnd(64, "0").slice(0, 64);
+      await world.sql.query(`INSERT INTO public.login_throttles ("key", "failures", "updatedAt", "windowStartedAt") VALUES ($1, 1, now() - interval '3 days', now() - interval '3 days')`, [dueKey]);
+      let tempRows = -1;
       await asMaintenance(async () => {
         await world.sql.query(`SET search_path = pg_temp, public`);
         try {
           await world.sql.query(`CREATE TEMP TABLE login_throttles (key text, "updatedAt" timestamptz, "blockedUntil" timestamptz, "trustedUntil" timestamptz)`);
+          await world.sql.query(`INSERT INTO pg_temp.login_throttles VALUES ($1, now() - interval '3 days', NULL, NULL)`, [dueKey]);
           await world.sql.query(`SELECT purge_login_throttles_batch(interval '24 hours')`);
+          tempRows = Number((await world.sql.query(`SELECT count(*)::int AS n FROM pg_temp.login_throttles`)).rows[0].n);
         } finally {
           try {
             await world.sql.query(`DROP TABLE IF EXISTS pg_temp.login_throttles`);
@@ -129,6 +134,9 @@ describe("retention maintenance", () => {
           }
         }
       });
+      // The function worked on the real table (the due row is gone) and never touched the temp table that shadowed it.
+      expect(tempRows).toBe(1);
+      expect((await world.sql.query(`SELECT 1 FROM public.login_throttles WHERE "key" = $1`, [dueKey])).rowCount).toBe(0);
     });
   });
 

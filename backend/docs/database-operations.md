@@ -189,7 +189,11 @@ schedule `backend/scripts/db/purge.sh` once a day with the owner login (cron, sc
 retention plus 3 days).
 
 In the same run `sweep_expired_bookings` cancels PENDING bookings older than `BOOKING_PENDING_TTL_HOURS` (the rule the API computes
-for expiry; give the API and the job the same value) and records a `booking.expire` audit event per booking.
+for expiry; give the API and the job the same value) and records a `booking.expire` audit event per booking. The job never cancels earlier
+than the policy floor `booking_pending_ttl` (default 48 hours): it uses the greater of `BOOKING_PENDING_TTL_HOURS` and the floor. If you set
+`BOOKING_PENDING_TTL_HOURS` **below** the floor (for example 24), the API reports bookings as expired after 24 hours while the job leaves
+them PENDING in the database until 48 hours, and it still reports success. Lower the floor to match: rerun `db-roles` (it writes
+`BOOKING_PENDING_TTL_HOURS` into the floor) or `CALL set_maintenance_policy('booking_pending_ttl', make_interval(hours => 24));`.
 
 `audit_events` is partitioned by month on `occurredAt` (migration `20261012_db_audit_partitioning`, UTC month boundaries):
 

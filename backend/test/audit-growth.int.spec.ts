@@ -27,7 +27,7 @@ describe("audit growth from unauthenticated requests", () => {
   };
 
   beforeAll(async () => {
-    world = await World.start({ TRUST_PROXY: "true", METRICS_TOKEN, AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR: String(BUDGET), AUTH_MAIL_MIN_RESPONSE_MS: "0", LOGIN_MAX_ATTEMPTS: "20" });
+    world = await World.start({ TRUST_PROXY: "true", METRICS_TOKEN, AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR: String(BUDGET), DATABASE_POOL_MAX: "24", AUTH_MAIL_MIN_RESPONSE_MS: "0", LOGIN_MAX_ATTEMPTS: "20" });
     tenant = await world.createTenant("auditgrowth");
   }, 180_000);
   afterAll(async () => world.stop());
@@ -69,8 +69,9 @@ describe("audit growth from unauthenticated requests", () => {
     for (let i = 0; i < BUDGET; i++) await login(user, "Wrong-Password-1");
     expect(await rows(`"actorUserId" = $1 AND action = 'identity.login.failed'`, [user.userId])).toBe(BUDGET);
     const replies = await Promise.all(Array.from({ length: 16 }, () => login(user, "Wrong-Password-1")));
-    expect(replies.every((reply) => reply.status === 401 || reply.status === 503)).toBe(true);
-    expect(replies.some((reply) => reply.status === 401)).toBe(true);
+    // The pool is sized for 16 simultaneous sign-ins (24 connections), so none may be refused as busy: all 16 reach recordFailure and race
+    // for the single capped marker. A 503 here would mean the test no longer exercises the race.
+    expect(replies.map((reply) => reply.status)).toEqual(Array(16).fill(401));
     expect(await rows(`"actorUserId" = $1 AND action = 'identity.login.failed'`, [user.userId])).toBe(BUDGET);
     expect(await rows(`"actorUserId" = $1 AND action = 'identity.login.failed_capped'`, [user.userId])).toBe(1);
   });
