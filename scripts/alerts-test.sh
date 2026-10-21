@@ -22,8 +22,9 @@ run() {
 echo "== every metric the rules use is exported by backend/src/common/http/metrics.ts"
 metrics_src="$here/../backend/src/common/http/metrics.ts"
 missing=0
+backup_src="$here/../backend/scripts/backup/backup.sh"   # the safry_backup_* series come from its textfile output, not from the API
 for name in $(grep -v '^[[:space:]]*#' "$alerts_dir/safry.rules.yml" | grep -oE 'safry_[a-z0-9_]+' | sed -E 's/_(bucket|sum|count)$//' | sort -u); do
-  if ! grep -qwF "$name" "$metrics_src"; then echo "MISSING in metrics.ts: $name"; missing=1; fi
+  if ! grep -qwF "$name" "$metrics_src" "$backup_src"; then echo "MISSING in metrics.ts / backup.sh: $name"; missing=1; fi
 done
 [ "$missing" = 0 ] || exit 1
 

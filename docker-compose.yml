@@ -7,7 +7,7 @@
 #   docker compose run --rm db-roles                            # one-off: create/rotate the restricted runtime login
 #   docker compose up -d                                        # api + web + the daily maintenance (retention) job
 #   docker compose --profile tls up -d                          # optional: Caddy terminates TLS on 80/443
-#   docker compose --profile backup up -d                       # optional: scheduled pg_dump
+#   (the scheduled pg_dump backup service is part of the default stack too; see BACKUP_* in docker.env.example)
 # Nothing migrates or seeds at boot. The demo seed is a separate, opt-in job (profile "seed").
 # PostgreSQL is never published on a host port here; for local debugging use backend/compose.yml.
 
@@ -19,7 +19,9 @@ x-hardening: &hardening
   tmpfs: ["/tmp:size=64m,mode=1777"]
   logging:
     driver: json-file
-    options: { max-size: "10m", max-file: "5" }
+    # Container logs are the only place security events (failed sign-ins, 429s) live besides the audit table; LOG_MAX_SIZE x LOG_MAX_FILES
+    # is the most each container keeps on the host (default 50 MB). Ship them somewhere durable: docs/DEPLOYMENT.md, Logs.
+    options: { max-size: "${LOG_MAX_SIZE:-10m}", max-file: "${LOG_MAX_FILES:-5}" }
 
 x-job: &job
   restart: "no"
@@ -135,6 +137,8 @@ services:
       # The API reads these to tell the maintenance job's settings apart from its own: the same names and defaults as the maintenance service.
       SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-30}
       BOOKING_PENDING_TTL_HOURS: ${BOOKING_PENDING_TTL_HOURS:-48}
+      ANONYMISE_DELETED_USERS_AFTER_DAYS: ${ANONYMISE_DELETED_USERS_AFTER_DAYS:-30}
+      AUDIT_IP_RETENTION_DAYS: ${AUDIT_IP_RETENTION_DAYS:-90}
       AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR: ${AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR:-20}
       # Transactional e-mail (password reset, e-mail verification): Resend over HTTPS. See docs/DEPLOYMENT.md, Transactional email.
       MAIL_TRANSPORT: resend
@@ -193,12 +197,12 @@ services:
     cpus: 0.5
     pids_limit: 100
 
-  # Optional scheduled logical backup (pg_dump every BACKUP_INTERVAL_SECONDS). Dumps land in the
-  # safry_backups volume: copy them off the host (object storage in the same jurisdiction).
-  # Script: backend/scripts/backup/backup.sh. Managed PITR is preferred in production.
+  # Scheduled logical backup (pg_dump every BACKUP_INTERVAL_SECONDS), part of the DEFAULT stack so a deployment that follows the runbook
+  # always has one. Dumps land in the safry_backups volume: copy them off the host (object storage in the same jurisdiction). Kept
+  # BACKUP_KEEP_DAYS days and at most BACKUP_MAX_TOTAL_MB (oldest deleted first, never the newest). With managed PITR in place the
+  # service can be stopped: `docker compose up -d --scale backup=0`. Script: backend/scripts/backup/backup.sh.
   backup:
     <<: *hardening
-    profiles: [backup]
     image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     user: postgres
     depends_on: { postgres: { condition: service_healthy } }
@@ -212,6 +216,7 @@ services:
       DATABASE_MIGRATE_URL: postgresql://safry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/safry
       BACKUP_DIR: /var/lib/postgresql/data
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_MAX_TOTAL_MB: ${BACKUP_MAX_TOTAL_MB:-5120}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
     entrypoint: ["sh", "-c", "while true; do sh /scripts/backup.sh || echo 'backup FAILED' >&2; sleep \"$$BACKUP_INTERVAL_SECONDS\"; done"]
     healthcheck:
@@ -244,6 +249,8 @@ services:
       LOGIN_THROTTLE_RETENTION_HOURS: ${LOGIN_THROTTLE_RETENTION_HOURS:-24}
       BOOKING_PENDING_TTL_HOURS: ${BOOKING_PENDING_TTL_HOURS:-48}
       AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-}
+      ANONYMISE_DELETED_USERS_AFTER_DAYS: ${ANONYMISE_DELETED_USERS_AFTER_DAYS:-30}
+      AUDIT_IP_RETENTION_DAYS: ${AUDIT_IP_RETENTION_DAYS:-90}
       PURGE_BATCH_SIZE: ${PURGE_BATCH_SIZE:-5000}
     entrypoint: ["sh", "-c", "while true; do if sh /scripts/purge.sh; then sleep 86400; else echo 'purge FAILED, retrying in 1 hour' >&2; sleep 3600; fi; done"]
     mem_limit: 128m

@@ -147,6 +147,7 @@ export class MetricsController {
    *   safry_maintenance_last_success_timestamp_seconds  heartbeat of the retention job (maintenance_runs; a baseline row is written by the migration)
    *   safry_audit_default_partition_rows               rows in audit_events_default: > 0 means partitions were not created ahead
    *   safry_refresh_sessions_overdue                   1 when a refresh session is older than its retention plus 3 days (the job is not purging)
+   *   safry_erasure_overdue                            1 when a deleted account is past ANONYMISE_DELETED_USERS_AFTER_DAYS + 3 days un-anonymised, or an audit row still holds an IP past AUDIT_IP_RETENTION_DAYS + 3 days
    *   safry_table_dead_tuples / safry_table_live_tuples{table}   from pg_stat_user_tables, for the tables that churn
    * On a database error the series are omitted (readiness alerts cover the outage; a stale-job alert must not fire on a guess).
    */
@@ -156,6 +157,8 @@ export class MetricsController {
     try {
       const retentionMs = Number(this.config.get<number>("SESSION_RETENTION_DAYS", 30)) * 86_400_000;
       const overdueBefore = new Date(now - retentionMs - 3 * 86_400_000);
+      const userDays = Number(this.config.get<number>("ANONYMISE_DELETED_USERS_AFTER_DAYS", 30));
+      const ipDays = Number(this.config.get<number>("AUDIT_IP_RETENTION_DAYS", 90));
       const values = await runAsSystem(() =>
         this.prisma.$transaction(async (tx) => {
           await tx.$executeRaw`SET LOCAL statement_timeout = 3000`;
@@ -163,13 +166,16 @@ export class MetricsController {
           const defaultRows = (await tx.$queryRaw<{ rows: bigint }[]>`SELECT audit_default_partition_rows() AS rows`)[0]?.rows ?? 0n;
           const overdue = (await tx.$queryRaw<{ overdue: boolean }[]>`
             SELECT EXISTS (SELECT 1 FROM "refresh_sessions" WHERE "expiresAt" < ${overdueBefore} OR "revokedAt" < ${overdueBefore}) AS overdue`)[0]?.overdue ?? false;
+          const erasure = (await tx.$queryRaw<{ users_pending: bigint; audit_ip_pending: bigint }[]>`
+            SELECT users_pending, audit_ip_pending FROM erasure_overdue_counts(${userDays > 0 ? userDays + 3 : 0}::integer, ${ipDays > 0 ? ipDays + 3 : 0}::integer)`)[0];
           const stats = await tx.$queryRaw<{ relname: string; live: bigint; dead: bigint }[]>`
             SELECT relname, n_live_tup AS live, n_dead_tup AS dead FROM pg_stat_user_tables
             WHERE schemaname = 'public' AND relname IN ('refresh_sessions', 'credential_tokens', 'login_throttles', 'bookings')`;
           const out: Record<string, number> = {
             safry_maintenance_last_success_timestamp_seconds: beat ? Math.floor(beat.lastSuccessAt.getTime() / 1000) : 0,
             safry_audit_default_partition_rows: Number(defaultRows),
-            safry_refresh_sessions_overdue: overdue ? 1 : 0
+            safry_refresh_sessions_overdue: overdue ? 1 : 0,
+            safry_erasure_overdue: erasure && (erasure.users_pending > 0n || erasure.audit_ip_pending > 0n) ? 1 : 0
           };
           for (const row of stats) {
             out[`safry_table_live_tuples{table="${row.relname}"}`] = Number(row.live);

@@ -23,6 +23,18 @@ export function purgeStatements(env: Record<string, string | undefined>): string
   const pending = integer("BOOKING_PENDING_TTL_HOURS", "48", 1, 720);
   const ahead = integer("AUDIT_PARTITIONS_AHEAD", "6", 1, 24);
   const batch = integer("PURGE_BATCH_SIZE", "5000", 100, 100_000);
+  const anonymise = integer("ANONYMISE_DELETED_USERS_AFTER_DAYS", "30", 0, 3650);
+  const ipDays = integer("AUDIT_IP_RETENTION_DAYS", "90", 0, 3650);
+  const dry = env["PURGE_DRY_RUN"] === "1";
+  const erasure = [
+    ...(Number(anonymise) > 0
+      ? [dry ? `SELECT anonymise_deleted_users_count(interval '${anonymise} days')` : `SELECT anonymise_deleted_users_batch(interval '${anonymise} days', ${batch})`]
+      : []),
+    ...(Number(ipDays) > 0
+      ? [dry ? `SELECT scrub_audit_ip_addresses_count(interval '${ipDays} days')` : `SELECT scrub_audit_ip_addresses_batch(interval '${ipDays} days', ${batch})`]
+      : [])
+  ];
+  if (dry) return erasure;
   const audit = env["AUDIT_RETENTION_DAYS"] ? `${integer("AUDIT_RETENTION_DAYS", "", 30, 3650)} days` : "24 months";
   return [
     `CALL maintenance_ensure_partitions(${ahead})`,
@@ -30,6 +42,7 @@ export function purgeStatements(env: Record<string, string | undefined>): string
     `SELECT purge_credential_tokens_batch(interval '${tokens} days', ${batch})`,
     `SELECT purge_login_throttles_batch(interval '${throttles} hours', ${batch})`,
     `SELECT sweep_expired_bookings_batch(interval '${pending} hours', ${batch})`,
+    ...erasure,
     `CALL purge_audit_events(interval '${audit}')`,
     "CALL record_maintenance_run('purge')"
   ];
@@ -48,8 +61,8 @@ export async function runStatements(client: { query(sql: string): Promise<{ rows
       }
       log(`${sql}  (${total} rows, ${Date.now() - started} ms)`);
     } else {
-      await client.query(sql);
-      log(`${sql}  (${Date.now() - started} ms)`);
+      const reply = await client.query(sql);
+      log(/_count\(/.test(sql) ? `${sql}  -> ${String(Object.values(reply.rows[0] ?? {})[0])} (dry run, nothing changed)` : `${sql}  (${Date.now() - started} ms)`);
     }
   }
 }

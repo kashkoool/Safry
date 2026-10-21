@@ -93,6 +93,8 @@ model User {
   isPlatformAdmin                 Boolean            @default(false)
   authVersion                     Int                @default(0)
   deletedAt                       DateTime?          @db.Timestamptz(3)
+  /// Set by the maintenance job when the personal data of a deleted account was removed (migration 20261021_data_erasure).
+  anonymisedAt                    DateTime?          @db.Timestamptz(3)
   id                              String             @id @default(uuid()) @db.Uuid
   email                           String             @db.VarChar(320)
   emailNormalized                 String             @unique @db.VarChar(320)

@@ -18,11 +18,11 @@ are detailed in `backend/docs/database-operations.md`.
 | `db-roles` | `postgres:17.11-alpine` + `backend/scripts/db/create-runtime-role.sql` and `create-maintenance-role.sql` | postgres | `data` | no | one-off |
 | `seed` | target `migrate` | `node` | `data` | no | one-off, demo only, profile `seed` |
 | `proxy` | `caddy:2.11.7-alpine` | root without capabilities except NET_BIND_SERVICE | `app` | 80, 443 (tcp+udp) | optional, profile `tls` |
-| `backup` | `postgres:17.11-alpine` + `backend/scripts/backup/backup.sh` | postgres | `data` | no | optional, profile `backup` |
+| `backup` | `postgres:17.11-alpine` + `backend/scripts/backup/backup.sh` | postgres | `data` | no | long-running (default stack); scale to 0 when managed PITR replaces it |
 | `maintenance` | `postgres:17.11-alpine` + `backend/scripts/db/purge.sh` | postgres, logs in as `safry_maintenance` (procedures only) | `data` | no | long-running (daily loop), default stack |
 
 Every long-running service: read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`, memory/PID limits,
-log rotation (10 MB x 5). The one-off jobs (`migrate`, `db-roles`, `seed`) have the read-only root filesystem, `cap_drop: ALL`,
+log rotation (`LOG_MAX_SIZE` x `LOG_MAX_FILES`, default 10 MB x 5). The one-off jobs (`migrate`, `db-roles`, `seed`) have the read-only root filesystem, `cap_drop: ALL`,
 `no-new-privileges` and a small `/tmp`, but no memory/PID limits and no log rotation. Nothing migrates or seeds when a container starts or restarts.
 
 Two database logins (see `backend/docs/database-operations.md` section 1):
@@ -58,6 +58,8 @@ The maintenance service is part of the default stack, so this command starts it;
 for it: after the first day, `docker compose logs maintenance` ends with `purge done`, and the API metric
 `safry_maintenance_last_success_timestamp_seconds` is within the last 24 hours (the `PurgeJobStale` alert fires after 36 hours without a
 successful run; `docs/ALERTING.md`). Without it, sessions, links and audit events pile up forever.
+
+The backup service is also part of the default stack. Go-live check: `docker compose ps backup` is `healthy` after the first dump (a dump file appears in the `safry_backups` volume), and the volume is copied off the host. If the provider's managed PITR replaces it, say so explicitly: `docker compose up -d --scale backup=0`, and write the decision into the go-live notes. A deployment with neither is not ready.
 
 A fresh database has no tenant or administrator yet. `backend/prisma/bootstrap.ts` (`pnpm db:bootstrap`)
 creates the first tenant and administrator without any demo data and is safe in production. There is no
@@ -253,7 +255,9 @@ Operational consequences:
 | `NODE_ENV` | fixed | `production`; `staging` gets the same strict rules (https, Secure cookies, real mail, dedicated MFA key, TLS to the database, no API docs, no localhost CORS). Only a local test stack may relax staging with `ALLOW_NON_PRODUCTION_DEFAULTS=true` (console mail, open docs, localhost CORS); the flag is refused with any other `NODE_ENV`. The flag is also refused when `APP_BASE_URL` or `CORS_ORIGINS` names a public https host, unless `ALLOW_NON_PRODUCTION_ON_PUBLIC_HOST=true` is set as well, so the loose mode cannot stay on for an internet-facing host by accident. Other values are rejected at start |
 | `RESEND_API_KEY`, `MAIL_FROM`, `APP_BASE_URL` | yes | transactional e-mail, see section 5a; `MAIL_TRANSPORT` is fixed to `resend` by compose |
 | `SITE_ADDRESS`, `HTTP_PORT`, `HTTPS_PORT`, `HTTP_BIND` | tls profile | public host name and published ports |
-| `BACKUP_INTERVAL_SECONDS`, `BACKUP_KEEP_DAYS` | backup profile | default daily, keep 14 days |
+| `BACKUP_INTERVAL_SECONDS` (86400), `BACKUP_KEEP_DAYS` (14, 1-3650), `BACKUP_MAX_TOTAL_MB` (5120, 0 = no cap, else 100-10000000) | no | the backup service (default stack): one dump a day, kept 14 days, at most 5 GB in the volume (oldest deleted first, the newest never; a dump that cannot be written fails loudly). Data erased from the database stays in older dumps until they age out after `BACKUP_KEEP_DAYS` |
+| `LOG_MAX_SIZE` (10m), `LOG_MAX_FILES` (5) | no | docker log rotation for every long-running container: the most it keeps on the host is the product (default 50 MB). See "Logs and security events" in `backend/docs/data-retention.md` |
+| `ANONYMISE_DELETED_USERS_AFTER_DAYS` (30, 0-3650), `AUDIT_IP_RETENTION_DAYS` (90, 0-3650) | no | personal-data erasure steps of the maintenance job: 0 turns a step off. **Proposed defaults, not legal advice: counsel must confirm the periods** (`backend/docs/data-retention.md`) |
 | `SESSION_RETENTION_DAYS` (30, 1-3650), `CREDENTIAL_TOKEN_RETENTION_DAYS` (7, 1-3650), `LOGIN_THROTTLE_RETENTION_HOURS` (24, 1-720), `AUDIT_RETENTION_DAYS` (unset = 24 months, else 30-3650), `PURGE_BATCH_SIZE` (5000, 100-100000) | no | daily maintenance job (`backend/scripts/db/purge.sh`, runs in the default stack): creates audit partitions ahead, purges refresh sessions, reset / verification links and idle sign-in counters, cancels expired PENDING bookings, drops `audit_events` partitions older than the retention, then writes its heartbeat. Out-of-range values stop the job (and the API for the names it reads) with a clear message |
 | `AUDIT_UNAUTH_ROWS_PER_ACCOUNT_HOUR` | no | default 20 (1-1000): most audit rows unauthenticated requests (failed sign-ins, refused reset or verification requests) may add to ONE known account per hour; further attempts are counted in `safry_audit_skipped_total`. Unknown accounts store no audit row |
 | `API_MEM_LIMIT`, `API_CPUS`, `POSTGRES_MEM_LIMIT`, `POSTGRES_CPUS` | no | resource limits |
@@ -331,12 +335,25 @@ provider outage therefore loses that message; the user simply asks again (the pe
 
 - Preferred in production: the provider's managed PostgreSQL with automated backups and PITR, in the
   same jurisdiction as the data (open decision).
-- Self-hosted: `docker compose --profile backup up -d backup` runs `backend/scripts/backup/backup.sh` every
-  `BACKUP_INTERVAL_SECONDS` into the `safry_backups` volume and turns `unhealthy` when no dump is newer
-  than two intervals (alert on it). Copy the dumps off the host (encrypted object storage in-region);
+- Self-hosted: the `backup` service (default stack) runs `backend/scripts/backup/backup.sh` every
+  `BACKUP_INTERVAL_SECONDS` into the `safry_backups` volume, keeps `BACKUP_KEEP_DAYS` days and at most `BACKUP_MAX_TOTAL_MB`, and turns `unhealthy` when no dump is newer
+  than two intervals. It also writes `backup-metrics.prom` (last success, sizes, volume use) into the volume: expose it with a Prometheus
+  textfile collector (node_exporter `--collector.textfile.directory` pointing at the volume) so `BackupMissing` and `BackupVolumeNearlyFull` work (`docs/ALERTING.md`). Copy the dumps off the host (encrypted object storage in-region);
   a dump on the same disk as the database is not a backup.
 - Restore into a new, empty database with `backend/scripts/backup/restore.sh`, then rehearse it on a
   schedule (`backend/scripts/backup/restore-test.sh`). RPO/RTO targets are still to be decided.
+
+### Data retention, erasure and logs
+
+Retention periods, the erasure of deleted accounts, IP clearing in the audit trail, the backup limit and the log sink options are written down in
+[backend/docs/data-retention.md](../backend/docs/data-retention.md). The periods in it are **proposals; Qatar retention rules are not confirmed and
+counsel must confirm them before go-live**. Short version of what the daily maintenance job does for personal data: accounts deleted more than
+`ANONYMISE_DELETED_USERS_AFTER_DAYS` (30) days ago are anonymised (bookings, payment records and the audit trail are kept and point to a tombstone user);
+audit rows lose their IP address after `AUDIT_IP_RETENTION_DAYS` (90) days; the application role still cannot update or delete audit rows.
+To count what the next run would change without changing it: `docker compose run --rm -e PURGE_DRY_RUN=1 --entrypoint sh maintenance /scripts/purge.sh`.
+
+Logs: container logs are rotated by size (`LOG_MAX_SIZE`, `LOG_MAX_FILES`; default 50 MB per container, which is hours under load) and are not shipped anywhere by the
+compose file. The security record that matters is the audit table; ship container logs to the provider's log service or a self-hosted Loki before relying on them.
 
 ### Recovery drills
 

@@ -229,6 +229,44 @@ more than about 500 ms; a long application transaction makes the job fail, and c
 run as one transaction each and lock their tables until commit: use a maintenance window on a large table. The first purge
 after the migration drops `audit_events_legacy` (history older than the retention): export it first if it must be kept. To keep audit rows longer than the retention, export or detach the partition before purging.
 
+### Erasure of personal data
+
+Migration `20261021_data_erasure` adds `users."anonymisedAt"`, a partial index on audit rows that still hold an IP, and the routines that the
+maintenance job calls (policy, settings and limits: [data-retention.md](data-retention.md)). They follow the maintenance-login design: the job
+connects as `safry_maintenance` and reaches the data only through bounded `SECURITY DEFINER` functions with a pinned `search_path`:
+
+```sql
+SELECT anonymise_deleted_users_batch(interval '30 days', 5000);   -- one batch; returns the number of users handled, repeat until 0
+SELECT scrub_audit_ip_addresses_batch(interval '90 days', 5000);  -- one batch; returns the number of audit rows handled
+SELECT anonymise_deleted_users_count(interval '30 days');         -- dry run: counts only
+SELECT scrub_audit_ip_addresses_count(interval '90 days');
+```
+
+The effective cutoff is the older of `now() - argument` and `now() - floor`, where the floors are the `user_anonymisation` (30 days) and
+`audit_ip_retention` (90 days) rows of `maintenance_policy`; batch sizes are capped (10,000 users, 100,000 audit rows). A leaked maintenance
+password therefore cannot erase sooner than the owner allowed. To erase sooner on purpose, lower the floor first:
+`CALL set_maintenance_policy('user_anonymisation', interval '14 days');`. The owner-run procedures `anonymise_deleted_users(retention, batch, dry_run)` and
+`scrub_audit_ip_addresses(retention, batch, dry_run)` keep working (they loop over the functions and commit per batch).
+
+The functions raise `app.bypass_rls` for their own transaction only (the owner is bound by the forced row-level security on `users` and
+`audit_events`), are idempotent, and are not executable by the application role, which still has no `UPDATE`/`DELETE` on `audit_events`. The
+migration is additive (a nullable column, an index, two policy rows, new routines), so the previous application version keeps working on it.
+Rollback: `DROP PROCEDURE anonymise_deleted_users(interval, integer, boolean); DROP PROCEDURE scrub_audit_ip_addresses(interval, integer, boolean);
+DROP FUNCTION anonymise_deleted_users_batch(interval, integer), anonymise_deleted_users_count(interval), scrub_audit_ip_addresses_batch(interval, integer),
+scrub_audit_ip_addresses_count(interval), erasure_overdue_counts(integer, integer); DROP INDEX audit_events_occurredAt_with_ip_idx;
+DELETE FROM maintenance_policy WHERE setting IN ('user_anonymisation', 'audit_ip_retention');` (keep the column: anonymised rows must stay marked).
+Anonymisation itself cannot be undone; take a backup before the first production run.
+
+### Search indexes on `users`
+
+`users` has two trigram GIN indexes, `users_email_trgm_idx` and `users_displayName_trgm_idx`. Measured on the aged seed (5,015 users,
+50,000 bookings, 205,444 audit rows; `EXPLAIN (ANALYZE)`): every admin search is `email ILIKE ... OR displayName ILIKE ...`, and the plan for a selective
+term is a `BitmapOr` over **both** indexes (platform user list and count, user list within a tenant, tenant member search); the
+bookings-by-traveler-e-mail and membership-by-e-mail searches use the e-mail index. Dropping either index turns the `OR` search into a sequential scan.
+Keep both. With a term that matches most rows ("example", "a") the planner correctly prefers a sequential scan (3 to 4 ms at this size).
+The platform bookings search by traveler e-mail and the platform audit search by actor e-mail do scan (83 to 140 ms and 160 to 265 ms at this size) and will
+grow with the tables: treat them as admin-only slow paths.
+
 ### Disk space after a purge (vacuum policy)
 
 Deleting rows does not shrink PostgreSQL files: `DELETE` leaves dead rows, `VACUUM` makes their space reusable, and only
