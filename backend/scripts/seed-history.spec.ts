@@ -78,7 +78,7 @@ describe("maintenance helpers", () => {
   });
   it("purge.sh runs the same procedures in the same order as the Node helper", () => {
     const script = readFileSync(resolve(import.meta.dirname, "db/purge.sh"), "utf8");
-    const fromScript = [...script.matchAll(/(?:-c|drain) "(?:CALL|SELECT) (\w+)\(/g)].map((match) => match[1]);
+    const fromScript = [...script.matchAll(/(?:-c|drain) "(?:CALL|SELECT) (\w+)\(/g)].map((match) => match[1]).filter((name) => !name!.endsWith("_count")); // the dry-run block counts only
     const fromHelper = purgeStatements({}).map((sql) => /^(?:CALL|SELECT) (\w+)\(/.exec(sql)![1]);
     expect(fromScript).toEqual(fromHelper);
   });
