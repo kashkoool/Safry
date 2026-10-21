@@ -57,10 +57,18 @@ describe("maintenance helpers", () => {
       "SELECT purge_credential_tokens_batch(interval '7 days', 5000)",
       "SELECT purge_login_throttles_batch(interval '24 hours', 5000)",
       "SELECT sweep_expired_bookings_batch(interval '48 hours', 5000)",
+      "SELECT anonymise_deleted_users_batch(interval '30 days', 5000)",
+      "SELECT scrub_audit_ip_addresses_batch(interval '90 days', 5000)",
       "CALL purge_audit_events(interval '24 months')",
       "CALL record_maintenance_run('purge')"
     ]);
-    expect(purgeStatements({ AUDIT_RETENTION_DAYS: "90" })[5]).toContain("90 days");
+    expect(purgeStatements({ AUDIT_RETENTION_DAYS: "90" })[7]).toContain("90 days");
+    expect(purgeStatements({ ANONYMISE_DELETED_USERS_AFTER_DAYS: "0", AUDIT_IP_RETENTION_DAYS: "0" }).some((sql) => /anonymise|scrub/.test(sql))).toBe(false);
+    expect(purgeStatements({ PURGE_DRY_RUN: "1" })).toEqual([
+      "SELECT anonymise_deleted_users_count(interval '30 days')",
+      "SELECT scrub_audit_ip_addresses_count(interval '90 days')"
+    ]);
+    expect(() => purgeStatements({ ANONYMISE_DELETED_USERS_AFTER_DAYS: "3651" })).toThrow(/from 0 to 3650/);
     expect(() => purgeStatements({ SESSION_RETENTION_DAYS: "1; DROP TABLE users" })).toThrow(/integer/);
     expect(() => purgeStatements({ AUDIT_RETENTION_DAYS: "5" })).toThrow(/from 30 to 3650/);
     expect(() => purgeStatements({ AUDIT_RETENTION_DAYS: "1" })).toThrow(/from 30 to 3650/);

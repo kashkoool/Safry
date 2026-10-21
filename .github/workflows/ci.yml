@@ -101,6 +101,9 @@ jobs:
       - name: check-env.sh self-test
         working-directory: .
         run: sh scripts/check-env.test.sh
+      - name: backup size cap self-test
+        working-directory: .
+        run: sh scripts/backup-cap.test.sh
       # The DAST gate must keep failing on a Medium alert.
       - name: dast-check self-test
         working-directory: .

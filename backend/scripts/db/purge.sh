@@ -7,8 +7,11 @@
 #   3. purge_credential_tokens: removes password-reset and verification links after they expired or were used.
 #   4. purge_login_throttles: removes idle sign-in attempt counters (not blocked, not trusted).
 #   5. sweep_expired_bookings: cancels PENDING bookings older than BOOKING_PENDING_TTL_HOURS (the rule the API computes).
-#   6. purge_audit_events: DROPs audit_events partitions that lie wholly older than the retention (default 24 months).
-#   7. record_maintenance_run: heartbeat. Written only when every step above succeeded; the API turns it into a metric and an
+#   6. anonymise_deleted_users: removes the personal data of accounts deleted more than ANONYMISE_DELETED_USERS_AFTER_DAYS ago (the row,
+#      bookings and audit trail stay, see backend/docs/data-retention.md). Skipped when the setting is 0.
+#   7. scrub_audit_ip_addresses: clears the IP address of audit rows older than AUDIT_IP_RETENTION_DAYS. Skipped when the setting is 0.
+#   8. purge_audit_events: DROPs audit_events partitions that lie wholly older than the retention (default 24 months).
+#   9. record_maintenance_run: heartbeat. Written only when every step above succeeded; the API turns it into a metric and an
 #      alert fires when it is older than 36 hours.
 # Keep the statement list in sync with backend/scripts/db/run-purge.ts (a unit test compares them).
 #
@@ -22,6 +25,9 @@
 #   AUDIT_RETENTION_DAYS            unset = 24 months; otherwise 30..3650 days
 #   AUDIT_PARTITIONS_AHEAD          months of audit partitions to keep ready, default 6 (1..24)
 #   PURGE_BATCH_SIZE                rows per committed batch, default 5000 (100..100000)
+#   ANONYMISE_DELETED_USERS_AFTER_DAYS  default 30, 0 (off) or 1..3650: days after deletion before the personal data is removed
+#   AUDIT_IP_RETENTION_DAYS         default 90, 0 (off) or 1..3650: days an audit row keeps its IP address
+#   PURGE_DRY_RUN                   set to 1: only report how many users / audit rows the two steps above would change, write nothing
 set -eu
 url="${DATABASE_MAINTENANCE_URL:-${DATABASE_MIGRATE_URL:-${DATABASE_URL:-}}}"
 [ -n "$url" ] || { echo "DATABASE_MAINTENANCE_URL (or DATABASE_MIGRATE_URL / DATABASE_URL) is required" >&2; exit 1; }
@@ -39,6 +45,10 @@ tokens="$(integer CREDENTIAL_TOKEN_RETENTION_DAYS 7 1 3650)"
 throttles="$(integer LOGIN_THROTTLE_RETENTION_HOURS 24 1 720)"
 pending="$(integer BOOKING_PENDING_TTL_HOURS 48 1 720)"
 ahead="$(integer AUDIT_PARTITIONS_AHEAD 6 1 24)"
+anonymise="$(integer ANONYMISE_DELETED_USERS_AFTER_DAYS 30 0 3650)"
+ip_days="$(integer AUDIT_IP_RETENTION_DAYS 90 0 3650)"
+dry=false
+[ "${PURGE_DRY_RUN:-}" = "1" ] && dry=true
 batch="$(integer PURGE_BATCH_SIZE 5000 100 100000)"
 if [ -n "${AUDIT_RETENTION_DAYS:-}" ]; then
   audit_retention="$(integer AUDIT_RETENTION_DAYS 30 30 3650) days"
@@ -53,11 +63,20 @@ drain() {
     [ "$handled" -gt 0 ] || break
   done
 }
+if [ "$dry" = true ]; then
+  # Dry run: only the counts of the two erasure steps; nothing is changed and no heartbeat is written.
+  if [ "$anonymise" -ne 0 ]; then echo "users that would be anonymised: $(psql "$url" -v ON_ERROR_STOP=1 -At -c "SELECT anonymise_deleted_users_count(interval '$anonymise days')")"; fi
+  if [ "$ip_days" -ne 0 ]; then echo "audit rows that would lose their IP: $(psql "$url" -v ON_ERROR_STOP=1 -At -c "SELECT scrub_audit_ip_addresses_count(interval '$ip_days days')")"; fi
+  echo "dry run: nothing was changed"
+  exit 0
+fi
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL maintenance_ensure_partitions($ahead)"
 drain "SELECT purge_refresh_sessions_batch(interval '$sessions days', $batch)"
 drain "SELECT purge_credential_tokens_batch(interval '$tokens days', $batch)"
 drain "SELECT purge_login_throttles_batch(interval '$throttles hours', $batch)"
 drain "SELECT sweep_expired_bookings_batch(interval '$pending hours', $batch)"
+[ "$anonymise" -eq 0 ] || drain "SELECT anonymise_deleted_users_batch(interval '$anonymise days', $batch)"
+[ "$ip_days" -eq 0 ] || drain "SELECT scrub_audit_ip_addresses_batch(interval '$ip_days days', $batch)"
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL purge_audit_events(interval '$audit_retention')"
 psql "$url" -v ON_ERROR_STOP=1 -c "CALL record_maintenance_run('purge')"
 echo "purge done"

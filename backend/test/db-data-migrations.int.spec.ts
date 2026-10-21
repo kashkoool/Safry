@@ -214,6 +214,7 @@ describe("2026-10-12 migrations on a database with seeded legacy rows, as a non-
       expect(idx.rows.map((r) => r.indexname)).toEqual([
         "audit_events_actorUserId_occurredAt_idx",
         "audit_events_occurredAt_idx",
+        "audit_events_occurredAt_with_ip_idx",
         "audit_events_pkey",
         "audit_events_tenantId_action_occurredAt_idx",
         "audit_events_tenantId_entityType_entityId_occurredAt_idx",

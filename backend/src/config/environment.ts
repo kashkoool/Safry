@@ -230,6 +230,9 @@ export function validateEnvironment(config: Environment): Environment {
   integerInRange(config, "CREDENTIAL_TOKEN_RETENTION_DAYS", 1, 3650);
   integerInRange(config, "LOGIN_THROTTLE_RETENTION_HOURS", 1, 720);
   integerInRange(config, "PURGE_BATCH_SIZE", 100, 100000);
+  // 0 = off. Counsel must confirm the periods (docs/DEPLOYMENT.md, backend/docs/data-retention.md).
+  integerInRange(config, "ANONYMISE_DELETED_USERS_AFTER_DAYS", 0, 3650);
+  integerInRange(config, "AUDIT_IP_RETENTION_DAYS", 0, 3650);
 
   const numeric = Object.fromEntries(TUNABLE_INTEGERS.filter((key) => config[key] !== undefined).map((key) => [key, Number(config[key])]));
   return { ...config, ...numeric, PORT: port, JWT_ACCESS_TTL_SECONDS: accessTtl, REFRESH_TOKEN_TTL_DAYS: refreshDays,

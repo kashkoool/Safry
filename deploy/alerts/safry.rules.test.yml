@@ -781,3 +781,111 @@ tests:
         description: More than 100000 rows of refresh_sessions are deleted but not yet reclaimed (over 30% of the table); disk use grows and queries slow down.
         first_action: "Look for a long-running transaction or a stale replication slot (pg_stat_activity, pg_replication_slots), then run VACUUM (ANALYZE) on the table as the owner. Docs: backend/docs/database-operations.md, 'Disk space after a purge'."
         runbook: docs/ALERTING.md#tabledeadtupleshigh
+- interval: 1m
+  name: ErasurePastRetention fires after 6 hours of overdue erasure
+  input_series:
+  - series: safry_erasure_overdue{job="safry-api", instance="a"}
+    values: 0x10 1x500
+  alert_rule_test:
+  - eval_time: 300m
+    alertname: ErasurePastRetention
+    exp_alerts: []
+  - eval_time: 400m
+    alertname: ErasurePastRetention
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: Personal data is kept longer than the retention settings allow
+        description: The maintenance job's erasure steps (anonymise deleted accounts, clear audit IP addresses) are behind by more than 3 days.
+        first_action: "Check PurgeJobStale and the maintenance log ('docker compose logs --tail 100 maintenance'). Count what is pending with 'docker compose run --rm -e PURGE_DRY_RUN=1 --entrypoint sh maintenance /scripts/purge.sh'."
+        runbook: docs/ALERTING.md#erasurepastretention
+- interval: 1m
+  name: ErasurePastRetention is silent when nothing is overdue
+  input_series:
+  - series: safry_erasure_overdue{job="safry-api", instance="a"}
+    values: 0x500
+  alert_rule_test:
+  - eval_time: 450m
+    alertname: ErasurePastRetention
+    exp_alerts: []
+- interval: 1m
+  name: BackupMissing fires when the newest dump is older than 36 hours
+  input_series:
+  - series: safry_backup_last_success_timestamp_seconds{job="safry-backup", instance="a"}
+    values: 1000x2400
+  alert_rule_test:
+  - eval_time: 120m
+    alertname: BackupMissing
+    exp_alerts: []
+  - eval_time: 2300m
+    alertname: BackupMissing
+    exp_alerts:
+    - exp_labels:
+        severity: page
+      exp_annotations:
+        summary: No database backup for 36 hours
+        description: "The newest dump in the backup volume is older than 36 hours: the backup service is not running, failing, or the volume is full."
+        first_action: "Run 'docker compose ps backup' and 'docker compose logs --tail 100 backup'. A full volume: raise BACKUP_MAX_TOTAL_MB or free the disk, then 'docker compose restart backup'."
+        runbook: docs/ALERTING.md#backupmissing
+- interval: 1m
+  name: BackupMissing stays silent while dumps are fresh
+  input_series:
+  - series: safry_backup_last_success_timestamp_seconds{job="safry-backup", instance="a"}
+    values: 86400x2400
+  alert_rule_test:
+  - eval_time: 2300m
+    alertname: BackupMissing
+    exp_alerts: []
+- interval: 1m
+  name: BackupVolumeNearlyFull fires on disk use over 85 percent
+  input_series:
+  - series: safry_backup_volume_used_percent{job="safry-backup", instance="a"}
+    values: 40x10 90x100
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: BackupVolumeNearlyFull
+    exp_alerts: []
+  - eval_time: 60m
+    alertname: BackupVolumeNearlyFull
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: The backup volume is nearly full
+        description: The disk of the backup volume is over 85% used, or the dumps use over 90% of BACKUP_MAX_TOTAL_MB. The next dump may fail or push the oldest ones out.
+        first_action: Copy the dumps off the host, raise BACKUP_MAX_TOTAL_MB or the disk, or lower BACKUP_KEEP_DAYS.
+        runbook: docs/ALERTING.md#backupvolumenearlyfull
+- interval: 1m
+  name: BackupVolumeNearlyFull fires when dumps use over 90 percent of the cap
+  input_series:
+  - series: safry_backup_volume_used_percent{job="safry-backup", instance="a"}
+    values: 40x100
+  - series: safry_backup_total_bytes{job="safry-backup", instance="a"}
+    values: 4900000000x100
+  - series: safry_backup_cap_bytes{job="safry-backup", instance="a"}
+    values: 5368709120x100
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: BackupVolumeNearlyFull
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+      exp_annotations:
+        summary: The backup volume is nearly full
+        description: The disk of the backup volume is over 85% used, or the dumps use over 90% of BACKUP_MAX_TOTAL_MB. The next dump may fail or push the oldest ones out.
+        first_action: Copy the dumps off the host, raise BACKUP_MAX_TOTAL_MB or the disk, or lower BACKUP_KEEP_DAYS.
+        runbook: docs/ALERTING.md#backupvolumenearlyfull
+- interval: 1m
+  name: BackupVolumeNearlyFull is silent with room left and no cap (cap 0)
+  input_series:
+  - series: safry_backup_volume_used_percent{job="safry-backup", instance="a"}
+    values: 40x100
+  - series: safry_backup_total_bytes{job="safry-backup", instance="a"}
+    values: 4900000000x100
+  - series: safry_backup_cap_bytes{job="safry-backup", instance="a"}
+    values: 0x100
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: BackupVolumeNearlyFull
+    exp_alerts: []

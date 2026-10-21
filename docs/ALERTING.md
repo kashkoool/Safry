@@ -108,6 +108,17 @@ First action: look at failed-login audit events by address and reason; block a d
 ### RefreshSessionsPastRetention
 *ticket.* A refresh session expired or was revoked more than the retention plus 3 days ago (default 30 + 3) and is still stored, for 6 hours. The purge is not running or something blocks its deletes. First action: PurgeJobStale first; then look for a long transaction (`pg_stat_activity`).
 
+### ErasurePastRetention
+*ticket.* An account deleted more than `ANONYMISE_DELETED_USERS_AFTER_DAYS` + 3 days ago is still not anonymised, or an audit row older than `AUDIT_IP_RETENTION_DAYS` + 3 days still holds an IP address, for 6 hours (`safry_erasure_overdue`). A setting of 0 turns that half off. First action: PurgeJobStale first; then run the job's dry run to see the counts (`docker compose run --rm -e PURGE_DRY_RUN=1 --entrypoint sh maintenance /scripts/purge.sh`) and read `docker compose logs maintenance`.
+
+### BackupMissing
+*page.* The newest dump is older than 36 hours (`safry_backup_last_success_timestamp_seconds`, written by `backup.sh` into `backup-metrics.prom` in the backup volume). The backup service is stopped or failing, or the volume is full. First action: `docker compose ps backup`, `docker compose logs --tail 100 backup`.
+
+### BackupVolumeNearlyFull
+*ticket.* The disk under the backup volume is over 85% used (`safry_backup_volume_used_percent`), or the dumps use over 90% of `BACKUP_MAX_TOTAL_MB`. The next dump may fail or push the oldest ones out. First action: copy dumps off the host, raise the cap or the disk, or lower `BACKUP_KEEP_DAYS`.
+
+The three backup series are not exported by the API (it cannot see the backup volume). `backup.sh` writes them to `backup-metrics.prom` in the Prometheus text format; point a textfile collector (node_exporter `--collector.textfile.directory`, or the Grafana/Alloy equivalent) at the backup volume and scrape that. Without a collector the two backup alerts cannot fire: the service healthcheck (`docker compose ps backup` shows `unhealthy` when no dump is newer than two intervals) is then the only signal, so poll it.
+
 ### TableDeadTuplesHigh
 *ticket.* More than 100,000 dead rows and over 30% of a churn table (`refresh_sessions`, `credential_tokens`, `login_throttles`, `bookings`) for 2 hours: autovacuum is blocked or cannot keep up, so the file grows. First action: a long transaction or stale replication slot, then `VACUUM (ANALYZE)` on that table. Background and the reclaim options: `backend/docs/database-operations.md`, "Disk space after a purge".
 
@@ -151,7 +162,7 @@ Either way, run the fire test on the deployed environment once (stop the databas
 
 - No real notification channel, on-call rota or escalation exists; the sink in the fire test is a log file.
 - No Azure resource was created and the Azure steps above have not been tried.
-- No alert on host or container memory and CPU, App Service plan limits, certificate expiry, backup freshness or job failures (the API exports no pool or disk metric).
+- No alert on host or container memory and CPU, App Service plan limits, certificate expiry, or the volume and disk of the host (the API exports no pool or disk metric). Backup freshness and volume use are covered by BackupMissing and BackupVolumeNearlyFull only when a textfile collector reads `backup-metrics.prom`.
 - Database-down detection depends on something probing `/health/ready`. App Service health check or an orchestrator does; without a prober the readiness counter does not move (ApiDown still works).
 - Web front end (nginx) and Cloudflare health are not scraped.
 - Counters live in each API process and reset on restart; with several instances the rules sum across them, which is what is wanted.

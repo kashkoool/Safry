@@ -359,6 +359,7 @@ export class PlatformService {
       if (!old) throw new NotFoundException();
       if (old.deletedAt && !["RESTORE", "DELETE"].includes(input.action))
         throw new ConflictException("استعد الحساب المحذوف أولاً");
+      if (input.action === "RESTORE" && old.anonymisedAt) throw new ConflictException("تمت إزالة البيانات الشخصية لهذا الحساب نهائياً ولا يمكن استعادته");
       if (input.action === "RESTORE" && !old.deletedAt) throw new ConflictException("الحساب غير محذوف");
       const status =
         input.action === "DELETE" ? "DISABLED" : input.action === "RESTORE" ? "SUSPENDED" : input.action;
