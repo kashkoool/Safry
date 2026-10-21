@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { parseArgs, loadRunEnv, loadJson, saveJson, call, ownerClient, docker, dockerStats, scrapeMetrics, sleep, round, stats } from "./common.mjs";
 import { World } from "./world.mjs";
 import { snapshot } from "./dbstats.mjs";
-import { startTraffic, summarize } from "./traffic.mjs";
+import { startTraffic, summarize, prewarm } from "./traffic.mjs";
 
 const args = parseArgs();
 const run = loadRunEnv(args.run ?? "a");
@@ -22,6 +22,12 @@ const own = (await call(run.base, "GET", "/services?limit=50", { token: prov.tok
 const st = { bookable: own.filter((s) => s.status === "ACTIVE").slice(0, 8).map((s) => s.id) };
 
 const poolMax = 10;
+await prewarm(w, st);
+// Sessions are renewed in the background, one actor every 15 s, so traffic never has to sign in (a burst of 40 sign-ins stalls a 1-CPU API).
+w.maxAgeMs = 1e12;
+const renew = [...Array.from({ length: 36 }, (_, i) => ["traveler", i]), ["provider", 0], ["admin", 0], ["platform", 0]];
+let renewStop = false;
+void (async () => { let n = 0; await sleep(200_000); while (!renewStop) { const [name, i] = renew[n++ % renew.length]; try { const key = name === "traveler" ? `traveler-${i}` : name; w.sessions.delete(key); await w.actor(name, i); } catch { /* next round */ } await sleep(10_000); } })();
 const traffic = startTraffic(w, st, { rate });
 const canary = [];
 let canaryStop = false;

@@ -23,15 +23,22 @@ export class World {
     const r = await call(this.run.base, "POST", "/auth/login", { body: { email, password, tenantCode, ...extra } });
     return r;
   }
-  async session(key, email, tenantCode, maxAgeMs = 420_000) {
+  async session(key, email, tenantCode, maxAgeMs = this.maxAgeMs ?? 420_000) {
     const cur = this.sessions.get(key);
     if (cur && Date.now() - cur.at < maxAgeMs) return cur;
-    let r = await this.login(email, tenantCode);
-    if (r.status === 200 && r.body.mfaRequired) r = await this.verifyMfa(r.body.mfaToken);
-    if (r.status !== 200) throw new Error(`login ${key} failed: ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
-    const s = { token: r.body.accessToken, refreshToken: r.body.refreshToken, at: Date.now(), email, tenantCode };
-    this.sessions.set(key, s);
-    return s;
+    // one login at a time per key: concurrent callers share it (otherwise a burst of requests would each sign in)
+    this.pending ??= new Map();
+    if (this.pending.has(key)) return this.pending.get(key);
+    const p = (async () => {
+      let r = await this.login(email, tenantCode);
+      if (r.status === 200 && r.body.mfaRequired) r = await this.verifyMfa(r.body.mfaToken);
+      if (r.status !== 200) throw new Error(`login ${key} failed: ${r.status} ${JSON.stringify(r.body).slice(0, 200)}`);
+      const s = { token: r.body.accessToken, refreshToken: r.body.refreshToken, at: Date.now(), email, tenantCode };
+      this.sessions.set(key, s);
+      return s;
+    })().finally(() => this.pending.delete(key));
+    this.pending.set(key, p);
+    return p;
   }
   async verifyMfa(mfaToken) {
     await this.resetMfaStep(this.actors.platform.email);

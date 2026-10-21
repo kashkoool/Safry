@@ -47,6 +47,13 @@ case "$CMD" in
       e=$(date +%s)
       echo "migrate $d: $((e - s)) s (includes container start)"
     done ;;
+  migrate-with)
+    # migrate-with <run whose database> <db> <image run>: prisma migrate deploy of image <4th arg> against this run's database (upgrade rehearsal)
+    IMG="${4:?image run a|b}"
+    s=$(date +%s)
+    docker run --rm --network $NET -e NODE_ENV=production -e DATABASE_URL="postgresql://safry:$OWNER_PW@$PG:5432/$DB?schema=public" "safry-aged-$IMG-migrate" 2>&1 | tail -4
+    e=$(date +%s)
+    echo "migrate of $DB with image $IMG: $((e - s)) s (includes container start)" ;;
   roles)
     for d in safry safry_fresh; do
       docker exec -i -e PGPASSWORD="$OWNER_PW" "$PG" psql -U safry -d "$d" -v runtime_password="$RUNTIME_PW" -f - < "$HERE/../../../scripts/db/create-runtime-role.sql" > /dev/null

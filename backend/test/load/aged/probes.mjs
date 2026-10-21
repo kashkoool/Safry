@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { parseArgs, loadRunEnv, loadJson, saveJson, call, docker, sleep, round, stats } from "./common.mjs";
 import { World } from "./world.mjs";
-import { startTraffic, summarize } from "./traffic.mjs";
+import { startTraffic, summarize, prewarm } from "./traffic.mjs";
 
 const args = parseArgs();
 const run = loadRunEnv(args.run ?? "a");
@@ -86,6 +86,7 @@ if (only.includes("restart")) {
   const out = {};
   for (const mode of ["graceful (docker restart, SIGTERM)", "crash (docker kill, SIGKILL)"]) {
     const st = { bookable: (await call(base, "GET", "/services?limit=50", { token: (await w.actor("provider")).token })).body.filter((s) => s.status === "ACTIVE").slice(0, 8).map((s) => s.id) };
+    await prewarm(w, st);
     const traffic = startTraffic(w, st, { rate: 20 });
     await sleep(15_000);
     const kill = Date.now();

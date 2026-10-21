@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 import { parseArgs, loadRunEnv, loadJson, saveJson, call, sleep, round, HERE } from "./common.mjs";
 import { World } from "./world.mjs";
 import { snapshot, mib } from "./dbstats.mjs";
-import { startTraffic, summarize } from "./traffic.mjs";
+import { startTraffic, summarize, prewarm } from "./traffic.mjs";
 
 const args = parseArgs();
 const run = loadRunEnv(args.run ?? "a");
@@ -24,6 +24,7 @@ const phases = {};
 const snaps = {};
 snaps.before = await snapshot(w.sql);
 
+await prewarm(w, st);
 const traffic = startTraffic(w, st, { rate });
 let lockWaitMax = 0, lockSamples = 0, sampling = true;
 void (async () => {

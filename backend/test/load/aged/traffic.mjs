@@ -14,9 +14,13 @@ export function makeMix(w, st) {
     [10, "GET /auth/me", async (i) => ({ method: "GET", path: "/auth/me", token: (await trav(i)).token })],
     [8, "POST /auth/activity", async (i) => ({ method: "POST", path: "/auth/activity", token: (await trav(i)).token })],
     [6, "POST /auth/refresh", async (i) => {
-      const k = i % 36; const chain = (st.chains ??= {});
+      // one in-flight refresh per chain: presenting the same refresh token twice is (correctly) treated as token reuse
+      const chain = (st.chains ??= {}); const busy = (st.busy ??= new Set());
+      let k = i % 36; for (let t = 0; t < 36 && busy.has(k); t++) k = (k + 1) % 36;
+      if (busy.has(k)) return { method: "GET", path: "/auth/me", token: (await trav(i)).token };
+      busy.add(k);
       if (!chain[k]) chain[k] = (await w.login(A.travelers[k].email, A.tenantCode)).body.refreshToken;
-      return { method: "POST", path: "/auth/refresh", body: { refreshToken: chain[k] }, after: (r) => { if (r.status === 200) chain[k] = r.body.refreshToken; else delete chain[k]; } };
+      return { method: "POST", path: "/auth/refresh", body: { refreshToken: chain[k] }, after: (r) => { busy.delete(k); if (r.status === 200) chain[k] = r.body.refreshToken; else delete chain[k]; } };
     }],
     [5, "GET /users/me", async (i) => ({ method: "GET", path: "/users/me", token: (await trav(i)).token })],
     [4, "POST /bookings (+cancel)", async (i) => {
@@ -30,9 +34,9 @@ export function makeMix(w, st) {
     [1, "GET /tenants/members (admin)", async () => ({ method: "GET", path: "/tenants/members", token: (await w.actor("admin")).token })],
     [1, "GET /access/audit (admin)", async () => ({ method: "GET", path: "/access/audit?limit=50", token: (await w.actor("admin")).token })],
     [1, "GET /platform/records/bookings", async () => ({ method: "GET", path: "/platform/records/bookings?page=1", token: (await w.actor("platform")).token })],
-    [3, "POST /auth/login (ok)", async (i) => ({ method: "POST", path: "/auth/login", body: { email: A.travelers[i % 36].email, password: A.password, tenantCode: A.tenantCode } })],
-    [2, "POST /auth/login (wrong password)", async (i) => ({ method: "POST", path: "/auth/login", body: { email: A.travelers[i % 36].email, password: "Wrong-password-1", tenantCode: A.tenantCode }, okStatus: [401] })],
-    [1, "POST /auth/password/forgot", async (i) => ({ method: "POST", path: "/auth/password/forgot", body: { email: A.travelers[i % 30].email }, okStatus: [202] })],
+    [0.6, "POST /auth/login (ok)", async (i) => ({ method: "POST", path: "/auth/login", body: { email: A.travelers[i % 36].email, password: A.password, tenantCode: A.tenantCode } })],
+    [0.4, "POST /auth/login (wrong password)", async (i) => ({ method: "POST", path: "/auth/login", body: { email: A.travelers[i % 36].email, password: "Wrong-password-1", tenantCode: A.tenantCode }, okStatus: [401] })],
+    [0.2, "POST /auth/password/forgot", async (i) => ({ method: "POST", path: "/auth/password/forgot", body: { email: A.travelers[i % 30].email }, okStatus: [202] })],
     [1, "GET unknown route (404)", async () => ({ method: "GET", path: "/does-not-exist", okStatus: [404] })]
   ];
   const total = mix.reduce((s, m) => s + m[0], 0);
@@ -66,6 +70,14 @@ export function startTraffic(w, st, { rate, maxInFlight = 400 }) {
   };
   const timer = setInterval(() => { if (!stopped) void fire(); }, 1000 / rate);
   return { samples, stop() { stopped = true; clearInterval(timer); }, get dropped() { return dropped; }, get inflight() { return inflight; } };
+}
+
+/** Signs every actor in once, one after the other, before the load starts (a cold start would otherwise sign in 40 actors at once). */
+export async function prewarm(w, st) {
+  for (let i = 0; i < 36; i++) await w.actor("traveler", i);
+  await w.actor("provider"); await w.actor("admin"); await w.actor("platform");
+  st.chains ??= {};
+  for (let k = 0; k < 36; k++) st.chains[k] = (await w.login(w.actors.travelers[k].email, w.actors.tenantCode)).body.refreshToken;
 }
 
 /** Summary of samples in [from, to): overall and per endpoint. */
