@@ -19,3 +19,6 @@ overrides:
   deepmerge-ts: 8.0.2
   # prisma > mysql2 (unused MySQL tooling, PostgreSQL only); patched in 3.22.0 and 3.23.1.
   mysql2: 3.23.4
+  # vitest 5.0.3 > vite (test tooling only); advisory CVE-2026-112942 fixed in 8.3.3 (also 8.2.4, 8.1.6, 7.3.7).
+  # Remove when vitest resolves a patched vite on its own (check with `pnpm why vite`).
+  vite: ^8.3.3
