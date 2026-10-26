@@ -3,6 +3,6 @@
   "private": true,
   "description": "Pins the exact pnpm used by the Dockerfile, with registry integrity hashes (npm ci).",
   "dependencies": {
-    "pnpm": "11.28.6"
+    "pnpm": "11.28.8"
   }
 }
