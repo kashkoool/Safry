@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Static SPA served by unprivileged nginx (listens on 8080, runs as uid 101).
 # Base images are pinned by tag AND digest; Dependabot ("docker" ecosystem) bumps both together.
-FROM node:22.23.3-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS build
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS build
 COPY tools/pnpm/package.json tools/pnpm/package-lock.json /opt/pnpm/
 RUN npm ci --ignore-scripts --prefix /opt/pnpm && ln -s /opt/pnpm/node_modules/.bin/pnpm /usr/local/bin/pnpm && npm cache clean --force
 WORKDIR /app
