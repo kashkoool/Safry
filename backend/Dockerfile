@@ -5,7 +5,7 @@
 #                                  Never serves traffic; exits when done. See docs/DEPLOYMENT.md.
 # Base images are pinned by tag AND digest. Dependabot (.github/dependabot.yml, "docker" ecosystem) bumps both together.
 
-FROM node:22.23.3-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS base
+FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS base
 # Exact pnpm version with registry integrity hashes (tools/pnpm/package-lock.json, installed by npm ci; the project lockfile is written by pnpm 11): the package manager is part of the supply chain.
 COPY tools/pnpm/package.json tools/pnpm/package-lock.json /opt/pnpm/
 RUN npm ci --ignore-scripts --prefix /opt/pnpm && ln -s /opt/pnpm/node_modules/.bin/pnpm /usr/local/bin/pnpm && npm cache clean --force
@@ -19,7 +19,7 @@ RUN pnpm exec prisma generate && pnpm exec nest build
 
 # Production dependencies only, resolved from the same lockfile, on the same OS (musl) as the runtime
 # so native modules (argon2) get the matching prebuilt binary.
-FROM node:22.23.3-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS prod-deps
+FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS prod-deps
 COPY tools/pnpm/package.json tools/pnpm/package-lock.json /opt/pnpm/
 RUN npm ci --ignore-scripts --prefix /opt/pnpm && ln -s /opt/pnpm/node_modules/.bin/pnpm /usr/local/bin/pnpm && npm cache clean --force
 WORKDIR /app
@@ -44,7 +44,7 @@ CMD ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
 
 # Alpine runtime: a much smaller OS package set than the bookworm-slim base, hence far fewer scanner findings
 # (perl-base, util-linux, ncurses, zlib are not present).
-FROM node:22.23.3-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS runtime
+FROM node:22.23.4-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runtime
 ENV NODE_ENV=production
 # argon2 runs on the libuv pool; HASH_CONCURRENCY (default 4) + 4 spare threads for DNS/fs/crypto.
 # Keep >= HASH_CONCURRENCY + 4; guarded by backend/src/dockerfile.spec.ts.
