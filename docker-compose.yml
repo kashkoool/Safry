@@ -37,7 +37,7 @@ x-owner-db: &owner-db
 services:
   postgres:
     <<: *hardening
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     # The entrypoint fixes data-directory ownership, then drops to the postgres user.
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     tmpfs: ["/tmp:size=64m,mode=1777", "/var/run/postgresql:size=1m,mode=2777"]
@@ -75,7 +75,7 @@ services:
   db-roles:
     <<: *job
     profiles: [ops]
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     user: postgres
     depends_on: { postgres: { condition: service_healthy } }
     volumes:
@@ -170,7 +170,7 @@ services:
   proxy:
     <<: *hardening
     profiles: [tls]
-    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    image: caddy:2.11.7-alpine@sha256:e70b164da81ef698b3ad19af799ea6086ce6d9e48ed4079eb9fe26f6fbf14ee5
     cap_add: [NET_BIND_SERVICE]
     depends_on: { web: { condition: service_healthy } }
     networks: [app]
@@ -199,7 +199,7 @@ services:
   backup:
     <<: *hardening
     profiles: [backup]
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     user: postgres
     depends_on: { postgres: { condition: service_healthy } }
     networks: [data]
@@ -230,7 +230,7 @@ services:
   # their ranges: docs/DEPLOYMENT.md. Script: backend/scripts/db/purge.sh (calls routines that run with the owner's rights; this service logs in as the procedures-only safry_maintenance role).
   maintenance:
     <<: *hardening
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     user: postgres
     depends_on: { postgres: { condition: service_healthy } }
     networks: [data]
